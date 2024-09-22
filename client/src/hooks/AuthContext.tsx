@@ -61,12 +61,15 @@ const AuthContextProvider = ({
   const loginUser = useLoginUserMutation();
   const logoutUser = useLogoutUserMutation({
     onSuccess: () => {
+      debugger;
       setUserContext({
         token: undefined,
         isAuthenticated: false,
         user: undefined,
-        redirect: '/login',
+        redirect: 'https://login.microsoftonline.com/intelequia.com/oauth2/logout?post_logout_redirect_uri=http://localhost:3080/',
       });
+      window.location.href = 'https://login.microsoftonline.com/intelequia.com/oauth2/logout?post_logout_redirect_uri=http://localhost:3080/';
+
     },
     onError: (error) => {
       doSetError((error as Error).message);
@@ -74,8 +77,9 @@ const AuthContextProvider = ({
         token: undefined,
         isAuthenticated: false,
         user: undefined,
-        redirect: '/login',
+        redirect: 'https://login.microsoftonline.com/intelequia.com/oauth2/logout?post_logout_redirect_uri=http://localhost:3080/',
       });
+      window.location.href = 'https://login.microsoftonline.com/intelequia.com/oauth2/logout?post_logout_redirect_uri=http://localhost:3080/';
     },
   });
 
