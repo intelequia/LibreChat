@@ -553,8 +553,6 @@ class BaseClient {
     const User = require('~/models/User');
     const { email } = await User.findOne({ _id: user }).lean();
 
-    const { email } = await User.findOne({ user }).lean();
-
     global.appInsights.trackEvent({
       name: 'AzureQuery',
       properties: {
