@@ -459,8 +459,7 @@ export default {
 	com_endpoint_token_count: 'Compte de tokens',
 	com_endpoint_output: 'Sortida',
 	com_endpoint_context_tokens: 'Tokens màxims de context',
-	com_endpoint_context_info: 'El nombre màxim de tokens que es poden utilitzar per al context. Utilitza això per controlar quants tokens s\'envien per solicitud.
-	Si no s\'especifica, s\'utilitzaran els valors per defecte del sistema basats en la mida del context dels models coneguts. Establir valors més alts pot resultar en errors i/o un cost més alt de tokens.',
+	com_endpoint_context_info: 'El nombre màxim de tokens que es poden utilitzar per al context. Utilitza això per controlar quants tokens s\'envien per solicitud.	Si no s\'especifica, s\'utilitzaran els valors per defecte del sistema basats en la mida del context dels models coneguts. Establir valors més alts pot resultar en errors i/o un cost més alt de tokens.',
 	com_endpoint_google_temp:
 	  'Valors més alts = més aleatori, mentre que valors més baixos = més enfocat i determinista. Recomanem alterar això o Top P però no tots dos.',
 	com_endpoint_google_topp:
@@ -801,7 +800,6 @@ export default {
 	com_nav_lang_indonesia: 'Indonesia',
 	com_nav_lang_hebrew: 'עברית',
 	com_nav_lang_finnish: 'Suomi',
-	com_nav_lang_finnish: 'Suomi',	
 	com_nav_lang_catala: 'Català',
 	com_ui_accept: 'Accepto',
 	com_ui_decline: 'No accepto',
