@@ -8,6 +8,17 @@ const roleSchema = new mongoose.Schema({
     unique: true,
     index: true,
   },
+  /**
+   * Assistant Creator permission in role schema
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  [PermissionTypes.ASSISTANT_CREATOR]:{
+    [Permissions.USE]: {
+      type: Boolean,
+      default: false,
+    },
+  },
   [PermissionTypes.BOOKMARKS]: {
     [Permissions.USE]: {
       type: Boolean,

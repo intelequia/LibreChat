@@ -7,6 +7,7 @@ const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { findUser, createUser, updateUser } = require('~/models/userMethods');
 const { hashToken } = require('~/server/utils/crypto');
 const { logger } = require('~/config');
+const {updateUserInfoInCache} = require('~/utils');
 
 let crypto;
 try {
@@ -73,27 +74,6 @@ function convertToUsername(input, defaultValue = '') {
   return defaultValue;
 }
 
-/**
- * fetch Remote azure groups file specification
- * @param {*} url Url to fetch the remote permissions from
- * @returns {Object} List of permissions
- */
-async function fetchRemoteAzureGroups(url) {
-  logger.info(
-    `[openidStrategy] fetchRemoteAzureGroups: Fetching remote permissions at URL "${url}"`,
-  );
-  const response = await fetch(url);
-  if (response.ok) {
-    const json = await response.json();
-
-    return json;
-  } else {
-    logger.error(
-      `[openidStrategy] fetchRemoteAzureGroups: Error fetching remote permissions at URL "${url}": ${response.statusText} (HTTP ${response.status})`,
-    );
-  }
-}
-
 async function setupOpenId() {
   try {
     if (process.env.PROXY) {
@@ -112,7 +92,6 @@ async function setupOpenId() {
     const requiredRole = process.env.OPENID_REQUIRED_ROLE;
     const requiredRoleParameterPath = process.env.OPENID_REQUIRED_ROLE_PARAMETER_PATH;
     const requiredRoleTokenKind = process.env.OPENID_REQUIRED_ROLE_TOKEN_KIND;
-    const azureAssistantsRemotePermisionFile = process.env.AZURE_ASSISTANTS_PERMISSIONS_FILE;
     const openidLogin = new OpenIDStrategy(
       {
         client,
@@ -204,17 +183,15 @@ async function setupOpenId() {
             user.username = username;
             user.name = fullName;
           }
-
-          if (azureAssistantsRemotePermisionFile && azureAssistantsRemotePermisionFile != '') {
-            let userIdToken = jwtDecode(tokenset.id_token);
-            global.myCache.set(user._id.toString(), userIdToken.groups, 604206);
-            const azureAssistantGroups = await fetchRemoteAzureGroups(
-              azureAssistantsRemotePermisionFile,
-            );
-            global.azureAssistantsGroupsPermissions = azureAssistantGroups.permissions;
-            global.AssistantCreationPermissions = azureAssistantGroups.assistantCreator;
-          }
-
+          
+          /**
+           * Load permission configuration files from remote repository
+           * @Organization Intelequia
+           * @Author Enrique M. Pedroza Castillo
+           */
+          if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
+            await updateUserInfoInCache(tokenset.id_token,user);
+          
           if (userinfo.picture && !user.avatar?.includes('manual=true')) {
             /** @type {string | undefined} */
             const imageUrl = userinfo.picture;

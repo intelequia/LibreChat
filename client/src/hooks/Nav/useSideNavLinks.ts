@@ -8,7 +8,7 @@ import {
   EModelEndpoint,
   Permissions,
 } from 'librechat-data-provider';
-import type { TConfig, TInterfaceConfig, TStartupConfig } from 'librechat-data-provider';
+import type { TConfig, TInterfaceConfig } from 'librechat-data-provider';
 import type { NavLink } from '~/common';
 import BookmarkPanel from '~/components/SidePanel/Bookmarks/BookmarkPanel';
 import PanelSwitch from '~/components/SidePanel/Builder/PanelSwitch';
@@ -18,9 +18,7 @@ import Parameters from '~/components/SidePanel/Parameters/Panel';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
 import { Blocks, AttachmentIcon } from '~/components/svg';
 import { useHasAccess } from '~/hooks';
-
 export default function useSideNavLinks({
-  startupConfig,
   hidePanel,
   assistants,
   agents,
@@ -29,7 +27,6 @@ export default function useSideNavLinks({
   endpointType,
   interfaceConfig,
 }: {
-  startupConfig: TStartupConfig | null | undefined;
   hidePanel: () => void;
   assistants?: TConfig | null;
   agents?: TConfig | null;
@@ -38,6 +35,18 @@ export default function useSideNavLinks({
   endpointType?: EModelEndpoint | null;
   interfaceConfig: Partial<TInterfaceConfig>;
 }) {
+
+  /**
+   * Check if the user has access to the Assistant Creator
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  const hasAccessToAssistantCreator = useHasAccess({
+    permissionType: PermissionTypes.ASSISTANT_CREATOR,
+    permission: Permissions.USE,
+  })
+
+
   const hasAccessToPrompts = useHasAccess({
     permissionType: PermissionTypes.PROMPTS,
     permission: Permissions.USE,
@@ -47,18 +56,9 @@ export default function useSideNavLinks({
     permission: Permissions.USE,
   });
 
+
   const Links = useMemo(() => {
     const links: NavLink[] = [];
-
-    let permission = false;
-
-    if (localStorage.getItem('userAssistantConfigPermission') == undefined) {
-      permission = startupConfig?.userAssistantConfigPermission || false;
-    }
-
-    if (localStorage.getItem('userAssistantConfigPermission') == 'true') {
-      permission = true;
-    }
 
     if (
       isAssistantsEndpoint(endpoint) &&
@@ -66,7 +66,7 @@ export default function useSideNavLinks({
       assistants.disableBuilder !== true &&
       keyProvided &&
       interfaceConfig.parameters === true &&
-      permission
+      hasAccessToAssistantCreator
     ) {
       links.push({
         title: 'com_sidepanel_assistant_builder',
@@ -145,7 +145,7 @@ export default function useSideNavLinks({
 
     return links;
   }, [
-    startupConfig,
+    hasAccessToAssistantCreator,
     interfaceConfig.parameters,
     keyProvided,
     assistants,

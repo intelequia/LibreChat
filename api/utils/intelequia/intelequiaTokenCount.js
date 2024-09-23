@@ -1,5 +1,10 @@
 const { getEncoding } = require('js-tiktoken');
 
+/**
+ * Retrieves model encoder by model name MUST BE UPDATED
+ * @Organization Intelequia
+ * @Author Enrique M. Pedroza Castillo
+ */
 function getModelTokenEncoder(model) {
   const o200k_base = [
     'gpt-4o',
@@ -64,6 +69,11 @@ function getModelTokenEncoder(model) {
   }
 }
 
+/**
+ * Returns the token count of the messages and the completion message
+ * @Organization Intelequia
+ * @Author Enrique M. Pedroza Castillo
+ */
 function intelequiaCountTokens(messages = [""], modelName = 'gpt-3.5-turbo') {
   let modelEncoder = getModelTokenEncoder(modelName);
   let enc = getEncoding(modelEncoder);

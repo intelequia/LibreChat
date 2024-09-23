@@ -30,10 +30,6 @@ export default function StartupLayout({ isAuthenticated }: { isAuthenticated?: b
   useEffect(() => {
     document.title = startupConfig?.appTitle || 'Intelewriter';
 
-    localStorage.setItem(
-      'userAssistantConfigPermission',
-      '' + startupConfig?.userAssistantConfigPermission,
-    );
   }, [startupConfig]);
 
   useEffect(() => {
