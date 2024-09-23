@@ -23,10 +23,10 @@ const publicSharedLinksEnabled =
 router.get('/', async function (req, res) {
   const cache = getLogStores(CacheKeys.CONFIG_STORE);
   const cachedStartupConfig = await cache.get(CacheKeys.STARTUP_CONFIG);
-  if (cachedStartupConfig && !haveToUpdateData) {
-    res.send(cachedStartupConfig);
-    return;
-  }
+  // if (cachedStartupConfig && !haveToUpdateData) {
+  //   res.send(cachedStartupConfig);
+  //   return;
+  // }
 
   const isBirthday = () => {
     const today = new Date();
