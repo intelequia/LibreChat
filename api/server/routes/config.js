@@ -23,10 +23,10 @@ const publicSharedLinksEnabled =
 router.get('/', async function (req, res) {
   const cache = getLogStores(CacheKeys.CONFIG_STORE);
   const cachedStartupConfig = await cache.get(CacheKeys.STARTUP_CONFIG);
-  // if (cachedStartupConfig && !haveToUpdateData) {
-  //   res.send(cachedStartupConfig);
-  //   return;
-  // }
+  if (cachedStartupConfig && !haveToUpdateData) {
+    res.send(cachedStartupConfig);
+    return;
+  }
 
   const isBirthday = () => {
     const today = new Date();
@@ -85,16 +85,7 @@ router.get('/', async function (req, res) {
     if (typeof process.env.CUSTOM_FOOTER === 'string') {
       payload.customFooter = process.env.CUSTOM_FOOTER;
     }
-
-    /**
-     * Retrieves the user assistant configuration permissions, and checks if its needed to load from cache
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    payload.userAssistantConfigPermission = await verifyAssistantConfigurations(
-      req.rawHeaders,
-      cachedStartupConfig,
-    );
+  
 
     await cache.set(CacheKeys.STARTUP_CONFIG, payload);
     return res.status(200).send(payload);

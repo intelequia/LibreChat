@@ -60,7 +60,7 @@ export enum Permissions {
  * @Author Enrique M. Pedroza Castillo
  */
 export const AssistantCreatorPermissionsSchema = z.object({
-  [Permissions.USE]: z.boolean().default(true),
+  [Permissions.USE]: z.boolean().default(false),
 });
 
 export const promptPermissionsSchema = z.object({
@@ -152,7 +152,9 @@ const defaultRolesSchema = z.object({
      * @Organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */
-    [PermissionTypes.ASSISTANT_CREATOR]: AssistantCreatorPermissionsSchema,
+    [PermissionTypes.ASSISTANT_CREATOR]: AssistantCreatorPermissionsSchema.extend({
+      [Permissions.USE]: z.boolean().default(false),  
+    }),
   }),
 });
 
@@ -168,7 +170,7 @@ export const roleDefaults = defaultRolesSchema.parse({
      * @Organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */
-    [PermissionTypes.ASSISTANT_CREATOR]: {},
+    [PermissionTypes.ASSISTANT_CREATOR]: {[Permissions.USE]: true},
   },
   [SystemRoles.USER]: {
     name: SystemRoles.USER,
@@ -181,6 +183,6 @@ export const roleDefaults = defaultRolesSchema.parse({
      * @Organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */
-    [PermissionTypes.ASSISTANT_CREATOR]: {},
+    [PermissionTypes.ASSISTANT_CREATOR]: {[Permissions.USE]: false },
   },
 });

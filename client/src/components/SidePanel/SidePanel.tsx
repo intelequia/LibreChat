@@ -64,8 +64,6 @@ const SidePanel = ({
   const [collapsedSize, setCollapsedSize] = useState(navCollapsedSize);
 
   const { data: startupConfig } = useGetStartupConfig({
-    cacheTime: 0,
-    staleTime: 0,
   });
 
   const { data: endpointsConfig = {} as TEndpointsConfig } = useGetEndpointsQuery();
@@ -119,7 +117,6 @@ const SidePanel = ({
   }, []);
 
   const Links = useSideNavLinks({
-    startupConfig,
     agents,
     endpoint,
     hidePanel,
@@ -168,31 +165,6 @@ const SidePanel = ({
       setMinSize(defaultMinSize);
     }
   }, [isSmallScreen, defaultCollapsed, navCollapsedSize, fullPanelCollapse]);
-
-  useEffect(() => {
-    const fetchConfig = async () => {
-      try {
-        const response = await fetch(`/api/config?timestamp=${new Date().getTime()}`, {
-          headers: {
-            'Cache-Control': 'no-cache',
-          },
-        });
-        if (response.ok) {
-          const config = await response.json();
-          localStorage.setItem(
-            'userAssistantConfigPermission',
-            '' + config.userAssistantConfigPermission,
-          );
-        } else {
-          console.error('Error fetching config:', response.status);
-        }
-      } catch (error) {
-        console.error('Error fetching config:', error);
-      }
-    };
-
-    fetchConfig();
-  }, [startupConfig]);
 
   const toggleNavVisible = useCallback(() => {
     if (newUser) {
