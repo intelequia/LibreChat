@@ -10,6 +10,7 @@ const {
 } = require('~/server/services/Endpoints/azureAssistants');
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
 const { getLogStores } = require('~/cache');
+const {verifyAssistantPermissions} = require('~/utils');
 
 /**
  * @param {Express.Request} req
@@ -56,50 +57,6 @@ const _listAssistants = async ({ req, res, version, query }) => {
 };
 
 /**
- * Fetch remote assistants permission file, and returns list of assistants in wich the specified user has permissions.
- * @param {*} userId  user to verify permissions
- * @param {*} allAssistants complete list of assistant retrieved by remote API
- * @returns {Array} list of assistants in wich the specified user has permissions
- */
-
-  async function verifyAssistantPermissions(userId, allAssistants) {
-    const targetGroupIds = global.myCache.get(userId);
-    const assistants = global.azureAssistantsGroupsPermissions;
-    const result = [];
-
-    if( targetGroupIds == null ){   // codigo nuevo
-      allAssistants.forEach((assistant) => {
-        const exist = assistants.some((a) => a.assistant === assistant.id );
-        if (!exist) {
-          result.push(assistant);
-        }
-      })
-      return result;
-    }
-
-    allAssistants.forEach((assistant) => {
-      const exist = assistants.some((a) => a.assistant === assistant.id);
-      if (!exist) {
-        result.push(assistant);
-      } else {
-        assistants.forEach((assist) => {
-          if (assist.assistant == assistant.id) {
-            const matches = assist.groups.some((groupId) => {
-              return targetGroupIds.includes(groupId);
-            });
-
-            if (matches) {
-              result.push(assistant);
-            }
-          }
-        });
-      }
-    });
-
-    return result;
-  }
-
-/**
  * Fetches all assistants based on provided query params, until `has_more` is `false`.
  *
  * @async
@@ -120,13 +77,24 @@ const listAllAssistants = async ({ req, res, version, query }) => {
   let afterToken = query.after;
   let hasMore = true;
 
-  if (global.azureAssistantsGroupsPermissions) {
+  /**
+   * Verify if there are any function permission
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  if (global.permissions) {
     const response = await openai.beta.assistants.list({
       ...query,
       after: afterToken,
     });
 
     const { body } = response;
+
+    /**
+     * Get all assistats allowed by the user groups
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
     const allowedAssistants = await verifyAssistantPermissions(req.user._id.toString(), body.data);
 
     allowedAssistants.forEach((assistant) => allAssistants.push(assistant));

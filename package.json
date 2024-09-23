@@ -109,6 +109,8 @@
     ]
   },
   "dependencies": {
+    "@azure/identity": "^4.4.1",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
     "applicationinsights": "^3.2.2",
     "node-cache": "^5.1.2",
     "sharp": "^0.32.6"

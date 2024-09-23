@@ -28,6 +28,7 @@ const {
 const { loadToolSuite } = require('./loadToolSuite');
 const { loadSpecs } = require('./loadSpecs');
 const { logger } = require('~/config');
+const  {VerifyAzureAIFunctionsTool} = require('~/utils');
 
 const getOpenAIKey = async (options, user) => {
   let openAIApiKey = options.openAIApiKey ?? process.env.OPENAI_API_KEY;
@@ -97,41 +98,6 @@ const validateTools = async (user, tools = []) => {
     throw new Error('There was a problem validating tools');
   }
 };
-
-/**
- * Fetch file with Azure OpenAI functions specifications
- * 
- * @param {} url  URL to fetch the functions
- * @returns {Object} JSON object with the functions
- */
-
-async function getAzureOpenAIFunctions(url) {
-  logger.info(`[validateTools] fetchRemoteAzureFunctions: Fetching remote functions at URL "${url}"`);
-  const response = await fetch(url);
-  if(response.ok){
-    const json = await response.json();
-
-    return json.functions;
-  }
-  else{
-    logger.error(
-      `[validateTools] fetchRemoteAzureFunctions: Error fetching remote functions at URL "${url}": ${response.statusText} (HTTP ${response.status})`,
-    );
-  }
-}
-
-/**
- * Verify if a tool is defined in the functions
- * 
- * @param {} tool  tool name
- * @param {} functions  JSON object with the functions
- * @returns {boolean} If its found or not
- */
-
-async function isToolDefinedInFunctions(tool,functions){
-  var found = functions.some(f => f.name === tool);
-  return found;
-}
 
 /**
  * Initializes a tool with authentication values for the given user, supporting alternate authentication fields.
@@ -204,12 +170,6 @@ const loadTools = async ({
     CodeBrew: CodeBrew,
     traversaal_search: TraversaalSearch,
   };
-
-  var azureOpenAIFunctions;
-  if(process.env.AZURE_ASSISTANTS_FUNCTIONS_URL && process.env.AZURE_ASSISTANTS_FUNCTIONS_URL!=""){
-    azureOpenAIFunctions = await getAzureOpenAIFunctions(process.env.AZURE_ASSISTANTS_FUNCTIONS_URL);
-    global.myCache.set("functions", azureOpenAIFunctions);
-  }
 
   const openAIApiKey = await getOpenAIKey(options, user);
 
@@ -324,19 +284,17 @@ const loadTools = async ({
       continue;
     }
 
-    if(process.env.AZURE_ASSISTANTS_FUNCTIONS_URL && process.env.AZURE_ASSISTANTS_FUNCTIONS_URL!=""){
-      if(azureOpenAIFunctions){
-        if(await isToolDefinedInFunctions(tool,azureOpenAIFunctions)){
-          const options = toolOptions[tool] || {};
-          const toolInstance = loadToolWithAuth(
-            user,
-            toolAuthFields["azure-ai-functions"],
-            toolConstructors[["AzureAIFunctions"]],
-            options,
-          );
-          requestedTools[tool] = toolInstance;
-          continue;
-        }
+    /**
+     * Check if the tool is defined in the functions and load it as a "azure-ai-functions"
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+
+    if(process.env.ENABLE_PERMISSION_MANAGE == "true"){
+      const {status,value} = await VerifyAzureAIFunctionsTool(tool, user, toolOptions,loadToolWithAuth,toolAuthFields,toolConstructors);
+      if(status){
+        requestedTools[tool] = value;
+        continue;
       }
     }
     
