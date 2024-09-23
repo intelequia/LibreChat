@@ -356,7 +356,6 @@ export type TStartupConfig = {
   publicSharedLinksEnabled: boolean;
   analyticsGtmId?: string;
   instanceProjectId: string;
-  userAssistantConfigPermission: boolean;
 };
 
 export type TRefreshTokenResponse = {

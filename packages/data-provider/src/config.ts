@@ -1119,8 +1119,6 @@ export enum LocalStorageKeys {
   FILES_DRAFT = 'filesDraft_',
   /** Key for last Selected Prompt Category */
   LAST_PROMPT_CATEGORY = 'lastPromptCategory',
-  /** Key for user permission at assistant config panel */
-  USER_ASSISTANT_CONFIG_PERMISSION = 'userAssistantConfigPermission',
 }
 
 export enum ForkOptions {

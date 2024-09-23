@@ -1,5 +1,4 @@
 const fetch = require('node-fetch');
-const { Issuer, Strategy: OpenIDStrategy, custom } = require('openid-client');
 const { Client } = require('@microsoft/microsoft-graph-client');
 const { ClientSecretCredential } = require('@azure/identity');
 const User = require('~/models/User');
@@ -18,13 +17,16 @@ async function intelequiaConfigLoader() {
 
   if(url && url != ""){
 
+    const graphClient = await createGraphClient()
     const result = await loadPermissionConfigFiles (url)
     const {permissions, assistantCreator, functions} = result;
+
     global.myCache.set("functions", functions);
     global.myCache.set("assistantCreator", assistantCreator);
     global.myCache.set("permissions", permissions);
 
-    await loadUserGroupsFromGraph()
+    await loadUserGroupsFromGraph(graphClient)
+    await updateUsersRoles(graphClient)
   }
   else{
     logger.error(
@@ -33,23 +35,13 @@ async function intelequiaConfigLoader() {
   }
 }
 
-
 /**
- * Connects with Azure Graph Api to get all the groups of users within database by its email 
+ * Creates Azure Graph Client instance 
  * @Organization Intelequia
- * @Author Enrique M. Pedroza Castillo
+ * @Author Enrique M. Pedroza Castillo 
+ * @returns 
  */
-async function loadUserGroupsFromGraph(){
-  logger.info(`[intelequiaConfigLoader] Fetching azure groups: Downloading groups from azure `);
-  const users = await User.find({  }).select('email').lean();
-  var userEmails = [];
-
-  users.map((user) => {
-    userEmails.push(user.email);
-  })
-  let filter = userEmails.map(email => `userPrincipalName eq '${email}'`).join(' or ');
-
-
+async function createGraphClient(){
   const tenantId = process.env.OPENID_TENANT_ID;
   const clientId = process.env.OPENID_CLIENT_ID;
   const clientSecret = process.env.OPENID_CLIENT_SECRET;
@@ -64,11 +56,65 @@ async function loadUserGroupsFromGraph(){
       }
     }
   });
+  return client;
+}
+
+/**
+ * Checks GRAPH groups that has permissions to AssistantCreator and updates users roles to ADMIN
+ * @Organization Intelequia
+ * @Author Enrique M. Pedroza Castillo
+ */
+async function updateUsersRoles(graphClient){
+
+  const adminGroups = global.myCache.get("assistantCreator"); 
+
+  try{
+    let usersToAdmin = [];
+    adminGroups.map(async (group) => {
+      let url = '/groups/' + group + "/members"
+
+      const {value} = await graphClient.api(url).get();
+
+      for (const user of value) {
+
+        const {mail} = user
+        const dbUserId = await User.findOne({ email:mail }).select('_id').lean();
+
+        if (dbUserId && !usersToAdmin.includes(dbUserId)) 
+          usersToAdmin.push(dbUserId);
+        
+      }
+      await User.updateMany({ _id: { $in: usersToAdmin } }, { $set: { role: 'ADMIN' } });
+      usersToAdmin = [];
+    })
+
+  }catch(e){
+    console.log(e)
+    logger.error(`[intelequiaConfigLoader] Fetching azure groups: Fetching remote configuration file at URL "${url}"`);
+  }
+}
+
+
+/**
+ * Connects with Azure Graph Api to get all the groups of users within database by its email 
+ * @Organization Intelequia
+ * @Author Enrique M. Pedroza Castillo
+ */
+async function loadUserGroupsFromGraph(graphClient){
+  logger.info(`[intelequiaConfigLoader] Fetching azure groups: Downloading groups from azure `);
+  const users = await User.find({  }).select('email').lean();
+  var userEmails = [];
+
+  users.map((user) => {
+    userEmails.push(user.email);
+  })
+  let filter = userEmails.map(email => `userPrincipalName eq '${email}'`).join(' or ');
 
   try {
-    const {value} = await client.api('/users?$select=id,mail&$filter=' + filter).get();
+    // Value is parameter inside Graph API response
+    const {value} = await graphClient.api('/users?$select=id,mail&$filter=' + filter).get();
     for (const user of value) {
-      const result = await client.api('/users/' + user.id + '/joinedTeams').get();
+      const result = await graphClient.api('/users/' + user.id + '/joinedTeams').get();
       var userGroups = result.value;
       var groupsIds = [];
       
@@ -79,6 +125,7 @@ async function loadUserGroupsFromGraph(){
       global.myCache.set(dbUser._id.toString(), groupsIds,process.env.USER_GROUPS_CACHE_TTL);
     }
   } catch (error) {
+    console.log(error)
     logger.error(`[intelequiaConfigLoader] Fetching azure groups: Fetching remote configuration file at URL "${url}"`);
   }
 }
@@ -122,6 +169,7 @@ async function updateUserInfoInCache(jwt,user) {
   if (userCachedGroups != null && userCachedGroups.length > 0 ){
     const userGroupsInToken = userIdToken["groups"]
 
+    // verify if two arrays are equal
     const containsAll = (arr1, arr2) => 
       arr2.every(arr2Item => arr1.includes(arr2Item))
       
@@ -130,12 +178,25 @@ async function updateUserInfoInCache(jwt,user) {
 
     const areGroupsUpdated = sameMembers(userCachedGroups, userGroupsInToken)
     
-    if(!areGroupsUpdated)
-      global.myCache.set(user._id.toString(), userIdToken.groups, process.env.USER_GROUPS_CACHE_TTL);
+    if(!areGroupsUpdated){
+      global.myCache.set(user._id.toString(), userIdToken.groups, process.env.USER_GROUPS_CACHE_TTL)
+
+      const adminGroups = global.myCache.get("assistantCreator");
+      const isAdmin = adminGroups.some(adminGroup => userIdToken.groups.includes(adminGroup));
+
+      if(isAdmin)
+        await User.updateOne({ _id: user._id }, { $set: { role: 'ADMIN' } });
+    };
 
   }
   else{
-    global.myCache.set(user._id.toString(), userIdToken.groups, process.env.USER_GROUPS_CACHE_TTL);  }
+    global.myCache.set(user._id.toString(), userIdToken.groups, process.env.USER_GROUPS_CACHE_TTL);  
+    const adminGroups = global.myCache.get("assistantCreator");
+    const isAdmin = adminGroups.some(adminGroup => userIdToken.groups.includes(adminGroup));
+
+    if(isAdmin)
+      await User.updateOne({ _id: user._id }, { $set: { role: 'ADMIN' } });
+  }
 
 }
 
