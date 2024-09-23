@@ -37,7 +37,7 @@ const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const routes = require('./routes');
 const NodeCache = require('node-cache');
-// const { useAzureMonitor } = require("@azure/monitor-opentelemetry");
+const {intelequiaConfigLoader} = require('~/utils');
 
 global.myCache = new NodeCache();
 const { PORT, HOST, ALLOW_SOCIAL_LOGIN, DISABLE_COMPRESSION } = process.env ?? {};
@@ -128,6 +128,14 @@ const startServer = async () => {
   app.use('/api/bedrock', routes.bedrock);
 
   app.use('/api/tags', routes.tags);
+  
+  /**
+   * Load permission configuration files from remote repository
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  if(process.env.ENABLE_PERMISSION_MANAGE == "true")
+    await intelequiaConfigLoader();
 
   app.use((req, res) => {
     // Replace lang attribute in index.html with lang from cookies or accept-language header

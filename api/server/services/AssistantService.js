@@ -425,10 +425,13 @@ async function runAssistant({
   const actions = submit_tool_outputs.tool_calls.map((item) => {
     const functionCall = item.function;
     const args = JSON.parse(functionCall.arguments);
-    if (
-      process.env.AZURE_ASSISTANTS_FUNCTIONS_URL &&
-      process.env.AZURE_ASSISTANTS_FUNCTIONS_URL != ''
-    ) {
+
+    /**
+     * Add Azure Functions feature to assistants
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    if ( process.env.ENABLE_PERMISSION_MANAGE == "true" ) {
       const matchingTool = run.tools.find((tool) => tool.function.name === functionCall.name);
       if (matchingTool) {
         // args["functionInfo"] = matchingTool

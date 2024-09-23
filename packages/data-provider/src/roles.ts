@@ -34,6 +34,14 @@ export enum PermissionTypes {
    * Type for Multi-Conversation Permissions
    */
   MULTI_CONVO = 'MULTI_CONVO',
+
+  /**
+   * Type for Assistant Creator Permissions
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+
+  ASSISTANT_CREATOR = 'ASSISTANT_CREATOR',
 }
 
 /**
@@ -46,6 +54,15 @@ export enum Permissions {
   SHARE = 'SHARE',
 }
 
+/**
+ * Creates a schema for the Assistant Creator Permissions
+ * @Organization Intelequia
+ * @Author Enrique M. Pedroza Castillo
+ */
+export const AssistantCreatorPermissionsSchema = z.object({
+  [Permissions.USE]: z.boolean().default(true),
+});
+
 export const promptPermissionsSchema = z.object({
   [Permissions.SHARED_GLOBAL]: z.boolean().default(false),
   [Permissions.USE]: z.boolean().default(true),
@@ -54,7 +71,7 @@ export const promptPermissionsSchema = z.object({
 });
 
 export const bookmarkPermissionsSchema = z.object({
-  [Permissions.USE]: z.boolean().default(true),
+  [Permissions.USE]: z.boolean().default(false),
 });
 
 export const agentPermissionsSchema = z.object({
@@ -74,6 +91,12 @@ export const roleSchema = z.object({
   [PermissionTypes.BOOKMARKS]: bookmarkPermissionsSchema,
   [PermissionTypes.AGENTS]: agentPermissionsSchema,
   [PermissionTypes.MULTI_CONVO]: multiConvoPermissionsSchema,
+  /**
+   * Add Assistant_Creator Permissions to the Role Schema
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  [PermissionTypes.ASSISTANT_CREATOR]: AssistantCreatorPermissionsSchema,
 });
 
 export type TRole = z.infer<typeof roleSchema>;
@@ -81,6 +104,12 @@ export type TAgentPermissions = z.infer<typeof agentPermissionsSchema>;
 export type TPromptPermissions = z.infer<typeof promptPermissionsSchema>;
 export type TBookmarkPermissions = z.infer<typeof bookmarkPermissionsSchema>;
 export type TMultiConvoPermissions = z.infer<typeof multiConvoPermissionsSchema>;
+/**
+ * Export the Assistant Creator Permissions Type
+ * @Organization Intelequia
+ * @Author Enrique M. Pedroza Castillo
+ */
+export type TAssistantCreatorPermissions = z.infer<typeof AssistantCreatorPermissionsSchema>;
 
 const defaultRolesSchema = z.object({
   [SystemRoles.ADMIN]: roleSchema.extend({
@@ -103,6 +132,14 @@ const defaultRolesSchema = z.object({
     [PermissionTypes.MULTI_CONVO]: multiConvoPermissionsSchema.extend({
       [Permissions.USE]: z.boolean().default(true),
     }),
+    /**
+     * Add Assistant_Creator Permissions to the Admin Role
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    [PermissionTypes.ASSISTANT_CREATOR]: AssistantCreatorPermissionsSchema.extend({
+      [Permissions.USE]: z.boolean().default(true),
+    }),
   }),
   [SystemRoles.USER]: roleSchema.extend({
     name: z.literal(SystemRoles.USER),
@@ -110,6 +147,12 @@ const defaultRolesSchema = z.object({
     [PermissionTypes.BOOKMARKS]: bookmarkPermissionsSchema,
     [PermissionTypes.AGENTS]: agentPermissionsSchema,
     [PermissionTypes.MULTI_CONVO]: multiConvoPermissionsSchema,
+    /**
+     * Add Assistant_Creator Permissions to the User Role
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    [PermissionTypes.ASSISTANT_CREATOR]: AssistantCreatorPermissionsSchema,
   }),
 });
 
@@ -120,6 +163,12 @@ export const roleDefaults = defaultRolesSchema.parse({
     [PermissionTypes.BOOKMARKS]: {},
     [PermissionTypes.AGENTS]: {},
     [PermissionTypes.MULTI_CONVO]: {},
+    /**
+     * Add Assistant_Creator Permissions to the Admin Role
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    [PermissionTypes.ASSISTANT_CREATOR]: {},
   },
   [SystemRoles.USER]: {
     name: SystemRoles.USER,
@@ -127,5 +176,11 @@ export const roleDefaults = defaultRolesSchema.parse({
     [PermissionTypes.BOOKMARKS]: {},
     [PermissionTypes.AGENTS]: {},
     [PermissionTypes.MULTI_CONVO]: {},
+    /**
+     * Add Assistant_Creator Permissions to the Admin Role
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    [PermissionTypes.ASSISTANT_CREATOR]: {},
   },
 });

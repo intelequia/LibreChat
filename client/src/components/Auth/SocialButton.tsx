@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const SocialButton = ({ id, enabled, serverDomain, oauthPath, Icon, label, autoRedirect }) => {
   const [isHovered, setIsHovered] = useState(false);
