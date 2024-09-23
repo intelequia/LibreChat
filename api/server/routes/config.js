@@ -5,7 +5,7 @@ const { getProjectByName } = require('~/models/Project');
 const { isEnabled } = require('~/server/utils');
 const { getLogStores } = require('~/cache');
 const { logger } = require('~/config');
-const jwtDecode = require('jsonwebtoken/decode');
+const {verifyAssistantConfigurations} = require('~/utils');
 
 const router = express.Router();
 const emailLoginEnabled =
@@ -20,52 +20,13 @@ const publicSharedLinksEnabled =
   (process.env.ALLOW_SHARED_LINKS_PUBLIC === undefined ||
     isEnabled(process.env.ALLOW_SHARED_LINKS_PUBLIC));
 
-async function verifyAssistantConfigurations(headers, cachedValue) {
-  let jwt = '';
-  let found = false;
-  for (let header of headers) {
-    if (header.includes('Bearer')) {
-      jwt = header.replace('Bearer ', '');
-      found = true;
-      break;
-    }
-  }
-
-  if (global.AssistantCreationPermissions) {
-    if (global.AssistantCreationPermissions.length === 0) {
-      return false;
-    }
-  } else {
-    return true;
-  }
-
-  if (found && jwt !== 'undefined' && jwt !== '' && jwt !== 'null') {
-    let userToken = jwtDecode(jwt);
-    const userGroups = global.myCache.get(userToken.id);
-    if (userGroups) {
-      for (let group of userGroups) {
-        if (global.AssistantCreationPermissions.includes(group)) {
-          return true;
-        }
-      }
-    }
-  }
-
-  // en caso de que no exista jwt, verificamos si existe en cache
-  if (cachedValue && (jwt === 'undefined' || jwt === '' || jwt === 'null')) {
-    return cachedValue.userAssistantConfigPermission;
-  }
-
-  // por defecto no tiene permisos
-  return false;
-}
 router.get('/', async function (req, res) {
   const cache = getLogStores(CacheKeys.CONFIG_STORE);
   const cachedStartupConfig = await cache.get(CacheKeys.STARTUP_CONFIG);
-  // if (cachedStartupConfig && !haveToUpdateData) {
-  //   res.send(cachedStartupConfig);
-  //   return;
-  // }
+  if (cachedStartupConfig && !haveToUpdateData) {
+    res.send(cachedStartupConfig);
+    return;
+  }
 
   const isBirthday = () => {
     const today = new Date();
@@ -124,11 +85,7 @@ router.get('/', async function (req, res) {
     if (typeof process.env.CUSTOM_FOOTER === 'string') {
       payload.customFooter = process.env.CUSTOM_FOOTER;
     }
-
-    payload.userAssistantConfigPermission = await verifyAssistantConfigurations(
-      req.rawHeaders,
-      cachedStartupConfig,
-    );
+  
 
     await cache.set(CacheKeys.STARTUP_CONFIG, payload);
     return res.status(200).send(payload);

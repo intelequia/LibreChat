@@ -1,17 +1,14 @@
 import { Content, Portal, Root } from '@radix-ui/react-popover';
 import { alternateName, isAssistantsEndpoint } from 'librechat-data-provider';
-import { useGetEndpointsQuery, useGetStartupConfig } from 'librechat-data-provider/react-query';
-import { useEffect, type FC } from 'react';
+import { useGetEndpointsQuery } from 'librechat-data-provider/react-query';
+import { type FC } from 'react';
 import { useChatContext, useAssistantsMapContext } from '~/Providers';
 import EndpointItems from './Endpoints/MenuItems';
 import TitleButton from './UI/TitleButton';
 import { mapEndpoints } from '~/utils';
 
 const EndpointsMenu: FC = () => {
-  const { data: startupConfig } = useGetStartupConfig({
-    cacheTime: 0,
-    staleTime: 0,
-  });
+
   const { data: endpoints = [] } = useGetEndpointsQuery({
     select: mapEndpoints,
   });
@@ -24,32 +21,6 @@ const EndpointsMenu: FC = () => {
     isAssistantsEndpoint(endpoint) && assistantMap?.[endpoint ?? '']?.[assistant_id ?? ''];
   const assistantName = (assistant && assistant?.name) || 'Assistant';
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const jwt = localStorage.getItem('token');
-      try {
-        const response = await fetch('/api/config', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${jwt}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error('Network response was not ok');
-        }
-
-        const data = await response.json();
-        localStorage.setItem('userAssistantConfigPermission', data.userAssistantConfigPermission);
-      } catch (error) {
-        console.error('Error fetching config:', error);
-      }
-    };
-
-    fetchData();
-  }, [startupConfig]);
-
   if (!endpoint) {
     console.warn('No endpoint selected');
     return null;
@@ -57,27 +28,6 @@ const EndpointsMenu: FC = () => {
 
   const primaryText = assistant ? assistantName : (alternateName[endpoint] ?? endpoint ?? '') + ' ';
 
-  const handleClick = async () => {
-    const jwt = localStorage.getItem('token');
-    try {
-      const response = await fetch('/api/config', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${jwt}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
-
-      const data = await response.json();
-      localStorage.setItem('userAssistantConfigPermission', data.userAssistantConfigPermission);
-    } catch (error) {
-      console;
-    }
-  };
 
   return (
     <Root>
@@ -93,7 +43,6 @@ const EndpointsMenu: FC = () => {
               minWidth: 'max-content',
               zIndex: 'auto',
             }}
-            onClick={handleClick}
           >
             <Content
               side="bottom"
