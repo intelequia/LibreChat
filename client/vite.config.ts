@@ -62,7 +62,7 @@ export default defineConfig({
       workbox: {
         cleanupOutdatedCaches: true, // Add this line to clean up outdated caches
         globPatterns: ['assets/**/*.{png,jpg,svg,ico}', '**/*.{js,css,html,ico,woff2}'],
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
       manifest: {
         name: 'Intelewriter',
