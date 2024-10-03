@@ -200,4 +200,33 @@ async function updateUserInfoInCache(jwt,user) {
 
 }
 
-module.exports =  {intelequiaConfigLoader, updateUserInfoInCache};
+async function SaveFunctionsInCache(AssistantList){
+  var functions = global.myCache.get("functions");
+  AssistantList.forEach((assistant) => {
+    assistant.tools.forEach((tool) => {
+      if(tool.function){
+        if (IsToolAFunction(tool.function.name)) {
+          functions.forEach((func) => {
+            if(func.name == tool.function.name){
+              func.specifications = tool
+            }
+          });
+        }
+      }
+    });
+  });
+  global.myCache.set("functions", functions, process.env.FUNCTIONS_CACHE_TTL);
+}
+
+async function GetFunctionSpecification(ToolName){
+    const functions = global.myCache.get("functions");
+    const f = functions.find((func) => func.name === ToolName);
+    return f.specifications;  
+}
+
+async function IsToolAFunction(ToolName){
+  const functions = global.myCache.get("functions");
+  return functions.some((func) => func.name === ToolName);
+}
+
+module.exports =  {intelequiaConfigLoader, updateUserInfoInCache, IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification};
