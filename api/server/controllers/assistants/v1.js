@@ -7,6 +7,7 @@ const { uploadImageBuffer } = require('~/server/services/Files/process');
 const { getOpenAIClient, fetchAssistants } = require('./helpers');
 const { deleteFileByFilter } = require('~/models/File');
 const { logger } = require('~/config');
+const { IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification } = require('~/utils');
 
 /**
  * Create an assistant.
@@ -120,17 +121,27 @@ const patchAssistant = async (req, res) => {
 
     const assistant_id = req.params.id;
     const { endpoint: _e, conversation_starters, ...updateData } = req.body;
-    updateData.tools = (updateData.tools ?? [])
-      .map((tool) => {
+    updateData.tools = (await Promise.all(
+      (updateData.tools ?? [])
+      .map(async (tool) => {
         if (typeof tool !== 'string') {
           if (tool.type === 'retrieval' && _e === 'azureAssistants') {tool.type = 'file_search';}
 
           return tool;
         }
 
+        /**
+         * Verifies if Tool is within Functions specifications
+         * @Organization Intelequia
+         * @Author Enrique M. Pedroza Castillo
+         */
+        if (await IsToolAFunction(tool)) {
+          return  await GetFunctionSpecification(tool)
+        }
+
         return req.app.locals.availableTools[tool];
       })
-      .filter((tool) => tool);
+    )).filter((tool) => tool);
 
     if (openai.locals?.azureOptions && updateData.model) {
       updateData.model = openai.locals.azureOptions.azureOpenAIApiDeploymentName;
@@ -197,6 +208,14 @@ const deleteAssistant = async (req, res) => {
 const listAssistants = async (req, res) => {
   try {
     const body = await fetchAssistants({ req, res });
+
+    /**
+     * saves functions specifications 
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    SaveFunctionsInCache(body.data);
+    
     res.json(body);
   } catch (error) {
     logger.error('[/assistants] Error listing assistants', error);
