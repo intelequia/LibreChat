@@ -102,31 +102,45 @@ async function updateUsersRoles(graphClient){
  */
 async function loadUserGroupsFromGraph(graphClient){
   logger.info(`[intelequiaConfigLoader] Fetching azure groups: Downloading groups from azure `);
+  
   const users = await User.find({  }).select('email').lean();
   var userEmails = [];
 
   users.map((user) => {
     userEmails.push(user.email);
   })
-  let filter = userEmails.map(email => `userPrincipalName eq '${email}'`).join(' or ');
 
-  try {
-    // Value is parameter inside Graph API response
-    const {value} = await graphClient.api('/users?$select=id,mail&$filter=' + filter).get();
-    for (const user of value) {
-      const result = await graphClient.api('/users/' + user.id + '/joinedTeams').get();
-      var userGroups = result.value;
-      var groupsIds = [];
-      
-      for (const group of userGroups) 
-        groupsIds.push(group.id);
-      const dbUser = users.find(u => u.email == user.mail);
-
-      global.myCache.set(dbUser._id.toString(), groupsIds,process.env.USER_GROUPS_CACHE_TTL);
+  var filter = "";
+  for(let i = 0; i < userEmails.length; i++){
+    if( i % 15 == 0 ){
+      try {
+        // Value is parameter inside Graph API response
+        const {value} = await graphClient.api('/users?$select=id,mail&$filter=' + filter).get();
+        for (const user of value) {
+          const result = await graphClient.api('/users/' + user.id + '/joinedTeams').get();
+          var userGroups = result.value;
+          var groupsIds = [];
+          
+          for (const group of userGroups) 
+            groupsIds.push(group.id);
+          const dbUser = users.find(u => u.email == user.mail);
+    
+          global.myCache.set(dbUser._id.toString(), groupsIds,process.env.USER_GROUPS_CACHE_TTL);
+        }
+        filter = "";
+      } catch (error) {
+        console.log(error)
+        logger.error(`[intelequiaConfigLoader] Fetching azure groups: Fetching remote configuration file at URL "${url}"`);
+      }
     }
-  } catch (error) {
-    console.log(error)
-    logger.error(`[intelequiaConfigLoader] Fetching azure groups: Fetching remote configuration file at URL "${url}"`);
+    else{
+      filter = userEmails.map(email => `userPrincipalName eq '${email}'`).join(' or ');
+      filter += `userPrincipalName eq '${userEmails[i]}'`;
+
+      if( !( (i+1) % 15 == 0 || i == userEmails.length - 1)){
+        filter += ' or ';
+      }
+    }
   }
 }
 
