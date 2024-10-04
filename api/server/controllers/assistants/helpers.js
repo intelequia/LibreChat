@@ -82,7 +82,7 @@ const listAllAssistants = async ({ req, res, version, query }) => {
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
    */
-  if (global.permissions) {
+  if (global.myCache.get("permissions")) {
     const response = await openai.beta.assistants.list({
       ...query,
       after: afterToken,
