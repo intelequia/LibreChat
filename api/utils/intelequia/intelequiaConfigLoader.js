@@ -123,9 +123,10 @@ async function loadUserGroupsFromGraph(graphClient){
           
           for (const group of userGroups) 
             groupsIds.push(group.id);
+
           const dbUser = users.find(u => u.email == user.mail);
-    
-          global.myCache.set(dbUser._id.toString(), groupsIds,process.env.USER_GROUPS_CACHE_TTL);
+          if(dbUser)
+            global.myCache.set(dbUser._id.toString(), groupsIds,process.env.USER_GROUPS_CACHE_TTL);
         }
         filter = "";
       } catch (error) {
