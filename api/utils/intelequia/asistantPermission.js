@@ -12,7 +12,7 @@ const jwtDecode = require('jsonwebtoken/decode');
 
 async function verifyAssistantPermissions(userId, allAssistants) {
   const targetGroupIds = global.myCache.get(userId);
-  const assistants = global.permissions;
+  const assistants = global.myCache.get("permissions");
   const result = [];
 
   if( targetGroupIds == null ){
