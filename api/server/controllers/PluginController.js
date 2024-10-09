@@ -2,7 +2,7 @@ const { promises: fs } = require('fs');
 const { CacheKeys } = require('librechat-data-provider');
 const { addOpenAPISpecs } = require('~/app/clients/tools/util/addOpenAPISpecs');
 const { getLogStores } = require('~/cache');
-
+const {filterPluginsByName} = require('~/utils');
 /**
  * Filters out duplicate plugins from the list of plugins.
  *
@@ -75,6 +75,13 @@ const getAvailablePluginsController = async (req, res) => {
     } else {
       plugins = plugins.filter((plugin) => !filteredTools.includes(plugin.pluginKey));
     }
+
+    /**
+     * Filters out plugins that are not enabled in the constant file.
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    plugins = await filterPluginsByName(plugins);
 
     await cache.set(CacheKeys.PLUGINS, plugins);
     res.status(200).json(plugins);

@@ -18,17 +18,11 @@ import PluginAuthForm from './PluginAuthForm';
 function PluginStoreDialog({ isOpen, setIsOpen }: TPluginStoreDialogProps) {
   const localize = useLocalize();
   const { user } = useAuthContext();
-
-  /**
-   * Stores Plugins in a State to modify filter them
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  let pluginsQuery = useAvailablePluginsQuery();
-  const [availablePlugins, setAvailablePlugins] = useState(pluginsQuery.data);
-
+  const { data: availablePlugins } = useAvailablePluginsQuery();
   const { setTools } = useSetIndexOptions();
+
   const [userPlugins, setUserPlugins] = useState<string[]>([]);
+
   const {
     maxPage,
     setMaxPage,
@@ -102,29 +96,11 @@ function PluginStoreDialog({ isOpen, setIsOpen }: TPluginStoreDialogProps) {
     plugin.name.toLowerCase().includes(searchValue.toLowerCase()),
   );
 
-
-  /**
-   * Filter plugins by name
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  const enabledPluginsNames = ["DALL-E","DALL-E-3","Azure AI Functions","Azure AI Search","Google","Web Search"]
-
-  const filteredPluginsByName = availablePlugins?.filter((plugin) =>
-    enabledPluginsNames.includes(plugin.name)
-  );
-
   useEffect(() => {
-    if (filteredPluginsByName) {
-      setAvailablePlugins (filteredPluginsByName);
-    }
-  }, [availablePlugins]);
-
-  useEffect(() => {
-
     if (user && user.plugins) {
       setUserPlugins(user.plugins);
     }
+
     if (filteredPlugins) {
       setMaxPage(Math.ceil(filteredPlugins.length / itemsPerPage));
       if (searchChanged) {
@@ -143,7 +119,6 @@ function PluginStoreDialog({ isOpen, setIsOpen }: TPluginStoreDialogProps) {
     setCurrentPage,
     setSearchChanged,
   ]);
-  debugger
 
   return (
     <Dialog

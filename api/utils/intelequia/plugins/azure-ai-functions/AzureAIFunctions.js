@@ -9,8 +9,7 @@ class AzureAIFunctions extends Tool {
     this.returnMetadata = fields.returnMetadata ?? false;
 
     this.name = 'azure-ai-functions';
-    this.description =
-      'Use the \'azure-ai-functions\' tool to retrieve search results relevant to your input';
+    this.description = 'Use the \'azure-ai-functions\' tool to retrieve search results relevant to your input';
     let apiKey = process.env.AZURE_ASSISTANTS_API_KEY;
     this.apiKey = apiKey ?? undefined;
     this.override = fields.override ?? false;
