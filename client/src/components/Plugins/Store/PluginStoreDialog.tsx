@@ -27,7 +27,6 @@ function PluginStoreDialog({ isOpen, setIsOpen }: TPluginStoreDialogProps) {
   let pluginsQuery = useAvailablePluginsQuery();
   const [availablePlugins, setAvailablePlugins] = useState(pluginsQuery.data);
 
-
   const { setTools } = useSetIndexOptions();
   const [userPlugins, setUserPlugins] = useState<string[]>([]);
   const {
@@ -109,7 +108,7 @@ function PluginStoreDialog({ isOpen, setIsOpen }: TPluginStoreDialogProps) {
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
    */
-  const enabledPluginsNames = ["DALL-E","DALL-E-3","Azure AI Functions","Azure AI Search"]
+  const enabledPluginsNames = ["DALL-E","DALL-E-3","Azure AI Functions","Azure AI Search","Google","Web Search"]
 
   const filteredPluginsByName = availablePlugins?.filter((plugin) =>
     enabledPluginsNames.includes(plugin.name)
