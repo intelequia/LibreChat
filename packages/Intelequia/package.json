@@ -1,0 +1,14 @@
+{
+  "name": "intelequia",
+  "version": "1.0.0",
+  "description": "Intelewriter implementations",
+  "main": "index.js",
+  "scripts": {
+  },
+  "exports":{
+    ".": {
+      "require":"./index.js"
+    }
+  },
+  "license": "ISC"
+}
