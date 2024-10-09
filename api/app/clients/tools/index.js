@@ -19,7 +19,12 @@ const GoogleSearchAPI = require('./structured/GoogleSearch');
 const StructuredWolfram = require('./structured/Wolfram');
 const TavilySearchResults = require('./structured/TavilySearchResults');
 const TraversaalSearch = require('./structured/TraversaalSearch');
-const AzureAIFunctions = require('./structured/AzureAIFunctions');
+/**
+ * Intelequia Plugins
+ * @Organization Intelequia
+ * @Author Enrique M. Pedroza Castillo
+ */
+const {AzureAIFunctions} = require("~/utils")
 
 module.exports = {
   availableTools,
