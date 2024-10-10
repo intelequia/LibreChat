@@ -1,9 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { Dialog, DialogPanel, DialogTitle, Description } from '@headlessui/react';
 import { useFormContext } from 'react-hook-form';
 import { isAgentsEndpoint } from 'librechat-data-provider';
-import { useUpdateUserPluginsMutation } from 'librechat-data-provider/react-query';
+import { useUpdateUserPluginsMutation, useAvailablePluginsQuery } from 'librechat-data-provider/react-query';
 import type {
   AssistantsEndpoint,
   EModelEndpoint,
@@ -27,7 +27,22 @@ function ToolSelectDialog({
 }) {
   const localize = useLocalize();
   const { getValues, setValue } = useFormContext();
-  const { data: tools } = useAvailableToolsQuery(endpoint);
+
+/** Changed to useAvailableToolsQuery instead of useAvailablePluginsQuery, now retrieves all tools/Plugins
+ * @Organization Intelequia
+ * @Author Enrique M.Pedroza Castillo
+ */
+  const toolsQuery = useAvailableToolsQuery(endpoint);
+  const [tools, setTools] = useState(toolsQuery?.data);
+  const toolQuery = useAvailablePluginsQuery();
+  useEffect(() => {
+    if(toolQuery){
+      if(toolQuery.data){
+        setTools(toolQuery.data)
+      }
+    }
+  }, [toolQuery]);
+
   const isAgentTools = isAgentsEndpoint(endpoint);
 
   const {
@@ -122,6 +137,7 @@ function ToolSelectDialog({
   );
 
   useEffect(() => {
+    console.log("======>",tools)
     if (filteredTools) {
       setMaxPage(Math.ceil(filteredTools.length / itemsPerPage));
       if (searchChanged) {

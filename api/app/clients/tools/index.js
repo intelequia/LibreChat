@@ -24,7 +24,10 @@ const TraversaalSearch = require('./structured/TraversaalSearch');
  * @Organization Intelequia
  * @Author Enrique M. Pedroza Castillo
  */
-const {AzureAIFunctions} = require("~/utils")
+const {
+  AzureAIFunctions,
+  Dataverse
+} = require("~/utils")
 
 module.exports = {
   availableTools,
@@ -48,4 +51,5 @@ module.exports = {
   TavilySearchResults,
   TraversaalSearch,
   AzureAIFunctions,
+  Dataverse
 };
