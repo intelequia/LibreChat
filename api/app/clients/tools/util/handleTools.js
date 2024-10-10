@@ -23,13 +23,16 @@ const {
   TraversaalSearch,
   StructuredWolfram,
   TavilySearchResults,
-  AzureAIFunctions
 } = require('../');
 const createFileSearchTool = require('./createFileSearchTool');
 const { loadToolSuite } = require('./loadToolSuite');
 const { loadSpecs } = require('./loadSpecs');
 const { logger } = require('~/config');
-const  {VerifyAzureAIFunctionsTool} = require('~/utils');
+const  {
+  VerifyAzureAIFunctionsTool,
+  AzureAIFunctions,
+  Dataverse
+} = require('~/utils');
 
 /**
  * Validates the availability and authentication of tools for a user based on environment variables or user-specific plugin authentication values.
@@ -169,6 +172,8 @@ const loadTools = async ({
     'azure-ai-search': functions ? StructuredACS : AzureAISearch,
     CodeBrew: CodeBrew,
     traversaal_search: TraversaalSearch,
+    AzureAIFunctions: AzureAIFunctions,
+    "Dataverse":Dataverse
   };
 
   const customConstructors = {
@@ -225,7 +230,7 @@ const loadTools = async ({
   if (functions) {
     toolConstructors.dalle = DALLE3;
     toolConstructors.codesherpa = CodeSherpa;
-    toolConstructors.AzureAIFunctions = AzureAIFunctions;
+    // toolConstructors.AzureAIFunctions = AzureAIFunctions;
   }
 
   const imageGenOptions = {
