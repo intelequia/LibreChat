@@ -30,10 +30,13 @@ const { loadSpecs } = require('./loadSpecs');
 const { logger } = require('~/config');
 const  {
   VerifyAzureAIFunctionsTool,
+  VerifyIntelequiaToolInstance,
   AzureAIFunctions,
-  Dataverse
+  Dataverse,
+  MicrosoftGraph,
 } = require('~/utils');
 
+const {BingSearch} = require('~/utils'); 
 /**
  * Validates the availability and authentication of tools for a user based on environment variables or user-specific plugin authentication values.
  * Tools without required authentication or with valid authentication are considered valid.
@@ -172,8 +175,11 @@ const loadTools = async ({
     'azure-ai-search': functions ? StructuredACS : AzureAISearch,
     CodeBrew: CodeBrew,
     traversaal_search: TraversaalSearch,
+    // intelequia Tools
     AzureAIFunctions: AzureAIFunctions,
-    "Dataverse":Dataverse
+    "Dataverse": Dataverse,
+    "bing-search": BingSearch,
+    MicrosoftGraph: MicrosoftGraph
   };
 
   const customConstructors = {
@@ -230,7 +236,6 @@ const loadTools = async ({
   if (functions) {
     toolConstructors.dalle = DALLE3;
     toolConstructors.codesherpa = CodeSherpa;
-    // toolConstructors.AzureAIFunctions = AzureAIFunctions;
   }
 
   const imageGenOptions = {
@@ -306,8 +311,14 @@ const loadTools = async ({
         requestedTools[tool] = value;
         continue;
       }
+      else {
+        const {status, value} = await VerifyIntelequiaToolInstance(tool, user, toolOptions,loadToolWithAuth,toolAuthFields,toolConstructors);
+        if(status){
+          requestedTools[tool] = value;
+          continue;
+        }
+      }
     }
-    
     if (functions) {
       remainingTools.push(tool);
     }
@@ -344,6 +355,7 @@ const loadTools = async ({
     if (!validTool) {
       continue;
     }
+    console.log(validTool)
     const plugin = await validTool();
 
     if (Array.isArray(plugin)) {

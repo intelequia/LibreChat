@@ -12,7 +12,6 @@ class AzureAIFunctions extends Tool {
     this.description = 'Use the \'azure-ai-functions\' tool to retrieve search results relevant to your input';
     let apiKey = process.env.AZURE_ASSISTANTS_API_KEY;
     this.apiKey = apiKey ?? undefined;
-    this.override = fields.override ?? false;
     const config = { apiKey };
 
     if (process.env.OPENAI_API_KEY && process.env.AZURE_ASSISTANTS_API_KEY) {
