@@ -68,7 +68,7 @@
     "name": "Azure AI Functions",
     "pluginKey": "azure-ai-functions",
     "description": "Use Azure AI Functions to perform various tasks like sentiment analysis, text summarization, and more.",
-    "icon": "https://azure.microsoft.com/en-us/patterns/styles/glyphs-icons/azure-blue.svg",
+    "icon": "/assets/Plugin-Icons/AzureAIFunctions.svg",
     "authConfig": [
       {
         "authField": "AZURE_RESOURSE_NAME",
@@ -83,17 +83,42 @@
     ]
   },
   {
+    "name": "Bing Search",
+    "pluginKey": "bing-search",
+    "description": "Use Bing Search to make request to bing search engine .",
+    "icon": "/assets/Plugin-Icons/BingSearch.svg",
+    "authConfig": [
+      {
+        "authField": "BING_SEARCH_V7_SUBSCRIPTION_KEY",
+        "label": "Bing Search API Key",
+        "description": "You need to provide your Endpoint for Azure AI Functions."
+      },
+      {
+        "authField": "BING_SEARCH_V7_ENDPOINT",
+        "label": "Bing Search Endpoint",
+        "description": "You need to provide your API Key for Azure AI Functions."
+      }
+    ]
+  },
+  {
     "name": "Dataverse",
     "pluginKey": "dataverse",
     "description": "Use Dataverse plugin to connect to your Dataverse instance",
-    "icon": "/assets/Dataverse_icons.svg",
+    "icon": "/assets/Plugin-Icons/Dataverse.svg",
     "authConfig": [
       {
         "authField": "DATAVERSE_LOGICAPPS_URL",
         "label": "Dataverse connection to Logic Apps",
         "description": "You need to provide your Endpoint for Azure AI Functions."
       }
-     
+    ]
+  },
+  {
+    "name": "Microsoft Graph",
+    "pluginKey": "microsoft-graph",
+    "description": "Create consults to Microsoft Graph API",
+    "icon": "/assets/Plugin-Icons/MicrosoftGraph.jpg",
+    "authConfig": [
     ]
   },
   {

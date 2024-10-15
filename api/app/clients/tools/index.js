@@ -26,7 +26,9 @@ const TraversaalSearch = require('./structured/TraversaalSearch');
  */
 const {
   AzureAIFunctions,
-  Dataverse
+  Dataverse,
+  MicrosoftGraph,
+  BingSearch
 } = require("~/utils")
 
 module.exports = {
@@ -50,6 +52,9 @@ module.exports = {
   StructuredWolfram,
   TavilySearchResults,
   TraversaalSearch,
+  // Intelequia Plugins
   AzureAIFunctions,
-  Dataverse
+  Dataverse,
+  MicrosoftGraph,
+  BingSearch
 };
