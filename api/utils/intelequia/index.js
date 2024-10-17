@@ -4,11 +4,14 @@ const assistantPermission = require('./asistantPermission');
 const toolsConfigurations = require('./toolsConfigurations');
 const plugins = require('./plugins');
 const constants = require('./constants');
+const dynamics = require('./dynamicsToken');
 module.exports = {
   intelequiaCountTokens,
+  ...dynamics,
   ...intelequiaConfigLoader, 
   ...assistantPermission,
   ...toolsConfigurations,
   ...plugins,
-  ...constants
+  ...constants,
+  ...dynamics
 }
