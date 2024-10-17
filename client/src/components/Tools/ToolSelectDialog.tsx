@@ -3,7 +3,7 @@ import { Search, X } from 'lucide-react';
 import { Dialog, DialogPanel, DialogTitle, Description } from '@headlessui/react';
 import { useFormContext } from 'react-hook-form';
 import { isAgentsEndpoint } from 'librechat-data-provider';
-import { useUpdateUserPluginsMutation, useAvailablePluginsQuery } from 'librechat-data-provider/react-query';
+import { useUpdateUserPluginsMutation } from 'librechat-data-provider/react-query';
 import type {
   AssistantsEndpoint,
   EModelEndpoint,
@@ -34,14 +34,13 @@ function ToolSelectDialog({
  */
   const toolsQuery = useAvailableToolsQuery(endpoint);
   const [tools, setTools] = useState(toolsQuery?.data);
-  const toolQuery = useAvailablePluginsQuery();
   useEffect(() => {
-    if(toolQuery){
-      if(toolQuery.data){
-        setTools(toolQuery.data)
+    if(toolsQuery){
+      if(toolsQuery.data){
+        setTools(toolsQuery.data)
       }
     }
-  }, [toolQuery]);
+  }, [toolsQuery]);
 
   const isAgentTools = isAgentsEndpoint(endpoint);
 

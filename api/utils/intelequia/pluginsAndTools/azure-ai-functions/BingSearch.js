@@ -17,7 +17,7 @@ class BingSearch extends Tool {
   async _call(data){
     if ( process.env.ENABLE_BING_SEARCH && process.env.ENABLE_BING_SEARCH == "true" ) {
 
-      const query = data;
+      const query = data.query ? data.query : data;
       const market = process.env.BING_SEARCH_MARKET || "es-es";
       const count = process.env.BING_SEARCH_RESULT_COUNT || 10;
       const responseFilter = process.env.BING_SEARCH_FILTER || "Webpages";
