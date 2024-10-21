@@ -2,7 +2,7 @@ const intelequiaCountTokens = require('./intelequiaTokenCount');
 const intelequiaConfigLoader = require('./intelequiaConfigLoader');
 const assistantPermission = require('./asistantPermission');
 const toolsConfigurations = require('./toolsConfigurations');
-const plugins = require('./plugins');
+const pluginsAndTools = require('./pluginsAndTools');
 const constants = require('./constants');
 const dynamics = require('./dynamicsToken');
 module.exports = {
@@ -11,7 +11,7 @@ module.exports = {
   ...intelequiaConfigLoader, 
   ...assistantPermission,
   ...toolsConfigurations,
-  ...plugins,
+  ...pluginsAndTools,
   ...constants,
   ...dynamics
 }

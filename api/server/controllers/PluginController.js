@@ -2,7 +2,7 @@ const { promises: fs } = require('fs');
 const { CacheKeys } = require('librechat-data-provider');
 const { addOpenAPISpecs } = require('~/app/clients/tools/util/addOpenAPISpecs');
 const { getLogStores } = require('~/cache');
-const {filterPluginsByName} = require('~/utils');
+const {filterPluginsByName, isToolEnabled } = require('~/utils');
 /**
  * Filters out duplicate plugins from the list of plugins.
  *
@@ -126,7 +126,7 @@ const getAvailableTools = async (req, res) => {
     });
 
     const tools = authenticatedPlugins.filter(
-      (plugin) => req.app.locals.availableTools[plugin.pluginKey] !== undefined,
+      (plugin) => req.app.locals.availableTools[plugin.pluginKey] !== undefined || isToolEnabled(plugin.pluginKey),
     );
 
     await cache.set(CacheKeys.TOOLS, tools);
