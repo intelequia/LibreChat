@@ -13,13 +13,13 @@ class BingSearch extends Tool {
   }
 
   async _call(data){
-    
+
     global.appInsights.trackEvent({
       name: 'Plugin',
       properties: {
         toolName: data.toolName,
         userEmail: data.userEmail,
-        assistantId: data.assistant
+        assistantId: data.assistant ?? ""
       },
     });
 
