@@ -113,10 +113,10 @@ class MicrosoftGraph extends Tool {
       properties: {
         toolName: data.toolName,
         userEmail: data.userEmail,
-        assistantId: data.assistant
+        assistantId: data.assistant ?? ""
       },
     });
-    
+
     this.client = await this.createClient();
     const userInfo = await this.getUserId(data.userEmail)
     const graphSpecs =  await this.getGraphApi(data.query, userInfo)
