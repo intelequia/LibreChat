@@ -108,8 +108,16 @@ class MicrosoftGraph extends Tool {
   }
 
   async _call(data) {
+    global.appInsights.trackEvent({
+      name: 'Plugin',
+      properties: {
+        toolName: data.toolName,
+        userEmail: data.userEmail,
+        assistantId: data.assistant
+      },
+    });
+    
     this.client = await this.createClient();
-
     const userInfo = await this.getUserId(data.userEmail)
     const graphSpecs =  await this.getGraphApi(data.query, userInfo)
     return await this.searchInGraph(graphSpecs.url)
