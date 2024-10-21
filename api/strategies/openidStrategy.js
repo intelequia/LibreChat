@@ -7,7 +7,7 @@ const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { findUser, createUser, updateUser } = require('~/models/userMethods');
 const { hashToken } = require('~/server/utils/crypto');
 const { logger } = require('~/config');
-const {updateUserInfoInCache, getDynamicsTokenFromRefresh} = require('~/utils');
+const {updateUserInfoInCache, updateDynamicsInCache} = require('~/utils');
 
 let crypto;
 try {
@@ -188,8 +188,9 @@ async function setupOpenId() {
            * @Organization Intelequia
            * @Author Pablo Suárez Romero
            */
-          if( process.env.OPENID_DYNAMICS_ENABLE == "true" )
-            await getDynamicsTokenFromRefresh(tokenset.refresh_token);
+          if( process.env.ENABLE_DATAVERSE == "true" )
+            await updateDynamicsInCache(tokenset.refresh_token, user);
+            //await getDynamicsTokenFromRefresh(tokenset.refresh_token);
 
           
           /**

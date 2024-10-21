@@ -29,4 +29,12 @@ async function getDynamicsTokenFromRefresh(refresh_token){
   return response.data.access_token;
 }
 
-module.exports =  {getDynamicsTokenFromRefresh};
+async function updateDynamicsInCache(jwt,user) {
+
+  const token = getDynamicsTokenFromRefresh(jwt);
+
+  global.myCache.set(user._id.toString() + 'dynamics', token, process.env.USER_GROUPS_CACHE_TTL);  
+  
+}
+
+module.exports =  {getDynamicsTokenFromRefresh, updateDynamicsInCache};
