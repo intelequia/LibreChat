@@ -341,6 +341,7 @@ function createInProgressHandler(openai, thread_id, messages) {
  * @return {Promise<RunResponse>} A promise that resolves to an object containing the run and managed steps.
  */
 async function runAssistant({
+  userEmail = 0,
   openai,
   run_id,
   thread_id,
@@ -432,8 +433,14 @@ async function runAssistant({
      * @Author Enrique M. Pedroza Castillo
      */
     if ( process.env.ENABLE_PERMISSION_MANAGE == "true" ) {
-      const matchingTool = run.tools.find((tool) => tool.function.name === functionCall.name);
-      if (matchingTool) {
+
+      if(functionCall.name == "microsoft-graph"){
+        args["userEmail"] = userEmail;
+        args['toolName'] = functionCall.name;
+        args['assistant'] = run.assistant_id;
+        args['toolInput'] = JSON.parse(item.function.arguments);
+      }
+      else if (run.tools.find((tool) => tool.function.name === functionCall.name)) {
         // args["functionInfo"] = matchingTool
         args['toolName'] = functionCall.name;
         args['assistant'] = run.assistant_id;
@@ -455,6 +462,7 @@ async function runAssistant({
 
   // Recursive call with accumulated steps and messages
   return await runAssistant({
+    userEmail,
     openai,
     run_id: toolRun.id,
     thread_id,

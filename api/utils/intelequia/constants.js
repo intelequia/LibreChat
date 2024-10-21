@@ -10,7 +10,8 @@ const enabledPluginsNames = [
   "Bing Search"
 ]
 const intelequiaTools = [
-  "bing-search"
+  "bing-search",
+  "microsoft-graph"
 ]
 
 module.exports = {

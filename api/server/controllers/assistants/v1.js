@@ -7,7 +7,7 @@ const { uploadImageBuffer } = require('~/server/services/Files/process');
 const { getOpenAIClient, fetchAssistants } = require('./helpers');
 const { deleteFileByFilter } = require('~/models/File');
 const { logger } = require('~/config');
-const { IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification } = require('~/utils');
+const { IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification, isToolEnabled, GetToolSpecification } = require('~/utils');
 
 /**
  * Create an assistant.
@@ -137,6 +137,16 @@ const patchAssistant = async (req, res) => {
          */
         if (await IsToolAFunction(tool)) {
           return  await GetFunctionSpecification(tool)
+        }
+
+        /**
+         * Verifies if Tool is within Intelequia's Tool List
+         * @Organization Intelequia
+         * @Author Enrique M. Pedroza Castillo
+         */
+        if(isToolEnabled(tool)){
+          const specification =  await GetToolSpecification(tool)
+          return specification;
         }
 
         return req.app.locals.availableTools[tool];
