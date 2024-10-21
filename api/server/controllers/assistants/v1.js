@@ -145,8 +145,7 @@ const patchAssistant = async (req, res) => {
          * @Author Enrique M. Pedroza Castillo
          */
         if(isToolEnabled(tool)){
-          const specification =  await GetToolSpecification(tool)
-          return specification;
+          return await GetToolSpecification(tool)
         }
 
         return req.app.locals.availableTools[tool];
