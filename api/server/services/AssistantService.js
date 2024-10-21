@@ -341,7 +341,7 @@ function createInProgressHandler(openai, thread_id, messages) {
  * @return {Promise<RunResponse>} A promise that resolves to an object containing the run and managed steps.
  */
 async function runAssistant({
-  userEmail = 0,
+  userEmail = "",
   openai,
   run_id,
   thread_id,
