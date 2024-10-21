@@ -1,59 +1,118 @@
 const { Tool } = require('langchain/tools');
+const { Client } = require('@microsoft/microsoft-graph-client');
+const { ClientSecretCredential } = require('@azure/identity');
+const axios = require('axios');
 
 class MicrosoftGraph extends Tool {
-  constructor(fields = {}) {
-    super(fields);
-    /** @type {boolean} Used to initialize the Tool without necessary variables. */
-    this.override = fields.override ?? false;
-    /** @type {boolean} Necessary for output to contain all image metadata. */
-    this.returnMetadata = fields.returnMetadata ?? false;
 
-    this.name = 'Dataverse';
-    this.description = 'Use the Dataverse tool to coonect to your own Dataverse instance';
-    this.apiKey = undefined;
-    this.override = fields.override ?? false;
-    let config = { apiKey };
+  constructor(fields) {
+    super();
+    this.name = 'microsoft-graph';
+    this.description = 'Use the \'microsoft-graph\' tool to retrieve search results from Graph';
+    this.tenantId = process.env.MS_GRAPH_TENANT_ID;
+    this.clientId = process.env.MS_GRAPH_CLIENT_ID;
+    this.clientSecret = process.env.MS_GRAPH_CLIENT_SECRET;
+    this.resourceName = process.env.AZURE_RESOURSE_NAME;
+    this.deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME
+    this.apiVersion = process.env.AZURE_OPENAI_API_VERSION
+    this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY
+  }
 
-    if (process.env.ENABLE_MS_GRAPH && process.env.ENABLE_MS_GRAPH == "true") {
-      config.url = process.env.DATAVERSE_LOGICAPPS_URL;
-      config.method = "POST";
-      config.headers = { 'Content-Type' : 'application/json'};
+  /**
+   * Recieves the query and user personal information to create Graph API request
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   * @param {*} query 
+   * @param {*} userInfo 
+   * @returns Object
+   */
+  async getGraphApi(query, userInfo){
+    const url = `https://${this.resourceName}.openai.azure.com/openai/deployments/${this.deploymentName}/chat/completions?api-version=${this.apiVersion}`
+    const headers = {
+      "api-key" : this.azureOpenAIKey,
+      "Content-Type" : "application/json"
     }
+    const message = `Dime el body de una llamada a la API de Microsoft Graph para obtener "${query}".Ten en cuenta que la peticion se hara desde una aplicacion, con lo cual /me no funcionara. El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje. Ciñete a responderme el mensaje en json y nada más. Me vas a limitar los resultados a 10. En caso de que necesites informacion de mi usuario usa lo siguiente: ${userInfo}`
+    const body = {
+      "messages":[
+        {
+          "role" : "user",
+          "content" : message
+        }
+      ],
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "max_tokens": 800
+    }
+    const {data} = await axios.post(url,body,{headers})
+    const {choices} = data
+    const responseMessage = choices[0].message.content
+    const jsonString = responseMessage.replace(/```json\n|\n```/g, '').trim();
+    return JSON.parse(jsonString);
     
-    this.config = config;
+  }
+  /**
+   * Creates Client to make requests to MS Graph
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   * @returns 
+   */
+  async createClient() {
+    const credential = new ClientSecretCredential(this.tenantId, this.clientId, this.clientSecret);
 
-    if (!this.override && !this.apiKey) {
-      throw new Error(
-        'Missing AZURE_ASSISTANTS_API_KEY, INSTANCE_NAME, or AZURE_ASSISTANTS_FUNCTIONS_URL environment variable.',
-      );
-    }
+    const client = Client.initWithMiddleware({
+      authProvider: {
+        getAccessToken: async () => {
+          const tokenResponse = await credential.getToken('https://graph.microsoft.com/.default');
+          return tokenResponse.token;
+        }
+      },
 
-    if (this.override) {
-      return;
+    });
+    return client;
+  }
+
+  createFilter(parts) {
+    return parts.join(' OR ');
+  }
+
+  /**
+   * Makes the request to MS Graph and retrieves the data
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo 
+   * @param {*} url 
+   * @returns String
+   */
+  async searchInGraph(url) {
+    const graphUrl = url.replace("https://graph.microsoft.com/v1.0/","")
+
+    try {
+      const { value } = await this.client.api(graphUrl).get();
+      return JSON.stringify(value);
+    } catch (error) {
+      console.error("Error fetching users from Microsoft Graph:", error);
+      throw new Error("Unable to retrieve user information");
     }
   }
 
+  /**
+   * Method that Search User Data in Graph for self information requests
+   * @Author Enrique M. Pedroza Castillo
+   * @Organization Intelequia
+   * @param {*} user email 
+   * @returns String 
+   */
+  async getUserId(email){
+    const result = await this.client.api(`/users/${email}`).get();
+    return JSON.stringify(result);
+  }
+
   async _call(data) {
+    this.client = await this.createClient();
 
-    if ( process.env.ENABLE_MS_GRAPH && process.env.ENABLE_MS_GRAPH == "true" ) {
-      const url = this.config.url;
-      const method = this.config.method;
-      const headers = this.config.headers;
-      const body = data.toolInput;
-
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: JSON.stringify(body),
-      });
-
-      const json = await response.json();
-      if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
-      }
-
-      return JSON.stringify(json);
-    }
+    const userInfo = await this.getUserId(data.userEmail)
+    const graphSpecs =  await this.getGraphApi(data.query, userInfo)
+    return await this.searchInGraph(graphSpecs.url)
   }
 }
 

@@ -200,7 +200,7 @@ async function updateUserInfoInCache(jwt,user) {
     if(isAdmin)
       await User.updateOne({ _id: user._id }, { $set: { role: 'ADMIN' } });
   }
-
+  console.log(global.myCache.get(user._id.toString()))
 }
 
 async function SaveFunctionsInCache(AssistantList){

@@ -119,6 +119,34 @@
     "description": "Create consults to Microsoft Graph API",
     "icon": "/assets/Plugin-Icons/MicrosoftGraph.jpg",
     "authConfig": [
+      {
+        "authField": "MS_GRAPH_TENANT_ID",
+        "label": "Azure Graph Tenant ID"
+      },
+      {
+        "authField": "MS_GRAPH_CLIENT_ID",
+        "label": "Azure Graph Client ID"
+      },
+      {
+        "authField": "MS_GRAPH_CLIENT_SECRET",
+        "label": "Azure Graph Client Secret"
+      },
+      {
+        "authField": "AZURE_RESOURSE_NAME",
+        "label": "Azure Open AI Resource Name "
+      },
+      {
+        "authField": "AZURE_OPENAI_DEPLOYMENT_NAME",
+        "label": "Azure Open AI Deployment Name"
+      },
+      {
+        "authField": "AZURE_OPENAI_API_VERSION",
+        "label": "Azure Open AI API Version"
+      },
+      {
+        "authField": "AZURE_OPENAI_API_KEY",
+        "label": "Azure Open AI API Key"
+      }
     ]
   },
   {

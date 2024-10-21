@@ -559,8 +559,10 @@ const chatV1 = async (req, res) => {
         body.model = openai._options.model;
         openai.attachedFileIds = attachedFileIds;
         openai.visionPromise = visionPromise;
+        const userEmail = req.user.email;
         if (retry) {
           response = await runAssistant({
+            userEmail,
             openai,
             thread_id,
             run_id,
@@ -584,7 +586,7 @@ const chatV1 = async (req, res) => {
         sendInitialResponse();
 
         // todo: retry logic
-        response = await runAssistant({ openai, thread_id, run_id });
+        response = await runAssistant({ userEmail, openai, thread_id, run_id });
         return;
       }
 
