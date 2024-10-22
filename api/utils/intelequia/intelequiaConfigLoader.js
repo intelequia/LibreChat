@@ -202,6 +202,10 @@ async function updateUserInfoInCache(jwt,user) {
   }
 }
 
+async function saveGraphToken (token,user){
+  global.myCache.set(user.email.toString()+"-graph",token,process.env.USER_GROUPS_CACHE_TTL);
+}
+
 async function SaveFunctionsInCache(AssistantList){
   var functions = global.myCache.get("functions");
   AssistantList.forEach((assistant) => {
@@ -231,4 +235,11 @@ async function IsToolAFunction(ToolName){
   return functions.some((func) => func.name === ToolName);
 }
 
-module.exports =  {intelequiaConfigLoader, updateUserInfoInCache, IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification};
+module.exports =  {
+  intelequiaConfigLoader, 
+  updateUserInfoInCache, 
+  IsToolAFunction, 
+  SaveFunctionsInCache, 
+  GetFunctionSpecification,
+  saveGraphToken
+};

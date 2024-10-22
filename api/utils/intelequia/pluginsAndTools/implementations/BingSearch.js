@@ -17,8 +17,8 @@ class BingSearch extends Tool {
     global.appInsights.trackEvent({
       name: 'Plugin',
       properties: {
-        toolName: data.toolName,
-        userEmail: data.userEmail,
+        toolName: data.toolName ?? "bing-search",
+        userEmail: data.userEmail ?? "" ,
         assistantId: data.assistant ?? ""
       },
     });
