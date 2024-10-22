@@ -16,7 +16,7 @@ const { RunManager, waitForRun } = require('~/server/services/Runs');
 const { processMessages } = require('~/server/services/Threads');
 const { TextStream } = require('~/app/clients');
 const { logger } = require('~/config');
-
+const { intelequiaTools } = require ("~/utils")
 /**
  * Sorts, processes, and flattens messages to a single string.
  *
@@ -434,7 +434,7 @@ async function runAssistant({
      */
     if ( process.env.ENABLE_PERMISSION_MANAGE == "true" ) {
 
-      if(functionCall.name == "microsoft-graph"){
+      if( intelequiaTools.includes(functionCall.name)){
         args["userEmail"] = userEmail;
         args['toolName'] = functionCall.name;
         args['assistant'] = run.assistant_id;

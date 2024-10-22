@@ -32,10 +32,9 @@ const  {
   VerifyAzureAIFunctionsTool,
   VerifyIntelequiaToolInstance,
   AzureAIFunctions,
-  Dataverse,
 } = require('~/utils');
 
-const {BingSearch, MicrosoftGraph} = require('~/utils'); 
+const {BingSearch, MicrosoftGraph, Dataverse} = require('~/utils'); 
 /**
  * Validates the availability and authentication of tools for a user based on environment variables or user-specific plugin authentication values.
  * Tools without required authentication or with valid authentication are considered valid.
@@ -176,7 +175,7 @@ const loadTools = async ({
     traversaal_search: TraversaalSearch,
     // intelequia Tools
     AzureAIFunctions: AzureAIFunctions,
-    "Dataverse": Dataverse,
+    "dataverse": Dataverse,
     "bing-search": BingSearch,
     "microsoft-graph": MicrosoftGraph
   };

@@ -105,13 +105,7 @@
     "pluginKey": "dataverse",
     "description": "Use Dataverse plugin to connect to your Dataverse instance",
     "icon": "/assets/Plugin-Icons/Dataverse.svg",
-    "authConfig": [
-      {
-        "authField": "DATAVERSE_LOGICAPPS_URL",
-        "label": "Dataverse connection to Logic Apps",
-        "description": "You need to provide your Endpoint for Azure AI Functions."
-      }
-    ]
+    "authConfig": []
   },
   {
     "name": "Microsoft Graph",
