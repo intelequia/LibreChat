@@ -33,7 +33,7 @@ async function updateDynamicsInCache(jwt,user) {
 
   const token = getDynamicsTokenFromRefresh(jwt);
 
-  global.myCache.set(user._id.toString() + 'dynamics', token, process.env.USER_GROUPS_CACHE_TTL);  
+  await global.myCache.set(user.email.toString() + '-dynamics', token, process.env.USER_GROUPS_CACHE_TTL);  
   
 }
 

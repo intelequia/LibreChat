@@ -11,7 +11,8 @@ const enabledPluginsNames = [
 ]
 const intelequiaTools = [
   "bing-search",
-  "microsoft-graph"
+  "microsoft-graph",
+  "dataverse"
 ]
 
 module.exports = {
