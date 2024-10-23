@@ -1,7 +1,7 @@
 const { Tool } = require('langchain/tools');
+const qs = require('qs');
 
 const axios = require('axios');
-const { errorsToString } = require('librechat-data-provider');
 
 class MicrosoftGraph extends Tool {
 
@@ -18,6 +18,33 @@ class MicrosoftGraph extends Tool {
     this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY
   }
 
+  async getGraphTokenFromRefresh(refresh_token){
+    const tenantId = process.env.OPENID_TENANT_ID;
+    const clientId = process.env.OPENID_CLIENT_ID;
+    const clientSecret = process.env.OPENID_CLIENT_SECRET;
+    const scope = process.env.OPENID_SCOPE + " " + process.env.OPENAI_GRAPH_SCOPES;
+    const body = {
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token,
+      scope
+    }
+
+    try{
+      const response = await axios.post(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,  qs.stringify(body) , {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      });
+    
+      return response.data.access_token;
+    } catch (e){
+      console.error (e)
+    }
+
+  }
+
   /**
    * Recieves the query and user personal information to create Graph API request
    * @Organization Intelequia
@@ -26,13 +53,24 @@ class MicrosoftGraph extends Tool {
    * @param {*} userInfo 
    * @returns Object
    */
-  async getGraphApi(query, userInfo) {
+  async getGraphApi(query) {
     const url = `https://${this.resourceName}.openai.azure.com/openai/deployments/${this.deploymentName}/chat/completions?api-version=${this.apiVersion}`
     const headers = {
       "api-key": this.azureOpenAIKey,
       "Content-Type": "application/json"
     }
-    const message = `Dime el body de una llamada a la API de Microsoft Graph para obtener "${query}".Ten en cuenta que la peticion se hara desde una aplicacion, con lo cual /me no funcionara. El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje. Ciñete a responderme el mensaje en json y nada más. Me vas a limitar los resultados a 10`
+    const now = new Date()
+
+    const instructions = [
+      `Dime el body de una llamada a la API de Microsoft Graph para obtener "${query}".`,
+      `Ten en cuenta que la peticion se hara desde una aplicacion con permisos delegados`,
+      `El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje.`,
+      `Ciñete a responderme el mensaje en json y nada más.`,
+      `Me vas a limitar los resultados a 10.`,
+      `No uses urls con variables como {chat-id} o {user-id}`,
+      `Ten en cuenta que la fecha actual es: ${now}`
+    ]
+    const message = instructions.join(' ');
     const body = {
       "messages": [
         {
@@ -49,16 +87,18 @@ class MicrosoftGraph extends Tool {
     const responseMessage = choices[0].message.content
     const jsonString = responseMessage.replace(/```json\n|\n```/g, '').trim();
     return JSON.parse(jsonString);
-
   }
+
   /**
    * Creates Client to make requests to MS Graph
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
    * @returns 
    */
+
   async createClient(userEmail, url) {
-    const userAccessToken = global.myCache.get(userEmail + "-graph")
+    const cachedToken = global.myCache.get( userEmail + "-graph" )
+    const userAccessToken = await this.getGraphTokenFromRefresh ( cachedToken )
 
     try {
       const response = await axios.get(url, {

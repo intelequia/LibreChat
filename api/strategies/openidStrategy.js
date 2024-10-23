@@ -96,7 +96,7 @@ async function setupOpenId() {
       {
         client,
         params: {
-          scope: (process.env.OPENID_SCOPE + " " + process.env.OPENAI_GRAPH_SCOPES),
+          scope: (process.env.OPENID_SCOPE),
         },
       },
       async (tokenset, userinfo, done) => {
@@ -198,7 +198,7 @@ async function setupOpenId() {
            * @Author Enrique M. Pedroza Castillo
            */
           if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
-            await saveGraphToken(tokenset.access_token,user)
+            await saveGraphToken(tokenset.refresh_token,user)
 
           if (userinfo.picture && !user.avatar?.includes('manual=true')) {
             /** @type {string | undefined} */
