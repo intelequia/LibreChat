@@ -13,7 +13,5 @@ module.exports = {
   ...assistantPermission,
   ...toolsConfigurations,
   ...pluginsAndTools,
-  ...constants,
-  ...dynamics
-
+  ...constants
 }

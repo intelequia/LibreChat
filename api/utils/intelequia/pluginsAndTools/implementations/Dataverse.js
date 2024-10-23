@@ -6,14 +6,16 @@ class Dataverse extends Tool {
   constructor(fields) {
     super();
     this.name = 'dataverse';
-    this.description = 'Use the Dataverse tool to coonect to your own Dataverse instance';
+    this.description =  'Use the \'dataverse\' tool to retrieve search results from Dataverse/Dynamics';
 
     this.dataverseURL = process.env.DATAVERSE_URL;
 
     this.resourceName = process.env.AZURE_RESOURSE_NAME;
-    this.deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME
-    this.apiVersion = process.env.AZURE_OPENAI_API_VERSION
-    this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY
+    this.deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
+    this.apiVersion = process.env.AZURE_OPENAI_API_VERSION;
+    this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY;
+
+    this.prompt = process.env.DATAVERSE_PROMPT;
   }
 
   /**
@@ -30,12 +32,25 @@ class Dataverse extends Tool {
       "api-key" : this.azureOpenAIKey,
       "Content-Type" : "application/json"
     }
+
+    const systemPrompt = [
+      `Dime el body de una llamada a la API de Dataverse para obtener "${query}".`,
+      `Ten en cuenta que la peticion se hara desde una aplicacion. El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje.`,
+      `Ciñete a responderme el mensaje en json y nada más. Me vas a limitar los resultados a 10. La url de dynamics es ${this.dataverseURL} puedes sacar la información de las tablas incidents, accounts filtrado por la query`,
+      `En la tabla incidents los campos más importantes son title, ticketnumber, description, createdon, customerid_account (es el id de la tabla account).`,
+      `En la tabla account los campos importantes son name, description, inteleq_addressplaceholder, telephone1, inteleq_intereses.`,
+      `Recuerda filtrar los datos por lo que pide el usuario, usa la documentacion ofical para de la API de Dynamics 365 (Dataverse)para filtrar OData.`,
+      `Todas las busquedas son por nombres nunca va a ser por id`,
+      `${this.prompt}`
+    ]
+    const message = systemPrompt.join(' ');
+
+
     const body = {
       "messages":[
         {
           "role" : "user",
-          "content" :  `Dime el body de una llamada a la API de Dataverse para obtener "${query}".Ten en cuenta que la peticion se hara desde una aplicacion. El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje. Ciñete a responderme el mensaje en json y nada más. Me vas a limitar los resultados a 10. La url de dynamics es ${this.dataverseURL} puedes sacar la información de las tablas incidents, accounts filtrado por la query.,En la tabla incidents los campos más importantes son title, ticketnumber, description, createdon, customerid_account (es el id de la tabla account).
-En la tabla account los campos importantes son name, description, inteleq_addressplaceholder, telephone1, inteleq_intereses. Recuerda filtrar los datos por lo que pide el usuario, usa la documentacion ofical para de la API de Dynamics 365 (Dataverse)para filtrar OData.Todas las busquedas son por nombres nunca va a ser por id`
+          "content" :  message
         }
       ],
       "temperature": 0.7,
@@ -88,6 +103,15 @@ En la tabla account los campos importantes son name, description, inteleq_addres
 
 
   async _call(data) {
+    global.appInsights.trackEvent({
+      name: 'Plugin',
+      properties: {
+        toolName: data.toolName ?? "dataverse",
+        userEmail: data.userEmail ?? "",
+        assistantId: data.assistant ?? ""
+      },
+    });
+
     const token =  await global.myCache.get(data.userEmail.toString() + '-dynamics');  
 
     const dynamicsRequest = await this.getDataverseApi(data.query);
