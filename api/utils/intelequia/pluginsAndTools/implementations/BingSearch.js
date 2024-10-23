@@ -14,6 +14,15 @@ class BingSearch extends Tool {
 
   async _call(data){
 
+    global.appInsights.trackEvent({
+      name: 'Plugin',
+      properties: {
+        toolName: data.toolName ?? "bing-search",
+        userEmail: data.userEmail ?? "" ,
+        assistantId: data.assistant ?? ""
+      },
+    });
+
     const query = data.query ? data.query : data;
     const market = process.env.BING_SEARCH_MARKET || "es-es";
     const count = process.env.BING_SEARCH_RESULT_COUNT || 10;

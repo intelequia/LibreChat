@@ -7,7 +7,7 @@ const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { findUser, createUser, updateUser } = require('~/models/userMethods');
 const { hashToken } = require('~/server/utils/crypto');
 const { logger } = require('~/config');
-const {updateUserInfoInCache, updateDynamicsInCache} = require('~/utils');
+const {updateUserInfoInCache, updateDynamicsInCache, saveGraphToken} = require('~/utils');
 
 let crypto;
 try {
@@ -96,7 +96,7 @@ async function setupOpenId() {
       {
         client,
         params: {
-          scope: process.env.OPENID_SCOPE,
+          scope: (process.env.OPENID_SCOPE + " " + process.env.OPENAI_GRAPH_SCOPES),
         },
       },
       async (tokenset, userinfo, done) => {
@@ -201,6 +201,14 @@ async function setupOpenId() {
           if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
             await updateUserInfoInCache(tokenset.id_token,user);
           
+          /**
+           * Saves Graph Token
+           * @Organization Intelequia
+           * @Author Enrique M. Pedroza Castillo
+           */
+          if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
+            await saveGraphToken(tokenset.access_token,user)
+
           if (userinfo.picture && !user.avatar?.includes('manual=true')) {
             /** @type {string | undefined} */
             const imageUrl = userinfo.picture;

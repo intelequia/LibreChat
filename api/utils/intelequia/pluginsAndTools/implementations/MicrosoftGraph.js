@@ -1,7 +1,7 @@
 const { Tool } = require('langchain/tools');
-const { Client } = require('@microsoft/microsoft-graph-client');
-const { ClientSecretCredential } = require('@azure/identity');
+
 const axios = require('axios');
+const { errorsToString } = require('librechat-data-provider');
 
 class MicrosoftGraph extends Tool {
 
@@ -26,30 +26,30 @@ class MicrosoftGraph extends Tool {
    * @param {*} userInfo 
    * @returns Object
    */
-  async getGraphApi(query, userInfo){
+  async getGraphApi(query, userInfo) {
     const url = `https://${this.resourceName}.openai.azure.com/openai/deployments/${this.deploymentName}/chat/completions?api-version=${this.apiVersion}`
     const headers = {
-      "api-key" : this.azureOpenAIKey,
-      "Content-Type" : "application/json"
+      "api-key": this.azureOpenAIKey,
+      "Content-Type": "application/json"
     }
-    const message = `Dime el body de una llamada a la API de Microsoft Graph para obtener "${query}".Ten en cuenta que la peticion se hara desde una aplicacion, con lo cual /me no funcionara. El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje. Ciñete a responderme el mensaje en json y nada más. Me vas a limitar los resultados a 10. En caso de que necesites informacion de mi usuario usa lo siguiente: ${userInfo}`
+    const message = `Dime el body de una llamada a la API de Microsoft Graph para obtener "${query}".Ten en cuenta que la peticion se hara desde una aplicacion, con lo cual /me no funcionara. El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje. Ciñete a responderme el mensaje en json y nada más. Me vas a limitar los resultados a 10`
     const body = {
-      "messages":[
+      "messages": [
         {
-          "role" : "user",
-          "content" : message
+          "role": "user",
+          "content": message
         }
       ],
       "temperature": 0.7,
       "top_p": 0.95,
       "max_tokens": 800
     }
-    const {data} = await axios.post(url,body,{headers})
-    const {choices} = data
+    const { data } = await axios.post(url, body, { headers })
+    const { choices } = data
     const responseMessage = choices[0].message.content
     const jsonString = responseMessage.replace(/```json\n|\n```/g, '').trim();
     return JSON.parse(jsonString);
-    
+
   }
   /**
    * Creates Client to make requests to MS Graph
@@ -57,42 +57,28 @@ class MicrosoftGraph extends Tool {
    * @Author Enrique M. Pedroza Castillo
    * @returns 
    */
-  async createClient() {
-    const credential = new ClientSecretCredential(this.tenantId, this.clientId, this.clientSecret);
+  async createClient(userEmail, url) {
+    const userAccessToken = global.myCache.get(userEmail + "-graph")
 
-    const client = Client.initWithMiddleware({
-      authProvider: {
-        getAccessToken: async () => {
-          const tokenResponse = await credential.getToken('https://graph.microsoft.com/.default');
-          return tokenResponse.token;
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${userAccessToken}`
         }
-      },
-
-    });
-    return client;
+      });
+      return JSON.stringify(response.data);
+    } catch (error) {
+      console.error('Error en la llamada a Graph API:', error);
+      console.error('URL Requested: ',url)
+      if(error.status == 403)
+        return "You dont have permission"
+      if(error.status == 401 && userAccessToken == undefined)
+        return "Your Sesion has expired, Log in again"
+    }
   }
 
   createFilter(parts) {
     return parts.join(' OR ');
-  }
-
-  /**
-   * Makes the request to MS Graph and retrieves the data
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo 
-   * @param {*} url 
-   * @returns String
-   */
-  async searchInGraph(url) {
-    const graphUrl = url.replace("https://graph.microsoft.com/v1.0/","")
-
-    try {
-      const { value } = await this.client.api(graphUrl).get();
-      return JSON.stringify(value);
-    } catch (error) {
-      console.error("Error fetching users from Microsoft Graph:", error);
-      throw new Error("Unable to retrieve user information");
-    }
   }
 
   /**
@@ -102,17 +88,24 @@ class MicrosoftGraph extends Tool {
    * @param {*} user email 
    * @returns String 
    */
-  async getUserId(email){
+  async getUserId(email) {
     const result = await this.client.api(`/users/${email}`).get();
     return JSON.stringify(result);
   }
 
   async _call(data) {
-    this.client = await this.createClient();
+    global.appInsights.trackEvent({
+      name: 'Plugin',
+      properties: {
+        toolName: data.toolName ?? "microsoft-graph",
+        userEmail: data.userEmail ?? "",
+        assistantId: data.assistant ?? ""
+      },
+    });
 
-    const userInfo = await this.getUserId(data.userEmail)
-    const graphSpecs =  await this.getGraphApi(data.query, userInfo)
-    return await this.searchInGraph(graphSpecs.url)
+    const query = data.query ?? data;
+    const graphSpecs = await this.getGraphApi(query)
+    return await this.createClient(data.userEmail, graphSpecs.url);
   }
 }
 
