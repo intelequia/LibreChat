@@ -144,7 +144,7 @@ const patchAssistant = async (req, res) => {
          * @Organization Intelequia
          * @Author Enrique M. Pedroza Castillo
          */
-        if(isToolEnabled(tool)){
+        if(await isToolEnabled(tool)){
           return await GetToolSpecification(tool)
         }
 
