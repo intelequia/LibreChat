@@ -14,8 +14,6 @@ class Dataverse extends Tool {
     this.deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
     this.apiVersion = process.env.AZURE_OPENAI_API_VERSION;
     this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY;
-
-    this.prompt = process.env.DATAVERSE_PROMPT;
   }
 
   /**
@@ -33,16 +31,22 @@ class Dataverse extends Tool {
       "Content-Type" : "application/json"
     }
 
+    const now = new Date()
+
     const systemPrompt = [
       `Dime el body de una llamada a la API de Dataverse para obtener "${query}".`,
-      `Ten en cuenta que la peticion se hara desde una aplicacion. El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje.`,
-      `Ciñete a responderme el mensaje en json y nada más. Me vas a limitar los resultados a 10. La url de dynamics es ${this.dataverseURL} puedes sacar la información de las tablas incidents, accounts filtrado por la query`,
+      `Ten en cuenta que la peticion se hara desde una aplicacion con permisos delegados.`, 
+      `El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje.`,
+      `Ciñete a responderme el mensaje en json y nada más.`, 
+      `Me vas a limitar los resultados a 10.`,
+      `La url de dynamics es ${this.dataverseURL} puedes sacar la información de las tablas incidents, accounts filtrado por la query`,
       `En la tabla incidents los campos más importantes son title, ticketnumber, description, createdon, customerid_account (es el id de la tabla account).`,
       `En la tabla account los campos importantes son name, description, inteleq_addressplaceholder, telephone1, inteleq_intereses.`,
       `Recuerda filtrar los datos por lo que pide el usuario, usa la documentacion ofical para de la API de Dynamics 365 (Dataverse)para filtrar OData.`,
       `Todas las busquedas son por nombres nunca va a ser por id`,
-      `${this.prompt}`
+      `Ten en cuenta que la fecha actual es: ${now}`
     ]
+    
     const message = systemPrompt.join(' ');
 
 
