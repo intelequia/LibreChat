@@ -7,7 +7,7 @@ const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { findUser, createUser, updateUser } = require('~/models/userMethods');
 const { hashToken } = require('~/server/utils/crypto');
 const { logger } = require('~/config');
-const {updateUserInfoInCache, saveGraphToken} = require('~/utils');
+const {updateUserInfoInCache, updateDynamicsInCache, saveGraphToken} = require('~/utils');
 
 let crypto;
 try {
@@ -183,6 +183,15 @@ async function setupOpenId() {
             user.username = username;
             user.name = fullName;
           }
+          /**
+           * Get token to access dynamics if enabled
+           * @Organization Intelequia
+           * @Author Pablo Suárez Romero
+           */
+          if( process.env.ENABLE_DATAVERSE == "true" )
+            await updateDynamicsInCache(tokenset.refresh_token, user);
+            //await getDynamicsTokenFromRefresh(tokenset.refresh_token);
+
           
           /**
            * Load permission configuration files from remote repository
