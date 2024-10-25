@@ -16,23 +16,21 @@ class MicrosoftGraph extends Tool {
     this.deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME
     this.apiVersion = process.env.AZURE_OPENAI_API_VERSION
     this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY
+    this.userId = fields.userId;
   }
 
   async getGraphTokenFromRefresh(refresh_token){
-    const tenantId = process.env.OPENID_TENANT_ID;
-    const clientId = process.env.OPENID_CLIENT_ID;
-    const clientSecret = process.env.OPENID_CLIENT_SECRET;
     const scope = process.env.OPENID_SCOPE + " " + process.env.OPENAI_GRAPH_SCOPES;
     const body = {
       grant_type: 'refresh_token',
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: this.clientId,
+      client_secret: this.clientSecret,
       refresh_token,
       scope
     }
 
     try{
-      const response = await axios.post(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,  qs.stringify(body) , {
+      const response = await axios.post(`https://login.microsoftonline.com/${this.tenantId}/oauth2/v2.0/token`,  qs.stringify(body) , {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
         }
@@ -67,7 +65,7 @@ class MicrosoftGraph extends Tool {
       `El resultado me lo devuelves en json, y en un campo del json me pones la URL a la que tengo que llamar, en otro el tipo de llamada (si es POST, GET, PATCH, etc.) y en otro campo el body del mensaje.`,
       `Ciñete a responderme el mensaje en json y nada más.`,
       `Me vas a limitar los resultados a 10.`,
-      `No uses urls con variables como {chat-id} o {user-id}`,
+      `Es importante que no uses urls con variables como {chat-id} o {user-id}, el uso de variables esta prohibido`,
       `Ten en cuenta que la fecha actual es: ${now}`
     ]
     const message = instructions.join(' ');
@@ -134,18 +132,24 @@ class MicrosoftGraph extends Tool {
   }
 
   async _call(data) {
+    var userEmail = data.userEmail;
+    if (typeof data == "string"){
+      const User = require('~/models/User');
+      const { email } = await User.findOne({ _id: this.userId }).lean();
+      userEmail = email;
+    }
     global.appInsights.trackEvent({
       name: 'Plugin',
       properties: {
-        toolName: data.toolName ?? "microsoft-graph",
-        userEmail: data.userEmail ?? "",
+        toolName: "microsoft-graph",
+        userEmail: userEmail,
         assistantId: data.assistant ?? ""
       },
     });
 
     const query = data.query ?? data;
     const graphSpecs = await this.getGraphApi(query)
-    return await this.createClient(data.userEmail, graphSpecs.url);
+    return await this.createClient(userEmail, graphSpecs.url);
   }
 }
 

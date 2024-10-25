@@ -5,7 +5,7 @@ const enabledPluginsNames = [
   "Google",
   "Web Search",
   "Dataverse",
-  // "Microsoft Graph",
+  "Microsoft Graph",
   "Bing Search"
 ]
 const intelequiaTools = [
