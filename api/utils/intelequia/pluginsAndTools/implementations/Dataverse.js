@@ -14,6 +14,9 @@ class Dataverse extends Tool {
     this.deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
     this.apiVersion = process.env.AZURE_OPENAI_API_VERSION;
     this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY;
+
+    this.userId = fields.userId;
+
   }
 
   /**
@@ -107,16 +110,24 @@ class Dataverse extends Tool {
 
 
   async _call(data) {
+
+    var userEmail = data.userEmail;
+    if (typeof data == "string"){
+      const User = require('~/models/User');
+      const { email } = await User.findOne({ _id: this.userId }).lean();
+      userEmail = email;
+    }
+
     global.appInsights.trackEvent({
       name: 'Plugin',
       properties: {
-        toolName: data.toolName ?? "dataverse",
-        userEmail: data.userEmail ?? "",
+        toolName: "dataverse",
+        userEmail: userEmail ,
         assistantId: data.assistant ?? ""
       },
     });
 
-    const token =  await global.myCache.get(data.userEmail.toString() + '-dynamics');  
+    const token =  await global.myCache.get(userEmail.toString() + '-dynamics');  
 
     const dynamicsRequest = await this.getDataverseApi(data.query);
     const search = await this.searchInDynamics(dynamicsRequest, token);
