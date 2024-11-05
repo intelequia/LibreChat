@@ -19,6 +19,11 @@ const createAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
 
+    /**
+     * Custom event to track when an assistant has been created
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
     global.appInsights.trackEvent({
       name: 'AssistantCreated',
       properties: {
@@ -109,7 +114,11 @@ const patchAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
-
+    /**
+     * Custom event to track when an assistant has been updated
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
     global.appInsights.trackEvent({
       name: 'AssistantUpdated',
       properties: {
@@ -185,7 +194,11 @@ const deleteAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
-
+    /**
+     * Custom event to track when an assistant has been deleted
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
     global.appInsights.trackEvent({
       name: 'AssistantDeleted',
       properties: {

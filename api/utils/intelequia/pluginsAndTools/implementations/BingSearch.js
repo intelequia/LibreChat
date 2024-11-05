@@ -1,4 +1,5 @@
 const { Tool } = require('langchain/tools');
+const intelequiaCountTokens = require('../../intelequiaTokenCount')
 
 class BingSearch extends Tool {
 
@@ -6,7 +7,7 @@ class BingSearch extends Tool {
     super();
     this.name = 'bing-search';
     this.description = 'Use the \'bing-search\' tool to retrieve search results relevant to your input';
-        
+    this.userId = fields.userId;
     this.url = process.env.BING_SEARCH_V7_ENDPOINT + "/v7.0/search";
     this.method = "GET";
     this.apiKey = process.env.BING_SEARCH_V7_SUBSCRIPTION_KEY
@@ -14,14 +15,12 @@ class BingSearch extends Tool {
 
   async _call(data){
 
-    global.appInsights.trackEvent({
-      name: 'Plugin',
-      properties: {
-        toolName: data.toolName ?? "bing-search",
-        userEmail: data.userEmail ?? "" ,
-        assistantId: data.assistant ?? ""
-      },
-    });
+    var userEmail = data.userEmail;
+    if (typeof data == "string"){
+      const User = require('~/models/User');
+      const { email } = await User.findOne({ _id: this.userId }).lean();
+      userEmail = email;
+    }
 
     const query = data.query ? data.query : data;
     const market = process.env.BING_SEARCH_MARKET || "es-es";
@@ -51,8 +50,18 @@ class BingSearch extends Tool {
     if (!response.ok) {
       throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
     }
+    const searchResult = JSON.stringify(json)
+    global.appInsights.trackEvent({
+      name: 'Plugin',
+      properties: {
+        toolName: "bing-search",
+        userEmail: userEmail ,
+        assistantId: data.assistant ?? "",
+        messageLength: searchResult.length
+      },
+    });
 
-    return JSON.stringify(json);
+    return searchResult;
   }
 }
 

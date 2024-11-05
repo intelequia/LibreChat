@@ -411,7 +411,11 @@ const processFileUpload = async ({ req, res, file, metadata }) => {
   );
   const userId = result.user.toString();
   const { email } = await User.findOne({ userId }).lean();
-
+  /**
+   * Custom event to track when a user uploads files 
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
   global.appInsights.trackEvent({
     name: 'AzureUploadFile',
     properties: {

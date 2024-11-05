@@ -62,6 +62,11 @@ async function sendResponseTelemetry(req, conversationId, response, model)  {
   }
 
   const { completion, prompt } = intelequiaCountTokens(messagesHistory, model);
+  /**
+   * Custom event to track when assistant completion query has ended
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
   global.appInsights.trackEvent({
     name: 'AzureAssistantsAnswerEnded',
     properties: {
@@ -272,6 +277,11 @@ const chatV1 = async (req, res) => {
   };
 
   try {
+    /**
+     * Telemetry logs
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
     const messageTokens = intelequiaCountTokens(text, model);
     global.appInsights.trackEvent({
       name: 'AzureAssistantsQuery',
@@ -524,6 +534,11 @@ const chatV1 = async (req, res) => {
     await Promise.all(promises);
 
     const sendInitialResponse = () => {
+      /**
+       * Custom event to track when assistant completion query has started
+       * @Organization Intelequia
+       * @Author Enrique M. Pedroza Castillo
+       */
       global.appInsights.trackEvent({
         name: 'AzureAssistantsAnswerStarted',
         properties: {

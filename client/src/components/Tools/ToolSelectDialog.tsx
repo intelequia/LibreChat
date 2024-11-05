@@ -136,7 +136,6 @@ function ToolSelectDialog({
   );
 
   useEffect(() => {
-    console.log("======>",tools)
     if (filteredTools) {
       setMaxPage(Math.ceil(filteredTools.length / itemsPerPage));
       if (searchChanged) {

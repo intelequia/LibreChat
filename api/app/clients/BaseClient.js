@@ -555,6 +555,11 @@ class BaseClient {
     const User = require('~/models/User');
     const { email } = await User.findOne({ _id: user }).lean();
 
+    /**
+       * Custom event to track when user creates a completion query
+       * @Organization Intelequia
+       * @Author Enrique M. Pedroza Castillo
+       */
     global.appInsights.trackEvent({
       name: 'AzureQuery',
       properties: {
@@ -584,6 +589,12 @@ class BaseClient {
         },
       });
     }
+
+    /**
+       * Custom event to track when a completion query process is starting
+       * @Organization Intelequia
+       * @Author Enrique M. Pedroza Castillo
+       */
     global.appInsights.trackEvent({
       name: 'AzureAnswerStarted',
       properties: {
@@ -596,17 +607,6 @@ class BaseClient {
     /** @type {string|string[]|undefined} */
     const completion = await this.sendCompletion(payload, opts);
     this.abortController.requestCompleted = true;
-
-    global.appInsights.trackEvent({
-      name: 'AzureAnswerEnded',
-      properties: {
-        userId: user,
-        userEmail: email,
-        charactersLength: completion.length,
-        messageTokens: promptTokens,
-        model: this.modelOptions.model,
-      },
-    });
 
     const responseMessage = {
       messageId: responseMessageId,
@@ -658,6 +658,11 @@ class BaseClient {
         completionTokens = this.getTokenCount(completion);
       }
 
+      /**
+       * Custom event to track when a completion query has ended
+       * @Organization Intelequia
+       * @Author Enrique M. Pedroza Castillo
+       */
       global.appInsights.trackEvent({
         name: 'AzureAnswerEnded',
         properties: {
