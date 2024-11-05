@@ -396,7 +396,8 @@ export default {
   com_nav_lang_turkish: 'Türkçe',
   com_nav_lang_dutch: 'Nederlands',
   com_nav_lang_indonesia: 'Indonesia',
-<<<<<<< HEAD
+  com_nav_lang_hebrew: 'עברית',
+  com_nav_lang_finnish: 'Suomi',
 };
 
 export const comparisons = {
@@ -1844,8 +1845,4 @@ export const comparisons = {
     english: 'Catalan', 
     translated: 'Català',  
   }  
-=======
-  com_nav_lang_hebrew: 'עברית',
-  com_nav_lang_finnish: 'Suomi',
->>>>>>> 3428c3c647c4378d9942e419ffdf27762e947dca
 };

@@ -641,9 +641,6 @@ export default {
   com_nav_lang_dutch: 'Nederlands',
   com_nav_lang_indonesia: 'Indonesia',
   com_nav_lang_hebrew: 'עברית',
-<<<<<<< HEAD
 	com_nav_lang_catala: 'Català',  
-=======
   com_nav_lang_finnish: 'Suomi',
->>>>>>> 3428c3c647c4378d9942e419ffdf27762e947dca
 };
