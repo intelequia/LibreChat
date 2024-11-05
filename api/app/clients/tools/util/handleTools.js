@@ -25,6 +25,7 @@ const {
   TavilySearchResults,
   AzureAIFunctions
 } = require('../');
+const { primeFiles } = require('~/server/services/Files/Code/process');
 const createFileSearchTool = require('./createFileSearchTool');
 const { loadToolSuite } = require('./loadToolSuite');
 const { loadSpecs } = require('./loadSpecs');
@@ -258,12 +259,14 @@ const loadTools = async ({
   for (const tool of tools) {
     if (tool === Tools.execute_code) {
       const authValues = await loadAuthValues({
-        userId: user.id,
+        userId: user,
         authFields: [EnvVar.CODE_API_KEY],
       });
+      const files = await primeFiles(options, authValues[EnvVar.CODE_API_KEY]);
       requestedTools[tool] = () =>
         createCodeExecutionTool({
-          user_id: user.id,
+          user_id: user,
+          files,
           ...authValues,
         });
       continue;
