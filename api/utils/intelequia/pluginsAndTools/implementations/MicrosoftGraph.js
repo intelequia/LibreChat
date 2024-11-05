@@ -1,5 +1,6 @@
 const { Tool } = require('langchain/tools');
 const qs = require('qs');
+const intelequiaCountTokens = require('../../intelequiaTokenCount')
 
 const axios = require('axios');
 
@@ -159,6 +160,7 @@ class MicrosoftGraph extends Tool {
         pluginModel:model
       },
     });
+    return search
   }
 }
 
