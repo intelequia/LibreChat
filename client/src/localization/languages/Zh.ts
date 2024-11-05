@@ -764,9 +764,7 @@ export default {
   com_ui_decline: '我不接受',
   com_ui_terms_and_conditions: '条款和条件',
   com_ui_no_terms_content: '没有可显示的条款和条件内容',
-<<<<<<< HEAD
 	com_nav_lang_catala: 'Català',  
-=======
   com_warning_resubmit_unsupported: '此终端不支持重新提交AI消息',
 
   com_error_files_empty: '不允许上传空文件',
@@ -853,5 +851,4 @@ export default {
 
   com_nav_chat_commands_info:
     '这些命令通过在您的消息开头输入特定字符来激活。每个命令都由其指定的前缀触发。如果您经常在消息开头使用这些字符，可以选择禁用这些命令。',
->>>>>>> 3428c3c647c4378d9942e419ffdf27762e947dca
 };

@@ -815,7 +815,6 @@ export default {
   com_ui_terms_and_conditions: 'Termos e Condições',
   com_ui_no_terms_content: 'Nenhum conteúdo de termos e condições para exibir',
 };
-<<<<<<< HEAD
 
 export const comparisons = {
   com_files_no_results: {
@@ -2604,5 +2603,3 @@ export const comparisons = {
     translated: 'Català',  
   }
 };
-=======
->>>>>>> 3428c3c647c4378d9942e419ffdf27762e947dca

@@ -689,9 +689,7 @@ export default {
   com_nav_setting_speech: 'Puhe',
   com_nav_language: 'Kieli',
   com_nav_lang_auto: 'Tunnista automaattisesti',
-<<<<<<< HEAD
 	com_nav_lang_catala: 'Català',  
-=======
   com_nav_lang_english: 'English',
   com_nav_lang_chinese: '中文',
   com_nav_lang_german: 'Deutsch',
@@ -712,5 +710,4 @@ export default {
   com_nav_lang_indonesia: 'Indonesia',
   com_nav_lang_hebrew: 'עברית',
   com_nav_lang_finnish: 'Suomi',
->>>>>>> 3428c3c647c4378d9942e419ffdf27762e947dca
 };
