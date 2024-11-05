@@ -755,7 +755,7 @@ export default {
   com_nav_voice_select: 'Voz',
   com_nav_enable_cloud_browser_voice: 'Usar vozes baseadas na nuvem',
   com_nav_info_enter_to_send:
-    'Quando habilitado, pressionar `ENTER` enviará sua mensagem. Quando desabilitado, pressionar Enter adicionará uma nova linha, e você precisará pressionar `CTRL + ENTER` para enviar sua mensagem.',
+    'Quando habilitado, pressionar `ENTER` enviará sua mensagem. Quando desabilitado, pressionar Enter adicionará uma nova linha, e você precisará pressionar `CTRL + ENTER` / `⌘ + ENTER` para enviar sua mensagem.',
   com_nav_info_save_draft:
     'Quando habilitado, o texto e os anexos que você inserir no formulário de chat serão salvos automaticamente localmente como rascunhos. Esses rascunhos estarão disponíveis mesmo se você recarregar a página ou mudar para uma conversa diferente. Os rascunhos são armazenados localmente no seu dispositivo e são excluídos uma vez que a mensagem é enviada.',
   com_nav_info_fork_change_default:
@@ -790,12 +790,32 @@ export default {
   com_nav_setting_speech: 'Fala',
   com_nav_language: 'Idioma',
   com_nav_lang_auto: 'Detecção automática',
+  com_nav_lang_english: 'English',
+  com_nav_lang_chinese: '中文',
+  com_nav_lang_german: 'Deutsch',
+  com_nav_lang_spanish: 'Español',
+  com_nav_lang_french: 'Français ',
+  com_nav_lang_italian: 'Italiano',
+  com_nav_lang_polish: 'Polski',
   com_nav_lang_brazilian_portuguese: 'Português Brasileiro',
+  com_nav_lang_russian: 'Русский',
+  com_nav_lang_japanese: '日本語',
+  com_nav_lang_swedish: 'Svenska',
+  com_nav_lang_korean: '한국어',
+  com_nav_lang_vietnamese: 'Tiếng Việt',
+  com_nav_lang_traditionalchinese: '繁體中文',
+  com_nav_lang_arabic: 'العربية',
+  com_nav_lang_turkish: 'Türkçe',
+  com_nav_lang_dutch: 'Nederlands',
+  com_nav_lang_indonesia: 'Indonesia',
+  com_nav_lang_hebrew: 'עברית',
+  com_nav_lang_finnish: 'Suomi',
   com_ui_accept: 'Eu aceito',
   com_ui_decline: 'Eu não aceito',
   com_ui_terms_and_conditions: 'Termos e Condições',
   com_ui_no_terms_content: 'Nenhum conteúdo de termos e condições para exibir',
 };
+<<<<<<< HEAD
 
 export const comparisons = {
   com_files_no_results: {
@@ -2584,3 +2604,5 @@ export const comparisons = {
     translated: 'Català',  
   }
 };
+=======
+>>>>>>> 3428c3c647c4378d9942e419ffdf27762e947dca
