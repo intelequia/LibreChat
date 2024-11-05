@@ -36,17 +36,17 @@ class Dataverse extends Tool {
 
     const now = new Date()
 
-    const getDataverseTableSchema = [
-      `Necesito que en base a esta consulta "${query}" me digas a que endpoint llamar.`,
-     ` El resultado me lo devuelves en json, en este json vas a poner en el atributo 'apiSchema' la consulta que corresponda.`
-      `Ciñete a responderme el mensaje en json y nada más. `
-      `Solo vas a proporcionar la siguiente URL Cambiando [Nombre de tabla] por el valor correspondiente`
-      `La url base sera siempre la misma "https://intelequia.crm4.dynamics.com/api/data/v9.2/EntityDefinitions(LogicalName='[Nombre de tabla]')/Attributes?$select=LogicalName,Description".`
-     ` Si la consulta es sobre un proyecto la tabla sera 'cr794_proyecto'`
-      `Si la consulta es sobre un cliente la tabla sera 'account',`
-      `Si la consulta es sobre un Usuario la tabla sera 'systemuser',`
-     ` Si la consulta es sobre un Equipo la tabla sera 'team',`
-    ]
+    // const getDataverseTableSchema = [
+    //   `Necesito que en base a esta consulta "${query}" me digas a que endpoint llamar.`,
+    //  ` El resultado me lo devuelves en json, en este json vas a poner en el atributo 'apiSchema' la consulta que corresponda.`
+    //   `Ciñete a responderme el mensaje en json y nada más. `
+    //   `Solo vas a proporcionar la siguiente URL Cambiando [Nombre de tabla] por el valor correspondiente`
+    //   `La url base sera siempre la misma "https://intelequia.crm4.dynamics.com/api/data/v9.2/EntityDefinitions(LogicalName='[Nombre de tabla]')/Attributes?$select=LogicalName,Description".`
+    //  ` Si la consulta es sobre un proyecto la tabla sera 'cr794_proyecto'`
+    //   `Si la consulta es sobre un cliente la tabla sera 'account',`
+    //   `Si la consulta es sobre un Usuario la tabla sera 'systemuser',`
+    //  ` Si la consulta es sobre un Equipo la tabla sera 'team',`
+    // ]
 
     const systemPrompt = [
       `Dime el body de una llamada a la API de Dataverse para obtener "${query}".`,
