@@ -103,9 +103,16 @@ async function setupOpenId() {
         try {
           logger.info(`[openidStrategy] verify login openidId: ${userinfo.sub}`);
           logger.debug('[openidStrategy] very login tokenset and userinfo', { tokenset, userinfo });
+          /**
+           * Custom event to track when a user logs in
+           * @Organization Intelequia
+           * @Author Enrique M. Pedroza Castillo
+           */
           global.appInsights.trackEvent({
             name: 'Login',
-            properties: { userEmail: userinfo.email },
+            properties: { 
+              userEmail: userinfo.email 
+            },
           });
 
           let user = await findUser({ openidId: userinfo.sub });

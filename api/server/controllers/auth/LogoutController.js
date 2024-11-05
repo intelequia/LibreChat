@@ -5,7 +5,17 @@ const { logger } = require('~/config');
 const logoutController = async (req, res) => {
   const refreshToken = req.headers.cookie ? cookies.parse(req.headers.cookie).refreshToken : null;
   try {
-    global.appInsights.trackEvent({ name: 'Logout', properties: { userEmail: req.user.email } });
+    /**
+     * Custom event to track when a user logs out
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    global.appInsights.trackEvent({ 
+      name: 'Logout', 
+      properties: { 
+        userEmail: req.user.email 
+      } 
+    });
 
     const logout = await logoutUser(req.user._id, refreshToken);
     const { status, message } = logout;

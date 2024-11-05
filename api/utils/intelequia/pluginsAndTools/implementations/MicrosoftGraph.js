@@ -81,10 +81,15 @@ class MicrosoftGraph extends Tool {
       "max_tokens": 800
     }
     const { data } = await axios.post(url, body, { headers })
+    const model = data.model;
     const { choices } = data
     const responseMessage = choices[0].message.content
     const jsonString = responseMessage.replace(/```json\n|\n```/g, '').trim();
-    return JSON.parse(jsonString);
+    return {
+      query:message,
+      model:model,
+      response:JSON.parse(jsonString)
+    };
   }
 
   /**
@@ -138,18 +143,22 @@ class MicrosoftGraph extends Tool {
       const { email } = await User.findOne({ _id: this.userId }).lean();
       userEmail = email;
     }
+
+    const userQuery = data.query ?? data;
+    const {query, model, response}  = await this.getGraphApi(userQuery)
+    const search = await this.createClient(userEmail, response.url);
+    const queryTokens = intelequiaCountTokens([query, search], model)
+
     global.appInsights.trackEvent({
       name: 'Plugin',
       properties: {
         toolName: "microsoft-graph",
         userEmail: userEmail,
-        assistantId: data.assistant ?? ""
+        assistantId: data.assistant ?? "",
+        tokens:queryTokens.prompt,
+        pluginModel:model
       },
     });
-
-    const query = data.query ?? data;
-    const graphSpecs = await this.getGraphApi(query)
-    return await this.createClient(userEmail, graphSpecs.url);
   }
 }
 
