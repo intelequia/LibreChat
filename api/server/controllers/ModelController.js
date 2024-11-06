@@ -1,7 +1,7 @@
 const { CacheKeys } = require('librechat-data-provider');
 const { loadDefaultModels, loadConfigModels } = require('~/server/services/Config');
 const { getLogStores } = require('~/cache');
-
+const { parseModels} = require('~/utils')
 /**
  * @param {ServerRequest} req
  */
@@ -36,7 +36,13 @@ async function loadModels(req) {
 }
 
 async function modelController(req, res) {
-  const modelConfig = await loadModels(req);
+  var modelConfig = await loadModels(req);
+  /**
+   * Sort Model list
+   * @Author Enrique M Pedroza Castillo
+   * @Organization Intelequia
+   */
+  modelConfig = await parseModels (modelConfig) 
   res.send(modelConfig);
 }
 
