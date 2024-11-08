@@ -16,6 +16,7 @@ import ChatRoute from './ChatRoute';
 import Search from './Search';
 import Root from './Root';
 import BusinessHeader from '~/utils/intelequia/Components/BusinessHeader/businessHeader';
+import { useLocation } from 'react-router-dom'; // Importamos useLocation
 
 const AuthLayout = () => (
   <AuthContextProvider>
@@ -24,12 +25,17 @@ const AuthLayout = () => (
   </AuthContextProvider>
 );
 
-const ChatLayout = () => (
-  <>
-    <BusinessHeader/>
-    <Root />
-  </>
-); 
+const ChatLayout = () => {
+  const location = useLocation(); // Obtenemos la ubicación actual
+
+  return (
+    <>
+      {/* Solo renderiza <BusinessHeader> si la ruta no es '/login' */}
+      {location.pathname !== '/login' && <BusinessHeader />}
+      <Root />
+    </>
+  );
+}; 
 
 export const router = createBrowserRouter([
   {
