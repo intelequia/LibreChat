@@ -15,6 +15,7 @@ import ShareRoute from './ShareRoute';
 import ChatRoute from './ChatRoute';
 import Search from './Search';
 import Root from './Root';
+import BusinessHeader from '~/utils/intelequia/Components/BusinessHeader/businessHeader';
 
 const AuthLayout = () => (
   <AuthContextProvider>
@@ -22,6 +23,13 @@ const AuthLayout = () => (
     <ApiErrorWatcher />
   </AuthContextProvider>
 );
+
+const ChatLayout = () => (
+  <>
+    <BusinessHeader/>
+    <Root />
+  </>
+); 
 
 export const router = createBrowserRouter([
   {
@@ -66,7 +74,7 @@ export const router = createBrowserRouter([
       dashboardRoutes,
       {
         path: '/',
-        element: <Root />,
+        element: <ChatLayout />,
         children: [
           {
             index: true,

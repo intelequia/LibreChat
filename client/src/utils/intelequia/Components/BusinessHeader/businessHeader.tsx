@@ -10,13 +10,13 @@ interface StartupConfig {
 }
 
 const BusinessHeader: FC = () => {
-
   const { theme } = useContext(ThemeContext);
   const [businessName, setBusinessName] = useState<string>("");
   const [logoURL, setLogoURL] = useState<string>("");
-  const [data, setData] = useState<StartupConfig | null>(null); // usa el tipo definido
+  const [data, setData] = useState<StartupConfig | null>(null); 
   const [backgroundLight, setBackgroundLight] = useState<string>("");
   const [backgroundDark, setBackgroundDark] = useState<string>("");
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -32,7 +32,7 @@ const BusinessHeader: FC = () => {
           throw new Error('Network response was not ok');
         }
         
-        const result: StartupConfig = await response.json(); // usa el tipo definido
+        const result: StartupConfig = await response.json(); 
         setData(result);  
       } catch (error) {
         console.log(error);
@@ -51,16 +51,15 @@ const BusinessHeader: FC = () => {
     }
   }, [data]);
 
-  return window.location.pathname === "/login"? 
-    <></>:
-    (
-      <div id="chat_title" className="business-title" style={{backgroundColor:theme === 'dark' ?backgroundDark:backgroundLight}}>
-        <img src={logoURL} className="chat-logo" alt="Logo"/>
-        <p className= "business-name text-text-primary" style={{color:theme === 'dark' ? 'white':'black'}}>
-          {businessName}
-        </p>
-      </div>
-    );
+ 
+  return (
+    <div id="chat_title" className="business-title" style={{backgroundColor:theme === 'dark' ?backgroundDark:backgroundLight}}>
+      <img src={logoURL} className="chat-logo" alt="Logo"/>
+      <p className= "business-name text-text-primary" style={{color:theme === 'dark' ? 'white':'black'}}>
+        {businessName}
+      </p>
+    </div>
+  );
 };
 
 export default BusinessHeader;
