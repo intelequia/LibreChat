@@ -10,11 +10,9 @@ import { ToastProvider } from './Providers';
 import Toast from './components/ui/Toast';
 import { LiveAnnouncer } from '~/a11y';
 import { router } from './routes';
-import BusinessHeader from './utils/intelequia/Components/BusinessHeader/businessHeader';
 
 const App = () => {
   const { setError } = useApiErrorBoundary();
-
   const queryClient = new QueryClient({
     queryCache: new QueryCache({
       onError: (error) => {
@@ -33,7 +31,6 @@ const App = () => {
             <RadixToast.Provider>
               <ToastProvider>
                 <DndProvider backend={HTML5Backend}>
-                  <BusinessHeader/>
                   <RouterProvider router={router} /> 
                   <ReactQueryDevtools initialIsOpen={false} position="top-right" />
                   <Toast />
