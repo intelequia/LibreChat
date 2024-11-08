@@ -74,7 +74,7 @@ export const router = createBrowserRouter([
           },
           {
             path: 'c/:conversationId?',
-            element: <ChatRoute />,
+            element: <ChatRoute/>,
           },
           {
             path: 'search',

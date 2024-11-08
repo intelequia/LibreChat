@@ -86,6 +86,10 @@ router.get('/', async function (req, res) {
       payload.customFooter = process.env.CUSTOM_FOOTER;
     }
   
+    payload.businessChatTitle = process.env.BUSINESS_CHAT_TITLE || 'Intelewriter';
+    payload.businessChatLogo = process.env.BUSINESS_CHAT_LOGO || 'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';
+    payload.businessChatBackgroundLight = process.env.BUSINESS_CHAT_BACKGROUND_LIGHT || "#f3f3f3";
+    payload.businessChatBackgroundDark = process.env.BUSINESS_CHAT_BACKGROUND_DARK || "#141414";
 
     await cache.set(CacheKeys.STARTUP_CONFIG, payload);
     return res.status(200).send(payload);
