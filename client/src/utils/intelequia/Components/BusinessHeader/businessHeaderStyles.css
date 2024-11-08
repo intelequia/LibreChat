@@ -1,0 +1,19 @@
+/* BusinessHeader.css */
+.business-title {
+  height: 5vdh;
+  width: 100%;
+  background-color: rgb(20, 20, 20);
+  padding: 10px;
+}
+
+.business-name {
+  font-family: Inter, sans-serif;
+  font-weight: bold;
+}
+
+.chat-logo {
+  height: 1.8rem;
+  float: left;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
