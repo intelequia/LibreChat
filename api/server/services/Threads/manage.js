@@ -30,6 +30,28 @@ async function initThread({ openai, body, thread_id: _thread_id }) {
     const message = await openai.beta.threads.messages.create(_thread_id, body.messages[0]);
     messages.push(message);
   } else {
+
+    /**
+     * Modification to use assistants vector store
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    let vectorStore = await openai.beta.vectorStores.create({
+      file_ids : body.messages[0].file_ids
+    })
+    if(body.messages[0].file_ids && body.messages[0].file_ids.length > 0){
+      body.tool_resources = {
+        file_search: {
+          vector_store_ids: [
+            vectorStore.id
+          ]
+        }
+      };
+    }
+
+    if(body.messages[0].file_ids)
+      delete body.messages[0].file_ids
+
     thread = await openai.beta.threads.create(body);
   }
 
