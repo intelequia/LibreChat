@@ -67,6 +67,7 @@ class MicrosoftGraph extends Tool {
       `Ciñete a responderme el mensaje en json y nada más.`,
       `Me vas a limitar los resultados a 10.`,
       `Es importante que no uses urls con variables como {chat-id} o {user-id}, el uso de variables esta prohibido`,
+      `La busqueda en sharepoint se hace con el endpoint '/sites?search='`,
       `Ten en cuenta que la fecha actual es: ${now}`
     ]
     const message = instructions.join(' ');
