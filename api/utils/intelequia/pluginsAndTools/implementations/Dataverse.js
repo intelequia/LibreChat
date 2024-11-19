@@ -140,7 +140,7 @@ class Dataverse extends Tool {
     const {query, model, response} = await this.getDataverseApi(data.query);
     const search = await this.searchInDynamics(response, token);
     const queryTokens = intelequiaCountTokens([query, search], model)
-     global.appInsights.trackEvent({
+    global.appInsights.trackEvent({
       name: 'Plugin',
       properties: {
         toolName: "dataverse",
