@@ -13,6 +13,7 @@ class AzureAIFunctions extends Tool {
     let apiKey = process.env.AZURE_ASSISTANTS_API_KEY;
     this.apiKey = apiKey ?? undefined;
     const config = { apiKey };
+    this.userId = fields.userId;
 
     if (process.env.OPENAI_API_KEY && process.env.AZURE_ASSISTANTS_API_KEY) {
       config.baseUrl = `https://${process.env.INSTANCE_NAME}.openai.azure.com/openai/deployments/${process.env.DEPLOYMENT_NAME}`;
@@ -35,6 +36,14 @@ class AzureAIFunctions extends Tool {
   }
 
   async _call(data) {
+
+    var userEmail = data.userEmail;
+    if (typeof data == "string"){
+      const User = require('~/models/User');
+      const { email } = await User.findOne({ _id: this.userId }).lean();
+      userEmail = email;
+    }
+
     const azureFunctions = global.myCache.get('functions');
     const logicAppFunction = azureFunctions.find((f) => f.name === data.toolName);
     const isAssistantAllowed = logicAppFunction.assistants.some(
@@ -56,6 +65,16 @@ class AzureAIFunctions extends Tool {
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
       }
+      
+      global.appInsights.trackEvent({
+        name: 'Plugin',
+        properties: {
+          toolName: "azure-ai-search",
+          userEmail: userEmail ,
+          assistantId: data.assistant ?? "",
+          messageLength: JSON.stringify(json).length
+        },
+      });
 
       return JSON.stringify(json);
     }
