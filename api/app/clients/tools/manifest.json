@@ -103,6 +103,14 @@
     ]
   },
   {
+    "name": "Microsoft Sharepoint",
+    "pluginKey": "sharepoint",
+    "description": "Create consults to Sharepoint using Microsoft Graph API",
+    "icon": "/assets/Plugin-Icons/MicrosoftSharepoint.jpg",
+    "authConfig": [
+    ]
+  },
+  {
     "name": "Azure AI Search",
     "pluginKey": "azure-ai-search",
     "description": "Use Azure AI Search to find information",
