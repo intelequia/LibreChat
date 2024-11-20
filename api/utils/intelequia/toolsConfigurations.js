@@ -1,5 +1,5 @@
 const { intelequiaTools } = require("./constants");
-const {bingSearchSpecification, microsoftGraphSpecification, dataverseSpecification} = require("./pluginsAndTools/specifications")
+const {bingSearchSpecification, microsoftGraphSpecification, dataverseSpecification, sharepointSpecification} = require("./pluginsAndTools/specifications")
 /**
  * Verifies if tool is defined in the tools configuration file and returns the tool instance
  * @param {*} tool 
@@ -76,6 +76,8 @@ async function GetToolSpecification (tool){
       return microsoftGraphSpecification
     case "dataverse":
       return dataverseSpecification
+    case "sharepoint":
+      return sharepointSpecification
     }
 }
 
