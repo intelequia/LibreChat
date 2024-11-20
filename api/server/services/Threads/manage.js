@@ -26,6 +26,27 @@ const { saveConvo } = require('~/models/Conversation');
 async function initThread({ openai, body, thread_id: _thread_id }) {
   let thread = {};
   const messages = [];
+  /**
+   * Modification to use assistants vector store
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  body.messages.forEach(message => {
+    if(message.file_ids){
+      message.attachments = []
+      message.file_ids.forEach(file_id => {
+        message.attachments.push({
+          file_id:file_id,
+          tools:[
+            {
+              type:"file_search"
+            }
+          ]
+        })
+      })
+      delete message.file_ids
+    }
+  })
   if (_thread_id) {
     const message = await openai.beta.threads.messages.create(_thread_id, body.messages[0]);
     messages.push(message);
