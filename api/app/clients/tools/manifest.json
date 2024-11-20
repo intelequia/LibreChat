@@ -106,7 +106,7 @@
     "name": "Microsoft Sharepoint",
     "pluginKey": "sharepoint",
     "description": "Create consults to Sharepoint using Microsoft Graph API",
-    "icon": "/assets/Plugin-Icons/MicrosoftGraph.jpg",
+    "icon": "/assets/Plugin-Icons/MicrosoftSharepoint.jpg",
     "authConfig": [
     ]
   },
