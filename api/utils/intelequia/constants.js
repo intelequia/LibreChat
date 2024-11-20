@@ -6,11 +6,13 @@ const enabledPluginsNames = [
   "Web Search",
   "Dataverse",
   "Microsoft Graph",
-  "Bing Search"
+  "Bing Search",
+  "Microsoft Sharepoint"
 ]
 const intelequiaTools = [
   "bing-search",
   "microsoft-graph",
+  "sharepoint",
   "dataverse"
 ]
 
