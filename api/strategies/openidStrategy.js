@@ -218,6 +218,13 @@ async function setupOpenId() {
             user.name = fullName;
           }
           /**
+           * Save acces token to cache
+           * @Organization Intelequia
+           * @Author Pablo Suárez Romero
+           */
+          await global.myCache.set(user.email.toString() + '-token', tokenset.access_token, process.env.USER_GROUPS_CACHE_TTL);  
+
+          /**
            * Get token to access dynamics if enabled
            * @Organization Intelequia
            * @Author Pablo Suárez Romero

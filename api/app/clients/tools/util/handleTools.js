@@ -25,7 +25,7 @@ const  {
   AzureAIFunctions,
 } = require('~/utils');
 
-const {BingSearch, MicrosoftGraph, Dataverse} = require('~/utils'); 
+const {BingSearch, MicrosoftGraph, Dataverse, Sharepoint} = require('~/utils'); 
 /**
  * Validates the availability and authentication of tools for a user based on environment variables or user-specific plugin authentication values.
  * Tools without required authentication or with valid authentication are considered valid.
@@ -167,6 +167,7 @@ const loadTools = async ({
     "bing-search": BingSearch,
     "microsoft-graph": MicrosoftGraph,
     tavily_search_results_json: TavilySearchResults,
+    "sharepoint": Sharepoint,
   };
 
   const customConstructors = {
