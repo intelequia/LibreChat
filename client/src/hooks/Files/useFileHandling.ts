@@ -29,9 +29,12 @@ type UseFileHandling = {
   fileSetter?: FileSetter;
   fileFilter?: (file: File) => boolean;
   additionalMetadata?: Record<string, string | undefined>;
+  isKnowledge?: boolean;
 };
 
 const useFileHandling = (params?: UseFileHandling) => {
+  const isKnowledge = params?.isKnowledge ?? false;
+
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const { showToast } = useToastContext();
@@ -209,6 +212,7 @@ const useFileHandling = (params?: UseFileHandling) => {
       formData.append('model', convoModel);
     }
 
+    formData.append('knowledge',isKnowledge?"true":"false")
     uploadFile.mutate(formData);
   };
 

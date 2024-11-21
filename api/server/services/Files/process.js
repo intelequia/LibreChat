@@ -29,6 +29,7 @@ const { getStrategyFunctions } = require('./strategies');
 const { determineFileType } = require('~/server/utils');
 const { logger } = require('~/config');
 const User = require('~/models/User');
+const { handleKnowledge } = require('~/utils');
 
 const processFiles = async (files) => {
   const promises = [];
@@ -330,6 +331,8 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
   );
 };
 
+
+
 /**
  * Applies the current strategy for file uploads.
  * Saves file metadata to the database with an expiry TTL.
@@ -370,8 +373,10 @@ const processFileUpload = async ({ req, res, file, metadata }) => {
     file_id,
     openai,
   });
-
-  if (isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
+  if(metadata.knowledge == 'true'){
+    await handleKnowledge ({ fileId:id, assistantId:metadata.assistant_id }, openai)
+  }
+  else if ( isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
     await openai.beta.assistants.files.create(metadata.assistant_id, {
       file_id: id,
     });
