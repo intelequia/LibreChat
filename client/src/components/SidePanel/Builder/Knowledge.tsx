@@ -45,6 +45,7 @@ export default function Knowledge({
     overrideEndpoint: endpoint,
     additionalMetadata: { assistant_id },
     fileSetter: setFiles,
+    isKnowledge:true
   });
 
   useEffect(() => {
