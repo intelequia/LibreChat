@@ -5,7 +5,8 @@ const toolsConfigurations = require('./toolsConfigurations');
 const pluginsAndTools = require('./pluginsAndTools');
 const constants = require('./constants');
 const dynamics = require('./dynamicsToken');
-const clientConfigurationRequests = require('./clientConfigurationRequests')
+const clientConfigurationRequests = require('./clientConfigurationRequests');
+const intelequiaCitations = require('./intelequiaCitations');
 module.exports = {
   intelequiaCountTokens,
   ...dynamics,
@@ -14,5 +15,6 @@ module.exports = {
   ...toolsConfigurations,
   ...pluginsAndTools,
   ...constants,
-  ...clientConfigurationRequests
+  ...clientConfigurationRequests,
+  ...intelequiaCitations
 }
