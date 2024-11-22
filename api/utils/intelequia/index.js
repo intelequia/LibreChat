@@ -7,6 +7,7 @@ const constants = require('./constants');
 const dynamics = require('./dynamicsToken');
 const clientConfigurationRequests = require('./clientConfigurationRequests');
 const intelequiaCitations = require('./intelequiaCitations');
+const assistantVectorStoreConfiguration = require('./assistantVectorStoreConfiguration');
 module.exports = {
   intelequiaCountTokens,
   ...dynamics,
@@ -16,5 +17,6 @@ module.exports = {
   ...pluginsAndTools,
   ...constants,
   ...clientConfigurationRequests,
-  ...intelequiaCitations
+  ...intelequiaCitations,
+  ...assistantVectorStoreConfiguration
 }
