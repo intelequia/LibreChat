@@ -660,10 +660,10 @@ async function processMessages({ openai, client, messages = [] }) {
 
       //Apply replacements in reverse order
       uniqueItems.sort((a, b) => b.start - a.start);
-      for (const { start, end, text: replacementText } of uniqueItems) {
+      for (const { start, end, text } of uniqueItems) {
         let citation = "";
-        replacementText.forEach(element => {
-          textNumber += ' ' + element
+        text.forEach(element => {
+          citation += ' ' + element
         });
         currentText = currentText.slice(0, start) + citation + currentText.slice(end);
       }
