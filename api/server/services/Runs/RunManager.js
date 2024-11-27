@@ -30,7 +30,7 @@ function getToolCallSignature(toolCall) {
   if (toolCall.type === ToolCallTypes.CODE_INTERPRETER) {
     const inputLength = toolCall.code_interpreter?.input?.length ?? 0;
     const outputsLength = toolCall.code_interpreter?.outputs?.length ?? 0;
-    return `${toolCall.id}-${toolCall.type}-${inputLength}-${outputsLength}`;
+    return `${toolCall.appid}-${toolCall.type}-${inputLength}-${outputsLength}`;
   }
   if (toolCall.type === ToolCallTypes.RETRIEVAL) {
     return `${toolCall.id}-${toolCall.type}`;
@@ -124,6 +124,27 @@ class RunManager {
 
       if (step.type === 'tool_calls') {
         await currentStepPromise;
+
+
+        /**
+         * Custom event to track when assistant tool_calls query has ended
+         * @Organization Intelequia
+         * @Author Pablo Suarez Romero
+         */
+        const detailsArray = detailsSignature.split('-');
+        if(detailsArray.length > 4 && runStatus === 'completed'){
+          global.appInsights.trackEvent({
+            name: 'ToolCall',
+            properties: {
+              toolName: detailsArray[2] ?? "",
+              userEmail: openai.req.user.email ,
+              promptTokens: detailsArray[3] ?? "",
+              completionTokens: detailsArray[4] ?? "",
+              thread_id: thread_id,
+              run_id: run_id,
+            },
+          });
+        }
       }
       if (step.type === 'message_creation' && step.status === 'completed') {
         await currentStepPromise;
