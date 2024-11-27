@@ -30,7 +30,7 @@ function getToolCallSignature(toolCall) {
   if (toolCall.type === ToolCallTypes.CODE_INTERPRETER) {
     const inputLength = toolCall.code_interpreter?.input?.length ?? 0;
     const outputsLength = toolCall.code_interpreter?.outputs?.length ?? 0;
-    return `${toolCall.appid}-${toolCall.type}-${inputLength}-${outputsLength}`;
+    return `${toolCall.id}-${toolCall.type}-${inputLength}-${outputsLength}`;
   }
   if (toolCall.type === ToolCallTypes.RETRIEVAL) {
     return `${toolCall.id}-${toolCall.type}`;
