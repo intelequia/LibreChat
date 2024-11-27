@@ -11,6 +11,7 @@ const { recordMessage, getMessages } = require('~/models/Message');
 const { countTokens, escapeRegExp } = require('~/server/utils');
 const { spendTokens } = require('~/models/spendTokens');
 const { saveConvo } = require('~/models/Conversation');
+const { getUniqueItems } = require('~/utils');
 
 /**
  * Initializes a new thread or adds messages to an existing thread.
@@ -32,14 +33,14 @@ async function initThread({ openai, body, thread_id: _thread_id }) {
    * @Author Enrique M. Pedroza Castillo
    */
   body.messages.forEach(message => {
-    if(message.file_ids){
+    if (message.file_ids) {
       message.attachments = []
       message.file_ids.forEach(file_id => {
         message.attachments.push({
-          file_id:file_id,
-          tools:[
+          file_id: file_id,
+          tools: [
             {
-              type:"file_search"
+              type: "file_search"
             }
           ]
         })
@@ -650,10 +651,21 @@ async function processMessages({ openai, client, messages = [] }) {
 
       await Promise.all(annotationPromises);
 
-      // Apply replacements in reverse order
-      replacements.sort((a, b) => b.start - a.start);
-      for (const { start, end, text: replacementText } of replacements) {
-        currentText = currentText.slice(0, start) + replacementText + currentText.slice(end);
+    /**
+     * Additional work on replacements array to fix weird letters on citations response
+     * @Organization Intelequia
+     * @Author Pablo Suarez Romero
+     */
+      const uniqueItems = getUniqueItems(replacements);
+
+      //Apply replacements in reverse order
+      uniqueItems.sort((a, b) => b.start - a.start);
+      for (const { start, end, text } of uniqueItems) {
+        let citation = "";
+        text.forEach(element => {
+          citation += ' ' + element
+        });
+        currentText = currentText.slice(0, start) + citation + currentText.slice(end);
       }
 
       text += currentText;
