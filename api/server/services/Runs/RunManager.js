@@ -124,6 +124,27 @@ class RunManager {
 
       if (step.type === 'tool_calls') {
         await currentStepPromise;
+
+
+        /**
+         * Custom event to track when assistant tool_calls query has ended
+         * @Organization Intelequia
+         * @Author Pablo Suarez Romero
+         */
+        const detailsArray = detailsSignature.split('-');
+        if(detailsArray.length > 4 && runStatus === 'completed'){
+          global.appInsights.trackEvent({
+            name: 'ToolCall',
+            properties: {
+              toolName: detailsArray[2] ?? "",
+              userEmail: openai.req.user.email ,
+              promptTokens: detailsArray[3] ?? "",
+              completionTokens: detailsArray[4] ?? "",
+              thread_id: thread_id,
+              run_id: run_id,
+            },
+          });
+        }
       }
       if (step.type === 'message_creation' && step.status === 'completed') {
         await currentStepPromise;
