@@ -24,7 +24,7 @@ const handleKnowledge = async ({ fileId, assistantId }, openai) =>{
       else
         assistant.tool_resources.file_search.vector_store_ids.push(vectorStore.id)
       
-      await await openai.beta.assistants.update(assistantId,{
+      await openai.beta.assistants.update(assistantId,{
         tools: assistant.tools,  
         tool_resources : assistant.tool_resources
       })
