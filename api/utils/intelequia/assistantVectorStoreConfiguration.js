@@ -6,13 +6,13 @@ const handleKnowledge = async ({ fileId, assistantId }, openai) =>{
   if(assistant.tool_resources){
     if(assistant.tool_resources.file_search?.vector_store_ids?.length > 0){
       const vectorStoreId = assistant.tool_resources.file_search.vector_store_ids[0]
-      await openai.beta.vectorStores.files.create(vectorStoreId,{file_id: fileId})
+      await openai.beta.vectorStores.fileBatches.createAndPoll(vectorStoreId,{file_ids: [fileId]})
     }
     else{
       const vectorStore = await openai.beta.vectorStores.create({
         name: assistant.name.replace(/ /g, "_") + "_vs"
       });
-      await openai.beta.vectorStores.files.create(vectorStore.id,{file_id: fileId})
+      await openai.beta.vectorStores.fileBatches.createAndPoll(vectorStore.id,{file_ids: [fileId]})
 
       const isFileSearchEnabled = assistant.tools.some(tool => tool.type === "file_search")
       if(!isFileSearchEnabled){
