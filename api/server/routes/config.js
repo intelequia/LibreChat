@@ -88,6 +88,7 @@ router.get('/', async function (req, res) {
   
     payload.businessChatTitle = process.env.BUSINESS_CHAT_TITLE || 'Intelewriter';
     payload.businessChatLogo = process.env.BUSINESS_CHAT_LOGO || 'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';
+    payload.businessChatLogoDark = process.env.BUSINESS_CHAT_LOGO_DARK || 'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';
     payload.businessChatBackgroundLight = process.env.BUSINESS_CHAT_BACKGROUND_LIGHT || "#f3f3f3";
     payload.businessChatBackgroundDark = process.env.BUSINESS_CHAT_BACKGROUND_DARK || "#141414";
 
