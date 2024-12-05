@@ -1,0 +1,8 @@
+.tokens{
+  position : absolute;
+  z-index : 99;
+  right : 90px;
+  color : #aaa;
+  font-size : 0.7rem;
+  top : 5px;
+}

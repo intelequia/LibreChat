@@ -91,6 +91,7 @@ router.get('/', async function (req, res) {
     payload.businessChatBackgroundLight = process.env.BUSINESS_CHAT_BACKGROUND_LIGHT || "#f3f3f3";
     payload.businessChatBackgroundDark = process.env.BUSINESS_CHAT_BACKGROUND_DARK || "#141414";
 
+    payload.balanceEnabled = process.env.CHECK_BALANCE == 'true'? true : false
     await cache.set(CacheKeys.STARTUP_CONFIG, payload);
     return res.status(200).send(payload);
   } catch (err) {

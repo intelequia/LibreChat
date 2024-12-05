@@ -33,6 +33,7 @@ import StopButton from './StopButton';
 import SendButton from './SendButton';
 import Mention from './Mention';
 import store from '~/store';
+import TokenCounter from '~/utils/intelequia/Components/TokenCounter/tokenCounter';
 
 const ChatForm = ({ index = 0 }) => {
   const submitButtonRef = useRef<HTMLButtonElement>(null);
@@ -146,6 +147,7 @@ const ChatForm = ({ index = 0 }) => {
     >
       <div className="relative flex h-full flex-1 items-stretch md:flex-col">
         <div className="flex w-full items-center">
+          <TokenCounter textAreaRef={textAreaRef}/>
           {showPlusPopover && !isAssistantsEndpoint(endpoint) && (
             <Mention
               setShowMentionPopover={setShowPlusPopover}
