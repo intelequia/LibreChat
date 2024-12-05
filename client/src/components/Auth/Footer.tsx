@@ -41,8 +41,7 @@ function Footer({ startupConfig }: { startupConfig: TStartupConfig | null | unde
         {termsOfServiceRender}
       </div>
       <div className="align-end m-2 flex justify-center gap-2">
-        <h2>Powered by Intelequia</h2>
-        <img src="/assets/logo.png" width="50" alt="Logo" />
+        <h2>Intelewriter is a product of Intelequia Technologies, S.L.</h2>
       </div>
     </>
   );

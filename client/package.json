@@ -100,7 +100,8 @@
     "tailwindcss-animate": "^1.0.5",
     "tailwindcss-radix": "^2.8.0",
     "url": "^0.11.0",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "gpt-tokenizer": "^2.7.0"
   },
   "devDependencies": {
     "@babel/plugin-transform-runtime": "^7.22.15",
@@ -138,6 +139,7 @@
     "typescript": "^5.0.4",
     "vite": "^5.1.1",
     "vite-plugin-node-polyfills": "^0.17.0",
-    "vite-plugin-pwa": "^0.20.5"
+    "vite-plugin-pwa": "^0.20.5",
+    "gpt-tokenizer": "^2.7.0"
   }
 }
