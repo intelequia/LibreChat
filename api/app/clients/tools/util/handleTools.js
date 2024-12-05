@@ -323,11 +323,13 @@ const loadTools = async ({
   const toolPromises = [];
   for (const tool of tools) {
     const validTool = requestedTools[tool];
-    const plugin = await validTool();
-    if (Array.isArray(plugin)) {
-      result = [...result, ...plugin];
-    } else if (plugin) {
-      result.push(plugin);
+    if (validTool) {
+      toolPromises.push(
+        validTool().catch((error) => {
+          logger.error(`Error loading tool ${tool}:`, error);
+          return null;
+        }),
+      );
     }
   }
 
