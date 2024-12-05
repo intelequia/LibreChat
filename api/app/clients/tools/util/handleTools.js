@@ -323,22 +323,14 @@ const loadTools = async ({
   const toolPromises = [];
   for (const tool of tools) {
     const validTool = requestedTools[tool];
-    if (validTool) {
-      const plugin = await validTool();
-
-      if (Array.isArray(plugin)) {
-        result = [...result, ...plugin];
-      } else if (plugin) {
-        result.push(plugin);
-      }  
-      toolPromises.push(
-        validTool().catch((error) => {
-          logger.error(`Error loading tool ${tool}:`, error);
-          return null;
-        }),
-      );
+    const plugin = await validTool();
+    if (Array.isArray(plugin)) {
+      result = [...result, ...plugin];
+    } else if (plugin) {
+      result.push(plugin);
     }
   }
+
   const loadedTools = (await Promise.all(toolPromises)).flatMap((plugin) => plugin || []);
   return { loadedTools, toolContextMap };
 };
