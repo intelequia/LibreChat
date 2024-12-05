@@ -5,6 +5,7 @@ import { ThemeContext } from '~/hooks';
 interface StartupConfig {
   businessChatTitle?: string;
   businessChatLogo?: string;
+  businessChatLogoDark?: string
   businessChatBackgroundLight?: string;
   businessChatBackgroundDark?: string;
 }
@@ -44,8 +45,9 @@ const BusinessHeader: FC = () => {
 
   useEffect(() => {
     if (data) {
+      const logo = (theme === 'dark')? data.businessChatLogoDark : data.businessChatLogo
       setBusinessName(data.businessChatTitle || ""); 
-      setLogoURL(data.businessChatLogo || ""); 
+      setLogoURL( logo || ""); 
       setBackgroundLight(data.businessChatBackgroundLight || "");
       setBackgroundDark(data.businessChatBackgroundDark || "");
     }
