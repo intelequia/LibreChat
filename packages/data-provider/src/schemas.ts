@@ -445,12 +445,12 @@ export const tMessageSchema = z.object({
   bg: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   title: z.string().nullable().or(z.literal('New Chat')).default('New Chat'),
-  sender: z.string(),
+  sender: z.string().optional(),
   text: z.string(),
   generation: z.string().nullable().optional(),
   isEdited: z.boolean().optional(),
   isCreatedByUser: z.boolean(),
-  error: z.boolean(),
+  error: z.boolean().optional(),
   createdAt: z
     .string()
     .optional()
@@ -1096,13 +1096,14 @@ export type TBanner = z.infer<typeof tBannerSchema>;
 
 export const compactAgentsSchema = tConversationSchema
   .pick({
-    model: true,
-    agent_id: true,
-    instructions: true,
-    additional_instructions: true,
+    spec: true,
+    // model: true,
     iconURL: true,
     greeting: true,
-    spec: true,
+    agent_id: true,
+    resendFiles: true,
+    instructions: true,
+    additional_instructions: true,
   })
   .transform(removeNullishValues)
   .catch(() => ({}));

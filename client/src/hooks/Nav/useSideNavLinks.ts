@@ -10,9 +10,9 @@ import {
 } from 'librechat-data-provider';
 import type { TConfig, TInterfaceConfig } from 'librechat-data-provider';
 import type { NavLink } from '~/common';
+import AgentPanelSwitch from '~/components/SidePanel/Agents/AgentPanelSwitch';
 import BookmarkPanel from '~/components/SidePanel/Bookmarks/BookmarkPanel';
 import PanelSwitch from '~/components/SidePanel/Builder/PanelSwitch';
-import AgentPanelSwitch from '~/components/SidePanel/Agents/AgentPanelSwitch';
 import PromptsAccordion from '~/components/Prompts/PromptsAccordion';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
@@ -55,6 +55,14 @@ export default function useSideNavLinks({
     permissionType: PermissionTypes.BOOKMARKS,
     permission: Permissions.USE,
   });
+  const hasAccessToAgents = useHasAccess({
+    permissionType: PermissionTypes.AGENTS,
+    permission: Permissions.USE,
+  });
+  const hasAccessToCreateAgents = useHasAccess({
+    permissionType: PermissionTypes.AGENTS,
+    permission: Permissions.CREATE,
+  });
 
 
   const Links = useMemo(() => {
@@ -78,6 +86,8 @@ export default function useSideNavLinks({
     }
 
     if (
+      hasAccessToAgents &&
+      hasAccessToCreateAgents &&
       isAgentsEndpoint(endpoint) &&
       agents &&
       // agents.disableBuilder !== true &&
@@ -152,8 +162,10 @@ export default function useSideNavLinks({
     endpointType,
     endpoint,
     agents,
+    hasAccessToAgents,
     hasAccessToPrompts,
     hasAccessToBookmarks,
+    hasAccessToCreateAgents,
     hidePanel,
   ]);
 
