@@ -1,10 +1,3 @@
-# #!/bin/bash
-# set -x  # Habilita el modo de depuración
-# set -e  # Opcional, salir inmediatamente si un comando falla
-# echo $ARC_SECRET | docker login intelequia.azurecr.io --username intelequia -p $(cat)
-# docker compose pull
-# docker compose up -d
-
 #!/bin/bash
 set -x  # Habilita el modo de depuración
 set -e  # Salir inmediatamente si un comando falla
@@ -21,7 +14,9 @@ echo $ARC_SECRET | docker login intelequia.azurecr.io --username intelequia --pa
 # Descargar y actualizar contenedores
 docker-compose pull
 
-# docker stop $(docker ps -aq) && docker rm $(docker ps -aq)
+docker-compose down
+
+docker stop $(docker ps -aq) && docker rm $(docker ps -aq)
 
 # Levantar los servicios en modo detached
 docker-compose up -d
