@@ -8,6 +8,8 @@ interface StartupConfig {
   businessChatLogoDark?: string
   businessChatBackgroundLight?: string;
   businessChatBackgroundDark?: string;
+  businessChatTitleLight?: string;
+  businessChatTitleDark?: string;
 }
 
 const BusinessHeader: FC = () => {
@@ -17,6 +19,8 @@ const BusinessHeader: FC = () => {
   const [data, setData] = useState<StartupConfig | null>(null); 
   const [backgroundLight, setBackgroundLight] = useState<string>("");
   const [backgroundDark, setBackgroundDark] = useState<string>("");
+  const [titleLight, setTitleLight] = useState<string>("");
+  const [titleDark, setTitleDark] = useState<string>("");
 
   useEffect(() => {
     const fetchData = async () => {
@@ -50,6 +54,8 @@ const BusinessHeader: FC = () => {
       setLogoURL( logo || ""); 
       setBackgroundLight(data.businessChatBackgroundLight || "");
       setBackgroundDark(data.businessChatBackgroundDark || "");
+      setTitleLight(data.businessChatTitleLight || "");
+      setTitleDark(data.businessChatTitleDark || "");
     }
   }, [data]);
 
@@ -57,7 +63,7 @@ const BusinessHeader: FC = () => {
   return (
     <div id="chat_title" className="business-title" style={{backgroundColor:theme === 'dark' ?backgroundDark:backgroundLight}}>
       <img src={logoURL} className="chat-logo" alt="Logo"/>
-      <p className= "business-name text-text-primary" style={{color:theme === 'dark' ? 'white':'black'}}>
+      <p className= "business-name text-text-primary" style={{color:theme === 'dark' ? titleDark:titleLight}}>
         {businessName}
       </p>
     </div>
