@@ -69,13 +69,23 @@ function getModelTokenEncoder(model) {
   }
 }
 
+function simplifyModelName (modelName){
+  if(modelName.includes("gpt-4o-mini"))
+    return "gpt-4o-mini"
+  else if(modelName.includes("gpt-4o"))
+    return "gpt-4o"
+  else if(modelName.includes("gpt-4"))
+    return "gpt-4"
+}
+
 /**
  * Returns the token count of the messages and the completion message
  * @Organization Intelequia
  * @Author Enrique M. Pedroza Castillo
  */
 function intelequiaCountTokens(messages = [""], modelName = 'gpt-3.5-turbo') {
-  let modelEncoder = getModelTokenEncoder(modelName);
+  let modelSimplified = simplifyModelName(modelName)
+  let modelEncoder = getModelTokenEncoder(modelSimplified);
   let enc = getEncoding(modelEncoder);
   let completionMessage = messages[messages.length - 1] 
   let completionArray = enc.encode(completionMessage);

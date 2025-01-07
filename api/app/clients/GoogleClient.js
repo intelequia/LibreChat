@@ -6,7 +6,6 @@ const { ChatGoogleVertexAI } = require('@langchain/google-vertexai');
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
 const { GoogleGenerativeAI: GenAI } = require('@google/generative-ai');
 const { AIMessage, HumanMessage, SystemMessage } = require('@langchain/core/messages');
-const { encoding_for_model: encodingForModel, get_encoding: getEncoding } = require('tiktoken');
 const {
   validateVisionModel,
   getResponseSender,
@@ -17,6 +16,7 @@ const {
   AuthKeys,
 } = require('librechat-data-provider');
 const { encodeAndFormat } = require('~/server/services/Files/images');
+const Tokenizer = require('~/server/services/Tokenizer');
 const { getModelMaxTokens } = require('~/utils');
 const { sleep } = require('~/server/utils');
 const { logger } = require('~/config');
@@ -30,9 +30,7 @@ const BaseClient = require('./BaseClient');
 
 const loc = process.env.GOOGLE_LOC || 'us-central1';
 const publisher = 'google';
-const endpointPrefix = `https://${loc}-aiplatform.googleapis.com`;
-// const apiEndpoint = loc + '-aiplatform.googleapis.com';
-const tokenizersCache = {};
+const endpointPrefix = `${loc}-aiplatform.googleapis.com`;
 
 const settings = endpointSettings[EModelEndpoint.google];
 const EXCLUDED_GENAI_MODELS = /gemini-(?:1\.0|1-0|pro)/;
@@ -58,6 +56,10 @@ class GoogleClient extends BaseClient {
 
     this.apiKey = creds[AuthKeys.GOOGLE_API_KEY];
 
+    this.reverseProxyUrl = options.reverseProxyUrl;
+
+    this.authHeader = options.authHeader;
+
     if (options.skipSetOptions) {
       return;
     }
@@ -66,7 +68,7 @@ class GoogleClient extends BaseClient {
 
   /* Google specific methods */
   constructUrl() {
-    return `${endpointPrefix}/v1/projects/${this.project_id}/locations/${loc}/publishers/${publisher}/models/${this.modelOptions.model}:serverStreamingPredict`;
+    return `https://${endpointPrefix}/v1/projects/${this.project_id}/locations/${loc}/publishers/${publisher}/models/${this.modelOptions.model}:serverStreamingPredict`;
   }
 
   async getClient() {
@@ -174,25 +176,15 @@ class GoogleClient extends BaseClient {
       // without tripping the stop sequences, so I'm using "||>" instead.
       this.startToken = '||>';
       this.endToken = '';
-      this.gptEncoder = this.constructor.getTokenizer('cl100k_base');
     } else if (isTextModel) {
       this.startToken = '||>';
       this.endToken = '';
-      this.gptEncoder = this.constructor.getTokenizer('text-davinci-003', true, {
-        '<|im_start|>': 100264,
-        '<|im_end|>': 100265,
-      });
     } else {
       // Previously I was trying to use "<|endoftext|>" but there seems to be some bug with OpenAI's token counting
       // system that causes only the first "<|endoftext|>" to be counted as 1 token, and the rest are not treated
       // as a single token. So we're using this instead.
       this.startToken = '||>';
       this.endToken = '';
-      try {
-        this.gptEncoder = this.constructor.getTokenizer(this.modelOptions.model, true);
-      } catch {
-        this.gptEncoder = this.constructor.getTokenizer('text-davinci-003', true);
-      }
     }
 
     if (!this.modelOptions.stop) {
@@ -595,7 +587,21 @@ class GoogleClient extends BaseClient {
   createLLM(clientOptions) {
     const model = clientOptions.modelName ?? clientOptions.model;
     clientOptions.location = loc;
-    clientOptions.endpoint = `${loc}-aiplatform.googleapis.com`;
+    clientOptions.endpoint = endpointPrefix;
+
+    let requestOptions = null;
+    if (this.reverseProxyUrl) {
+      requestOptions = {
+        baseUrl: this.reverseProxyUrl,
+      };
+
+      if (this.authHeader) {
+        requestOptions.customHeaders = {
+          Authorization: `Bearer ${this.apiKey}`,
+        };
+      }
+    }
+
     if (this.project_id && this.isTextModel) {
       logger.debug('Creating Google VertexAI client');
       return new GoogleVertexAI(clientOptions);
@@ -607,10 +613,7 @@ class GoogleClient extends BaseClient {
       return new ChatVertexAI(clientOptions);
     } else if (!EXCLUDED_GENAI_MODELS.test(model)) {
       logger.debug('Creating GenAI client');
-      return new GenAI(this.apiKey).getGenerativeModel({
-        ...clientOptions,
-        model,
-      });
+      return new GenAI(this.apiKey).getGenerativeModel({ ...clientOptions, model }, requestOptions);
     }
 
     logger.debug('Creating Chat Google Generative AI client');
@@ -683,7 +686,7 @@ class GoogleClient extends BaseClient {
         promptPrefix = `${promptPrefix ?? ''}\n${this.options.artifactsPrompt}`.trim();
       }
 
-      if (this.options?.promptPrefix?.length) {
+      if (promptPrefix.length) {
         requestOptions.systemInstruction = {
           parts: [
             {
@@ -901,26 +904,29 @@ class GoogleClient extends BaseClient {
         threshold:
           process.env.GOOGLE_SAFETY_DANGEROUS_CONTENT || 'HARM_BLOCK_THRESHOLD_UNSPECIFIED',
       },
+      {
+        category: 'HARM_CATEGORY_CIVIC_INTEGRITY',
+        /**
+         * Note: this was added since `gemini-2.0-flash-thinking-exp-1219` does not
+         * accept 'HARM_BLOCK_THRESHOLD_UNSPECIFIED' for 'HARM_CATEGORY_CIVIC_INTEGRITY'
+         * */
+        threshold: process.env.GOOGLE_SAFETY_CIVIC_INTEGRITY || 'BLOCK_NONE',
+      },
     ];
   }
 
-  /* TO-DO: Handle tokens with Google tokenization NOTE: these are required */
-  static getTokenizer(encoding, isModelName = false, extendSpecialTokens = {}) {
-    if (tokenizersCache[encoding]) {
-      return tokenizersCache[encoding];
-    }
-    let tokenizer;
-    if (isModelName) {
-      tokenizer = encodingForModel(encoding, extendSpecialTokens);
-    } else {
-      tokenizer = getEncoding(encoding, extendSpecialTokens);
-    }
-    tokenizersCache[encoding] = tokenizer;
-    return tokenizer;
+  getEncoding() {
+    return 'cl100k_base';
   }
 
+  /**
+   * Returns the token count of a given text. It also checks and resets the tokenizers if necessary.
+   * @param {string} text - The text to get the token count for.
+   * @returns {number} The token count of the given text.
+   */
   getTokenCount(text) {
-    return this.gptEncoder.encode(text, 'all').length;
+    const encoding = this.getEncoding();
+    return Tokenizer.getTokenCount(text, encoding);
   }
 }
 

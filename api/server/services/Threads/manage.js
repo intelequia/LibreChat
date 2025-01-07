@@ -55,7 +55,7 @@ async function initThread({ openai, body, thread_id: _thread_id }) {
     thread = await openai.beta.threads.create(body);
   }
 
-  const thread_id = _thread_id ?? thread.id;
+  const thread_id = _thread_id || thread.id;
   return { messages, thread_id, ...thread };
 }
 

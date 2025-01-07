@@ -23,6 +23,7 @@ const { createErrorHandler } = require('~/server/controllers/assistants/errors')
 const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
 const { createRun, StreamRunManager } = require('~/server/services/Runs');
 const { addTitle } = require('~/server/services/Endpoints/assistants');
+const { createRunBody } = require('~/server/services/createRunBody');
 const { getTransactions } = require('~/models/Transaction');
 const checkBalance = require('~/models/checkBalance');
 const { getConvo } = require('~/models/Conversation');
@@ -30,8 +31,6 @@ const getLogStores = require('~/cache/getLogStores');
 const { getModelMaxTokens } = require('~/utils');
 const { getOpenAIClient } = require('./helpers');
 const { logger } = require('~/config');
-
-const ten_minutes = 1000 * 60 * 10;
 
 /**
  * @route POST /
@@ -58,6 +57,7 @@ const chatV2 = async (req, res) => {
     messageId: _messageId,
     conversationId: convoId,
     parentMessageId: _parentId = Constants.NO_PARENT,
+    clientTimestamp,
   } = req.body;
 
   /** @type {OpenAIClient} */
@@ -186,10 +186,14 @@ const chatV2 = async (req, res) => {
     };
 
     /** @type {CreateRunBody | undefined} */
-    const body = {
+    const body = createRunBody({
       assistant_id,
       model,
-    };
+      promptPrefix,
+      instructions,
+      endpointOption,
+      clientTimestamp,
+    });
 
     if (promptPrefix) {
       body.additional_instructions = promptPrefix;
@@ -363,7 +367,7 @@ const chatV2 = async (req, res) => {
         });
 
         run_id = run.id;
-        await cache.set(cacheKey, `${thread_id}:${run_id}`, ten_minutes);
+        await cache.set(cacheKey, `${thread_id}:${run_id}`, Time.TEN_MINUTES);
         sendInitialResponse();
 
         // todo: retry logic
@@ -374,7 +378,7 @@ const chatV2 = async (req, res) => {
       /** @type {{[AssistantStreamEvents.ThreadRunCreated]: (event: ThreadRunCreated) => Promise<void>}} */
       const handlers = {
         [AssistantStreamEvents.ThreadRunCreated]: async (event) => {
-          await cache.set(cacheKey, `${thread_id}:${event.data.id}`, ten_minutes);
+          await cache.set(cacheKey, `${thread_id}:${event.data.id}`, Time.TEN_MINUTES);
           run_id = event.data.id;
           sendInitialResponse();
         },
@@ -408,15 +412,17 @@ const chatV2 = async (req, res) => {
       response = streamRunManager;
       response.text = streamRunManager.intermediateText;
 
-      const messageCache = getLogStores(CacheKeys.MESSAGES);
-      messageCache.set(
-        responseMessageId,
-        {
-          complete: true,
-          text: response.text,
-        },
-        Time.FIVE_MINUTES,
-      );
+      if (response.text) {
+        const messageCache = getLogStores(CacheKeys.MESSAGES);
+        messageCache.set(
+          responseMessageId,
+          {
+            complete: true,
+            text: response.text,
+          },
+          Time.FIVE_MINUTES,
+        );
+      }
     };
 
     await processRun();
