@@ -2,7 +2,7 @@ const { Tool } = require('langchain/tools');
 const axios = require('axios');
 const intelequiaCountTokens = require('../../intelequiaTokenCount')
 const {
-  createCompletionQuery,
+  createProjectCompletionQuery,
   handleProyectsfilter
 } = require('../configurations/projectHandler')
 
@@ -72,18 +72,30 @@ class Dataverse extends Tool  {
 
     const instructions = [
       `La consulta del usuario es la siguiente: ${query}.`,
-      `Si el usuario quiere un proyecto usaras el siguiente responderas unicamente con un 1`,
+      `Si el usuario quiere un proyecto, responderas unicamente con un 1`,
+      `Si el usuario quiere una oportunidad, responderas unicamente con un 2`,
     ]
 
     const message = instructions.join(' ');
     const { response } = await this.sendCompletion(message)
     switch (response){
       case 1: return await this.handleProject(query, message, token);
+      case 2: return await this.handleOportunity(query, message, token);
+    }
+  }
+
+  async handleOportunity(query, message, token){
+    const url = 'https://intelequia.crm4.dynamics.com/api/data/v9.2/opportunities?$top=10&$select=prioritycode,totaltax,estimatedclosedate,_pricelevelid_value,confirminterest,opportunityid,identifycompetitors,name,inteleq_numerodeofertas,statuscode,customerneed,totaltax_base,estimatedvalue,currentsituation,statecode,need&$orderby=createdon desc'
+    const {value} = await this.getDynamicsSearch(url, token);
+    return {
+      response: JSON.stringify(value),
+      model:"gpt-4o-mini",
+      query: "(completionQuery + message)"
     }
   }
 
   async handleProject (query, message, token){
-    const completionQuery = createCompletionQuery(query)
+    const completionQuery = createProjectCompletionQuery(query)
     const projectFilterResponse = await this.sendCompletion(completionQuery)
     const dataverseUrlQuery = handleProyectsfilter(projectFilterResponse.response, this.dataverseURL)
     const {value} = await this.getDynamicsSearch(dataverseUrlQuery, token);

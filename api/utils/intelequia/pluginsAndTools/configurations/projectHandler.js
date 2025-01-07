@@ -7,7 +7,7 @@ const {
   teamLeadInstructions
 } = require ('./dataversePrompts')
 
-function createCompletionQuery (query ){
+function createProjectCompletionQuery (query ){
   const instructions = [
     `La consulta del usuario es la siguiente: ${query}`,
     ...projectInstructions,
@@ -172,7 +172,7 @@ function queryFilterProject (filterQuery, appender){
 }
 
 module.exports = {
-  createCompletionQuery,
+  createProjectCompletionQuery,
   queryFilterBusiness,
   businessInstructions,
   handleProyectsfilter
