@@ -18,3 +18,5 @@ librechat.yml
 
 # Ignore all hidden files
 .*
+
+api/utils/intelequia/pluginsAndTools/configurations
