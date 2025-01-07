@@ -24,25 +24,20 @@ async function verifyAssistantPermissions(userId, allAssistants) {
     })
     return result;
   }
-
+  
   allAssistants.forEach((assistant) => {
-    const exist = assistants.some((a) => a.assistant === assistant.id);
-    if (!exist) {
-      result.push(assistant);
-    } else {
-      assistants.forEach((assist) => {
-        if (assist.assistant == assistant.id) {
-          const matches = assist.groups.some((groupId) => {
-            return targetGroupIds.includes(groupId);
-          });
-
-          if (matches) {
-            result.push(assistant);
-          }
-        }
+    const assist = assistants.find(a => a.assistant === assistant.id) 
+    if(assist && assist.groups) {
+      const matches = assist.groups.some((groupId) => {
+        return targetGroupIds.includes(groupId);
       });
+      if (matches) {
+        result.push(assistant);
+      }
+    }else{
+      result.push(assistant);
     }
-  });
+  })
 
   return result;
 }
