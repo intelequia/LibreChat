@@ -16,7 +16,7 @@ async function intelequiaConfigLoader() {
   const url = process.env.REMOTE_CONFIG_FILE_URL;
 
   if(url && url != ""){
-
+    logger.info("[IntelequiaConfigLoader] Loading GraphClient and Permissions files ...")
     const graphClient = await createGraphClient()
     const result = await loadPermissionConfigFiles (url)
     const {permissions, assistantCreator, functions} = result;
