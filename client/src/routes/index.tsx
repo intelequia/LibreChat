@@ -8,6 +8,7 @@ import {
   ApiErrorWatcher,
 } from '~/components/Auth';
 import { AuthContextProvider } from '~/hooks/AuthContext';
+import RouteErrorBoundary from './RouteErrorBoundary';
 import StartupLayout from './Layouts/Startup';
 import LoginLayout from './Layouts/Login';
 import dashboardRoutes from './Dashboard';
@@ -41,10 +42,12 @@ export const router = createBrowserRouter([
   {
     path: 'share/:shareId',
     element: <ShareRoute />,
+    errorElement: <RouteErrorBoundary />,
   },
   {
     path: '/',
     element: <StartupLayout />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       {
         path: 'register',
@@ -63,9 +66,11 @@ export const router = createBrowserRouter([
   {
     path: 'verify',
     element: <VerifyEmail />,
+    errorElement: <RouteErrorBoundary />,
   },
   {
     element: <AuthLayout />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       {
         path: '/',

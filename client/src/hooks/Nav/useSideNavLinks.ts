@@ -73,7 +73,6 @@ export default function useSideNavLinks({
       assistants &&
       assistants.disableBuilder !== true &&
       keyProvided &&
-      interfaceConfig.parameters === true &&
       hasAccessToAssistantCreator
     ) {
       links.push({
@@ -90,9 +89,7 @@ export default function useSideNavLinks({
       hasAccessToCreateAgents &&
       isAgentsEndpoint(endpoint) &&
       agents &&
-      agents.disableBuilder !== true &&
-      keyProvided &&
-      interfaceConfig.parameters === true
+      agents.disableBuilder !== true
     ) {
       links.push({
         title: 'com_sidepanel_agent_builder',
@@ -116,6 +113,7 @@ export default function useSideNavLinks({
     if (
       interfaceConfig.parameters === true &&
       isParamEndpoint(endpoint ?? '', endpointType ?? '') === true &&
+      !isAgentsEndpoint(endpoint) &&
       keyProvided
     ) {
       links.push({
