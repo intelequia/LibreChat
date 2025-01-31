@@ -614,8 +614,6 @@ class OpenAIClient extends BaseClient {
     model = 'gpt-4o-mini',
     modelName,
     temperature = 0.2,
-    presence_penalty = 0,
-    frequency_penalty = 0,
     max_tokens,
     streaming,
     context,
@@ -626,8 +624,6 @@ class OpenAIClient extends BaseClient {
     const modelOptions = {
       modelName: modelName ?? model,
       temperature,
-      presence_penalty,
-      frequency_penalty,
       user: this.user,
     };
 
@@ -798,7 +794,11 @@ ${convo}
         }
 
         title = (
-          await this.sendPayload(instructionsPayload, { modelOptions, useChatCompletion })
+          await this.sendPayload(instructionsPayload, {
+            modelOptions,
+            useChatCompletion,
+            context: 'title',
+          })
         ).replaceAll('"', '');
 
         const completionTokens = this.getTokenCount(title);
@@ -931,7 +931,10 @@ ${convo}
     );
 
     if (excessTokenCount > maxContextTokens) {
-      ({ context } = await this.getMessagesWithinTokenLimit(context, maxContextTokens));
+      ({ context } = await this.getMessagesWithinTokenLimit({
+        messages: context,
+        maxContextTokens,
+      }));
     }
 
     if (context.length === 0) {
@@ -1065,6 +1068,7 @@ ${convo}
     let error = null;
     const errorCallback = (err) => (error = err);
     const intermediateReply = [];
+    const reasoningTokens = [];
     try {
       if (!abortController) {
         abortController = new AbortController();
@@ -1256,6 +1260,12 @@ ${convo}
         delete modelOptions.stop;
       }
 
+      let reasoningKey = 'reasoning_content';
+      if (this.useOpenRouter) {
+        modelOptions.include_reasoning = true;
+        reasoningKey = 'reasoning';
+      }
+
       if (modelOptions.stream) {
         streamPromise = new Promise((resolve) => {
           streamResolve = resolve;
@@ -1292,8 +1302,29 @@ ${convo}
             }
           });
 
+        let reasoningCompleted = false;
         for await (const chunk of stream) {
-          const token = chunk.choices[0]?.delta?.content || '';
+          if (chunk?.choices?.[0]?.delta?.[reasoningKey]) {
+            if (reasoningTokens.length === 0) {
+              const thinkingDirective = '<think>\n';
+              intermediateReply.push(thinkingDirective);
+              reasoningTokens.push(thinkingDirective);
+              onProgress(thinkingDirective);
+            }
+            const reasoning_content = chunk?.choices?.[0]?.delta?.[reasoningKey] || '';
+            intermediateReply.push(reasoning_content);
+            reasoningTokens.push(reasoning_content);
+            onProgress(reasoning_content);
+          }
+
+          const token = chunk?.choices?.[0]?.delta?.content || '';
+          if (!reasoningCompleted && reasoningTokens.length > 0 && token) {
+            reasoningCompleted = true;
+            const separatorTokens = '\n</think>\n';
+            reasoningTokens.push(separatorTokens);
+            onProgress(separatorTokens);
+          }
+
           intermediateReply.push(token);
           onProgress(token);
           if (abortController.signal.aborted) {
@@ -1358,6 +1389,10 @@ ${convo}
           { intermediateReply: reply },
         );
         return reply;
+      }
+
+      if (reasoningTokens.length > 0 && this.options.context !== 'title') {
+        return reasoningTokens.join('') + message.content;
       }
 
       return message.content;

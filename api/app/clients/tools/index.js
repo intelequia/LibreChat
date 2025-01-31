@@ -19,6 +19,7 @@ const {
   MicrosoftGraph,
   BingSearch
 } = require("~/utils")
+const OpenWeather = require('./structured/OpenWeather');
 
 module.exports = {
   availableTools,
@@ -30,10 +31,11 @@ module.exports = {
   TraversaalSearch,
   StructuredWolfram,
   TavilySearchResults,
-  TraversaalSearch,
+  TraversaalSearch,  
+  OpenWeather,
   // Intelequia Plugins
   AzureAIFunctions,
   Dataverse,
   MicrosoftGraph,
-  BingSearch
+  BingSearch,
 };

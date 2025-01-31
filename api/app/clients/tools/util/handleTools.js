@@ -14,6 +14,7 @@ const {
   TraversaalSearch,
   StructuredWolfram,
   TavilySearchResults,
+  OpenWeather,
 } = require('../');
 const { primeFiles: primeCodeFiles } = require('~/server/services/Files/Code/process');
 const { createFileSearchTool, primeFiles: primeSearchFiles } = require('./fileSearch');
@@ -190,6 +191,7 @@ const loadTools = async ({
     "microsoft-graph": MicrosoftGraph,
     tavily_search_results_json: TavilySearchResults,
     "sharepoint": Sharepoint,
+    open_weather: OpenWeather,
   };
 
   const customConstructors = {
