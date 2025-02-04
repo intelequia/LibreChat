@@ -641,7 +641,7 @@ class BaseClient {
         userEmail: email,
         charactersLength: userMessage.text.length,
         messageTokens: userMessage.tokenCount,
-        model: this.modelOptions.model,
+        model: this.modelOptions?.model ?? this.model,
         conversationId: conversationId,
       },
     });
@@ -674,7 +674,7 @@ class BaseClient {
       properties: {
         userId: user,
         userEmail: email,
-        model: this.modelOptions.model,
+        model: this.modelOptions?.model ?? this.model,
       },
     });
 
@@ -747,7 +747,7 @@ class BaseClient {
           promptTokens: promptTokens,
           completionTokens: completionTokens,
           messageTokens: completionTokens + promptTokens ,
-          model: this.modelOptions.model,
+          model: this.modelOptions?.model ?? this.model,
         },
       });
       
