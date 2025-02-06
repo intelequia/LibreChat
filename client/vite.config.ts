@@ -61,6 +61,7 @@ export default defineConfig({
       devOptions: {
         enabled: false, // enable/disable registering SW in development mode
       },
+      useCredentials: true,
       workbox: {
         cleanupOutdatedCaches: true, // Add this line to clean up outdated caches
         globPatterns: ['assets/**/*.{png,jpg,svg,ico}', '**/*.{js,css,html,ico,woff2}'],

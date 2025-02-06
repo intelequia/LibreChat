@@ -6,6 +6,7 @@ const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { deleteAssistantActions } = require('~/server/services/ActionService');
 const { updateAssistantDoc, getAssistants } = require('~/models/Assistant');
 const { getOpenAIClient, fetchAssistants } = require('./helpers');
+const { manifestToolMap } = require('~/app/clients/tools');
 const { deleteFileByFilter } = require('~/models/File');
 const { logger } = require('~/config');
 const { IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification, isToolEnabled, GetToolSpecification } = require('~/utils');
@@ -50,9 +51,21 @@ const createAssistant = async (req, res) => {
           return tool;
         }
 
-        return req.app.locals.availableTools[tool];
+        const toolDefinitions = req.app.locals.availableTools;
+        const toolDef = toolDefinitions[tool];
+        if (!toolDef && manifestToolMap[tool] && manifestToolMap[tool].toolkit === true) {
+          return (
+            Object.entries(toolDefinitions)
+              .filter(([key]) => key.startsWith(`${tool}_`))
+              // eslint-disable-next-line no-unused-vars
+              .map(([_, val]) => val)
+          );
+        }
+
+        return toolDef;
       })
-      .filter((tool) => tool);
+      .filter((tool) => tool)
+      .flat();
 
     let azureModelIdentifier = null;
     if (openai.locals?.azureOptions) {
@@ -152,33 +165,45 @@ const patchAssistant = async (req, res) => {
     } = req.body;
     updateData.tools = (await Promise.all(
       (updateData.tools ?? [])
-      .map(async (tool) => {
-        if (typeof tool !== 'string') {
-          if (tool.type === 'retrieval' && _e === 'azureAssistants') {tool.type = 'file_search';}
-          return tool;
-        }
+        .map(async (tool) => {
+          if (typeof tool !== 'string') {
+            if (tool.type === 'retrieval' && _e === 'azureAssistants') { tool.type = 'file_search'; }
+            return tool;
+          }
 
-        /**
-         * Verifies if Tool is within Functions specifications
-         * @Organization Intelequia
-         * @Author Enrique M. Pedroza Castillo
-         */
-        if (await IsToolAFunction(tool)) {
-          return  await GetFunctionSpecification(tool)
-        }
+          /**
+           * Verifies if Tool is within Functions specifications
+           * @Organization Intelequia
+           * @Author Enrique M. Pedroza Castillo
+           */
+          if (await IsToolAFunction(tool)) {
+            return await GetFunctionSpecification(tool)
+          }
 
-        /**
-         * Verifies if Tool is within Intelequia's Tool List
-         * @Organization Intelequia
-         * @Author Enrique M. Pedroza Castillo
-         */
-        if(await isToolEnabled(tool)){
-          return await GetToolSpecification(tool)
-        }
+          /**
+           * Verifies if Tool is within Intelequia's Tool List
+           * @Organization Intelequia
+           * @Author Enrique M. Pedroza Castillo
+           */
+          if (await isToolEnabled(tool)) {
+            return await GetToolSpecification(tool)
+          }
 
-        return req.app.locals.availableTools[tool];
-      })
-    )).filter((tool) => tool);
+          const toolDefinitions = req.app.locals.availableTools;
+          const toolDef = toolDefinitions[tool];
+          if (!toolDef && manifestToolMap[tool] && manifestToolMap[tool].toolkit === true) {
+            return (
+              Object.entries(toolDefinitions)
+                .filter(([key]) => key.startsWith(`${tool}_`))
+                // eslint-disable-next-line no-unused-vars
+                .map(([_, val]) => val)
+            );
+          }
+
+          return toolDef;
+        })))
+      .filter((tool) => tool)
+      .flat();
 
     if (openai.locals?.azureOptions && updateData.model) {
       updateData.model = openai.locals.azureOptions.azureOpenAIApiDeploymentName;
@@ -261,7 +286,7 @@ const listAssistants = async (req, res) => {
      * @Author Enrique M. Pedroza Castillo
      */
     SaveFunctionsInCache(body.data);
-    
+
     res.json(body);
   } catch (error) {
     logger.error('[/assistants] Error listing assistants', error);
