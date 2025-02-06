@@ -21,7 +21,6 @@ const {
   MicrosoftGraph,
   BingSearch
 } = require("~/utils")
-const OpenWeather = require('./structured/OpenWeather');
 
 /** @type {Record<string, TPlugin | undefined>} */
 const manifestToolMap = {};
