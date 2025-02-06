@@ -31,7 +31,14 @@ async function createRun({
   streaming = true,
   streamUsage = true,
 }) {
-  const provider = providerEndpointMap[agent.provider] ?? agent.provider;
+  
+  //////////////////////////////////  WARNING: INTELEQUIA MODIFICATION MUST UPDATE  //////////////////////////////////
+  let provider = providerEndpointMap[agent.provider] ?? agent.provider;
+  
+  if(agent.provider == 'azureOpenAI')
+    provider = agent.provider
+
+  ////////////////////////////////
   const llmConfig = Object.assign(
     {
       provider,
