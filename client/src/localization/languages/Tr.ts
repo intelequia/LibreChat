@@ -645,4 +645,5 @@ export default {
   com_nav_lang_hebrew: 'עברית',
 	com_nav_lang_catala: 'Català',  
   com_nav_lang_finnish: 'Suomi',
+  com_nav_balance: 'Denge',
 };

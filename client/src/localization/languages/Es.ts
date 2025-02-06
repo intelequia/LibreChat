@@ -1203,6 +1203,7 @@ export default {
   com_endpoint_message_new: 'Mensaje {0}',
   com_ui_speech_while_submitting:
     'No se puede enviar un mensaje de voz mientras se está generando una respuesta',
+  com_nav_balance: 'Balance',
 }
 export const comparisons = {
   com_files_no_results: {
@@ -3388,8 +3389,8 @@ export const comparisons = {
     english: 'עברית',
     translated: 'עברית',
   },
-	com_nav_lang_catala:  {
-    english: 'Catalan', 
-    translated: 'Català',  
-  }  
+  com_nav_lang_catala: {
+    english: 'Catalan',
+    translated: 'Català',
+  }
 };

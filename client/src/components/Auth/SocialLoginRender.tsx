@@ -1,4 +1,4 @@
-import { GoogleIcon, FacebookIcon, OpenIDIcon, GithubIcon, DiscordIcon } from '~/components';
+import { GoogleIcon, FacebookIcon, OpenIDIcon, GithubIcon, DiscordIcon, AppleIcon } from '~/components';
 
 import SocialButton from './SocialButton';
 
@@ -22,7 +22,7 @@ function SocialLoginRender({
           && startupConfig?.socialLogins?.length === 1;
 
   const providerComponents = {
-    discord: startupConfig?.discordLoginEnabled && (
+    discord: startupConfig.discordLoginEnabled && (
       <SocialButton
         key="discord"
         enabled={startupConfig.discordLoginEnabled}
@@ -34,7 +34,7 @@ function SocialLoginRender({
         autoRedirect={false}
       />
     ),
-    facebook: startupConfig?.facebookLoginEnabled && (
+    facebook: startupConfig.facebookLoginEnabled && (
       <SocialButton
         key="facebook"
         enabled={startupConfig.facebookLoginEnabled}
@@ -46,7 +46,7 @@ function SocialLoginRender({
         autoRedirect={false}
       />
     ),
-    github: startupConfig?.githubLoginEnabled && (
+    github: startupConfig.githubLoginEnabled && (
       <SocialButton
         key="github"
         enabled={startupConfig.githubLoginEnabled}
@@ -58,7 +58,7 @@ function SocialLoginRender({
         autoRedirect={false}
       />
     ),
-    google: startupConfig?.googleLoginEnabled && (
+    google: startupConfig.googleLoginEnabled && (
       <SocialButton
         key="google"
         enabled={startupConfig.googleLoginEnabled}
@@ -70,7 +70,18 @@ function SocialLoginRender({
         autoRedirect={false}
       />
     ),
-    openid: startupConfig?.openidLoginEnabled && (
+    apple: startupConfig.appleLoginEnabled && (
+      <SocialButton
+        key="apple"
+        enabled={startupConfig.appleLoginEnabled}
+        serverDomain={startupConfig.serverDomain}
+        oauthPath="apple"
+        Icon={AppleIcon}
+        label={localize('com_auth_apple_login')}
+        id="apple"
+      />
+    ),
+    openid: startupConfig.openidLoginEnabled && (
       <SocialButton
         key="openid"
         enabled={startupConfig.openidLoginEnabled}

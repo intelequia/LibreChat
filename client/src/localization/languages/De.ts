@@ -947,6 +947,7 @@ export default {
   com_ui_collapse_chat: 'Chat einklappen',
   com_ui_speech_while_submitting: 'Spracheingabe nicht möglich während eine Antwort generiert wird',
   com_endpoint_message_new: 'Nachricht {0}',
+  com_nav_balance: 'Gleichgewicht',
 };
 
 export const comparisons = {
