@@ -63,7 +63,7 @@ Usage:
             ...params,
         };
         try {
-            const response = await fetch(EXEC_ENDPOINT, {
+            const response = await fetch("http://localhost:2222/run", {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
