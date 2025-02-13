@@ -63,7 +63,7 @@ Usage:
             ...params,
         };
         try {
-            const response = await fetch(EXEC_ENDPOINT, {
+            const response = await fetch("http://intelewriter-open-interpreter:8000/run", {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -76,6 +76,7 @@ Usage:
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const result = await response.json();
+            console.log(result)
             let formattedOutput = '';
             if (result.output[0].content) {
                 formattedOutput += `stdout:\n${result.output[0].content}\n`;
