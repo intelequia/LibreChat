@@ -28,11 +28,7 @@ RUN \
 
 RUN mkdir -p /app/client/public/images /app/api/logs
 
-COPY ./code-interpreter/CodeExecutor.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
-COPY ./code-interpreter/enum.cjs /app/node_modules/@librechat/agents/dist/cjs/common/enum.cjs
-
 COPY ./code-interpreter/CodeExecutor.cjs /app/api/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
-COPY ./code-interpreter/enum.cjs /app/api/node_modules/@librechat/agents/dist/cjs/common/enum.cjs
 
 # Node API setup
 EXPOSE 3080
