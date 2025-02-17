@@ -123,7 +123,6 @@ async function getSessionInfo(fileIdentifier, apiKey) {
       method: 'get',
       url: `${baseURL}/files/${session_id}`,
       params: {
-        detail: 'summary',
         ...queryParams,
       },
       headers: {
