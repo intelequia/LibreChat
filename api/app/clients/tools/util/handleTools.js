@@ -258,7 +258,8 @@ const loadTools = async ({
           userId: user,
           authFields: [EnvVar.CODE_API_KEY],
         });
-        const codeApiKey = authValues[EnvVar.CODE_API_KEY];
+        // const codeApiKey = authValues[EnvVar.CODE_API_KEY];
+        const codeApiKey = "MyKey"
         const { files, toolContext } = await primeCodeFiles(options, codeApiKey);
         if (toolContext) {
           toolContextMap[tool] = toolContext;
