@@ -28,8 +28,7 @@ const RunCode: React.FC<CodeBarProps> = React.memo(({ lang, codeRef, blockIndex 
     },
   );
   const authType = useMemo(() => data?.message ?? false, [data?.message]);
-  // const isAuthenticated = useMemo(() => data?.authenticated ?? false, [data?.authenticated]);
-  const isAuthenticated = true
+  const isAuthenticated = useMemo(() => data?.authenticated ?? false, [data?.authenticated]);
 
   const { methods, onSubmit, isDialogOpen, setIsDialogOpen, handleRevokeApiKey } =
     useCodeApiKeyForm({});
