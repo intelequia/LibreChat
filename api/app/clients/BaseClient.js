@@ -630,6 +630,12 @@ class BaseClient {
       }
     }
 
+    /**
+     * Retrievign needed data to track token ussage
+     * @organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+
     const User = require('~/models/User');
     const { email } = await User.findOne({ _id: user }).lean();
 
@@ -639,7 +645,7 @@ class BaseClient {
        * @Author Enrique M. Pedroza Castillo
        */
     global.appInsights.trackEvent({
-      name: 'AzureQuery',
+      name: this.options.endpoint == "azureOpenAI"?'AzureQuery':'AgentQuery',
       properties: {
         userId: user,
         userEmail: email,
@@ -674,7 +680,7 @@ class BaseClient {
        * @Author Enrique M. Pedroza Castillo
        */
     global.appInsights.trackEvent({
-      name: 'AzureAnswerStarted',
+      name: this.options.endpoint == "azureOpenAI"? 'AzureAnswerStarted':'AgentAnswerStarted',
       properties: {
         userId: user,
         userEmail: email,
@@ -743,7 +749,7 @@ class BaseClient {
        * @Author Enrique M. Pedroza Castillo
        */
       global.appInsights.trackEvent({
-        name: 'AzureAnswerEnded',
+        name: this.options.endpoint == "azureOpenAI"? 'AzureAnswerEnded':'AgentAnswerEnded',
         properties: {
           userId: user,
           userEmail: email,
