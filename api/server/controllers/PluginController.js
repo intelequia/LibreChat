@@ -5,6 +5,8 @@ const { availableTools } = require('~/app/clients/tools');
 const { getMCPManager } = require('~/config');
 const { getLogStores } = require('~/cache');
 const {filterPluginsByName, isToolEnabled } = require('~/utils');
+
+const {intelequiaTools} = require('~/utils');
 /**
  * Filters out duplicate plugins from the list of plugins.
  *
@@ -138,8 +140,16 @@ const getAvailableTools = async (req, res) => {
           Object.keys(toolDefinitions).some((key) => key.startsWith(`${plugin.pluginKey}_`))),
     );
 
-    await cache.set(CacheKeys.TOOLS, tools);
-    res.status(200).json(tools);
+    /**
+     * Added intelequia's tools in agents tool store
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    const intelequiaDefinitions = authenticatedPlugins.filter(tool => intelequiaTools.includes(tool.pluginKey))
+    const allTools = [...tools, ...intelequiaDefinitions]
+
+    await cache.set(CacheKeys.TOOLS, allTools);
+    res.status(200).json(allTools);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
