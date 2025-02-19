@@ -266,7 +266,17 @@ const loadTools = async ({
         if (toolContext) {
           toolContextMap[tool] = toolContext;
         }
+        /**
+         * Retrievign needed data to track token ussage
+         * @organization Intelequia
+         * @Author Enrique M. Pedroza Castillo
+         */
+
+        const User = require('~/models/User');
+        const { email } = await User.findOne({ _id: user }).lean();
+
         const CodeExecutionTool = createCodeExecutionTool({
+          user_email:email,
           user_id: user,
           files,
           ...authValues,

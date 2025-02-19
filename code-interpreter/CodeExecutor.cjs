@@ -44,6 +44,7 @@ const CodeExecutionToolSchema = zod.z.object({
 const EXEC_ENDPOINT = `${getCodeBaseURL()}/run`;
 function createCodeExecutionTool(params = {}) {
     const apiKey = params[_enum.EnvVar.CODE_API_KEY] ?? params.apiKey ?? env.getEnvironmentVariable(_enum.EnvVar.CODE_API_KEY) ?? '';
+    const userEmail = params.user_email
     if (!apiKey) {
         throw new Error('No API key provided for code execution tool.');
     }
@@ -57,13 +58,14 @@ Usage:
 `.trim();
     return tools.tool(async ({ lang, code, ...rest }) => {
         const postData = {
+            user_email:userEmail,
             language:lang,
             code,
             ...rest,
             ...params,
         };
         try {
-            const response = await fetch("http://intelewriter-open-interpreter:8000/run", {
+            const response = await fetch(EXEC_ENDPOINT, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -76,7 +78,6 @@ Usage:
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const result = await response.json();
-            console.log(result)
             let formattedOutput = '';
             if (result.output[0].content) {
                 formattedOutput += `stdout:\n${result.output[0].content}\n`;
