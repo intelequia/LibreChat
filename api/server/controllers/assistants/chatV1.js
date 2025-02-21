@@ -508,7 +508,7 @@ const chatV1 = async (req, res) => {
       };
 
       previousMessages.push(requestMessage);
-
+      // Enrique: Hasta aca bien , crea el threat con los files ids 
       /* asynchronous */
       userMessagePromise = saveUserMessage(req, { ...requestMessage, model });
 
@@ -570,6 +570,10 @@ const chatV1 = async (req, res) => {
         body.model = openai._options.model;
         openai.attachedFileIds = attachedFileIds;
         openai.visionPromise = visionPromise;
+
+        if(userMessage.attachments.length > 0)
+          body.tools = [ { type: "file_search" } ]
+        
         const userEmail = req.user.email;
         if (retry) {
           response = await runAssistant({
