@@ -75,7 +75,7 @@ const refreshController = async (req, res) => {
 
   try {
     const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    const user = await getUserById(payload.id, '-password -__v');
+    const user = await getUserById(payload.id, '-password -__v -totpSecret');
     if (!user) {
       /**
        * Custom event to track when a user is not found
