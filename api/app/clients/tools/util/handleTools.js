@@ -328,7 +328,7 @@ const loadTools = async ({
      * @Author Enrique M. Pedroza Castillo
      */
 
-    if(process.env.ENABLE_PERMISSION_MANAGE == "true"){
+    if(process.env.ENABLE_PERMISSION_MANAGE == "true" && tool != "image_vision" ){
       const {status,value} = await VerifyAzureAIFunctionsTool(tool, user, toolOptions,loadToolWithAuth,toolAuthFields,toolConstructors);
       if(status){
         requestedTools[tool] = value;

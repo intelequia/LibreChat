@@ -4,7 +4,6 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { defineConfig, createLogger } from 'vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import type { Plugin } from 'vite';
-import wasm from 'vite-plugin-wasm';
 
 const logger = createLogger();
 const originalWarning = logger.warn;
@@ -39,11 +38,11 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       '/api': {
-        target: 'https://localhost',
+        target: 'http://localhost:3080',
         changeOrigin: true,
       },
       '/oauth': {
-        target: 'https://localhost',
+        target: 'http://localhost:3080',
         changeOrigin: true,
       },
     },
@@ -52,7 +51,6 @@ export default defineConfig({
   envDir: '../',
   envPrefix: ['VITE_', 'SCRIPT_', 'DOMAIN_', 'ALLOW_'],
   plugins: [
-    wasm(),
     react(),
     nodePolyfills(),
     VitePWA({
@@ -63,14 +61,13 @@ export default defineConfig({
       },
       useCredentials: true,
       workbox: {
-        cleanupOutdatedCaches: true, // Add this line to clean up outdated caches
         globPatterns: ['assets/**/*.{png,jpg,svg,ico}', '**/*.{js,css,html,ico,woff2}'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallbackDenylist: [/^\/oauth/],
       },
       manifest: {
-        name: 'Intelewriter',
-        short_name: 'Intelewriter',
+        name: 'LibreChat',
+        short_name: 'LibreChat',
         start_url: '/',
         display: 'standalone',
         background_color: '#000000',
@@ -87,9 +84,15 @@ export default defineConfig({
             type: 'image/png',
           },
           {
-            src: '/assets/icon-80x80.png',
-            sizes: '80x80',
+            src: '/assets/apple-touch-icon-180x180.png',
+            sizes: '180x180',
             type: 'image/png',
+          },
+          {
+            src: '/assets/maskable-icon.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
         ],
       },
