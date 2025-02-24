@@ -253,7 +253,7 @@ async function setupOpenId() {
            * @Author Enrique M. Pedroza Castillo
            */
           if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
-            await updateUserInfoInCache(tokenset.id_token,user);
+            user = await updateUserInfoInCache(tokenset.id_token,user);
           
           /**
            * Saves Graph Token
