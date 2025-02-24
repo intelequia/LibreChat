@@ -570,8 +570,7 @@ const chatV1 = async (req, res) => {
         body.model = openai._options.model;
         openai.attachedFileIds = attachedFileIds;
         openai.visionPromise = visionPromise;
-
-        if(userMessage.attachments.length > 0)
+        if(userMessage?.attachments?.length > 0)
           body.tools = [ { type: "file_search" } ]
         
         const userEmail = req.user.email;
