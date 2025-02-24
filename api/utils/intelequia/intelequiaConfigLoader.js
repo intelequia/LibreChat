@@ -99,7 +99,17 @@ async function updateUserInfoInCache(jwt, user) {
   global.myCache.set(user._id.toString(), userGroupsInToken, process.env.USER_GROUPS_CACHE_TTL)
 
   const role = userGroupsInToken.includes(adminGroup) ? 'ADMIN' : 'USER';
-  await User.updateOne({ email: user.email }, { $set: { role } });
+  try{
+    await User.updateOne({ email: user.email }, { $set: { role } });
+    logger.info( `[updateUserInfoInCache] User info in cache updated successfuly`, );
+    user.role = role
+    return user
+  }
+  catch(e) {
+    logger.error(
+      `[updateUserInfoInCache] Error at updating user cache: ${e}`,
+    );
+  }
 }
 
 async function saveGraphToken(token, user) {
