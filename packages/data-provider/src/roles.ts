@@ -42,6 +42,14 @@ export enum PermissionTypes {
    */
 
   ASSISTANT_CREATOR = 'ASSISTANT_CREATOR',
+  /**
+   * Type for Temporary Chat
+   */
+  TEMPORARY_CHAT = 'TEMPORARY_CHAT',
+  /**
+   * Type for using the "Run Code" LC Code Interpreter API feature
+   */
+  RUN_CODE = 'RUN_CODE',
 }
 
 /**
@@ -85,7 +93,15 @@ export const agentPermissionsSchema = z.object({
 });
 
 export const multiConvoPermissionsSchema = z.object({
-  [Permissions.USE]: z.boolean().default(false),
+  [Permissions.USE]: z.boolean().default(true),
+});
+
+export const temporaryChatPermissionsSchema = z.object({
+  [Permissions.USE]: z.boolean().default(true),
+});
+
+export const runCodePermissionsSchema = z.object({
+  [Permissions.USE]: z.boolean().default(true),
 });
 
 export const roleSchema = z.object({
@@ -100,6 +116,8 @@ export const roleSchema = z.object({
    * @Author Enrique M. Pedroza Castillo
    */
   [PermissionTypes.ASSISTANT_CREATOR]: AssistantCreatorPermissionsSchema,
+  [PermissionTypes.TEMPORARY_CHAT]: temporaryChatPermissionsSchema,
+  [PermissionTypes.RUN_CODE]: runCodePermissionsSchema,
 });
 
 export type TRole = z.infer<typeof roleSchema>;
@@ -113,6 +131,8 @@ export type TMultiConvoPermissions = z.infer<typeof multiConvoPermissionsSchema>
  * @Author Enrique M. Pedroza Castillo
  */
 export type TAssistantCreatorPermissions = z.infer<typeof AssistantCreatorPermissionsSchema>;
+export type TTemporaryChatPermissions = z.infer<typeof temporaryChatPermissionsSchema>;
+export type TRunCodePermissions = z.infer<typeof runCodePermissionsSchema>;
 
 const defaultRolesSchema = z.object({
   [SystemRoles.ADMIN]: roleSchema.extend({
@@ -143,6 +163,12 @@ const defaultRolesSchema = z.object({
     [PermissionTypes.ASSISTANT_CREATOR]: AssistantCreatorPermissionsSchema.extend({
       [Permissions.USE]: z.boolean().default(true),
     }),
+    [PermissionTypes.TEMPORARY_CHAT]: temporaryChatPermissionsSchema.extend({
+      [Permissions.USE]: z.boolean().default(true),
+    }),
+    [PermissionTypes.RUN_CODE]: runCodePermissionsSchema.extend({
+      [Permissions.USE]: z.boolean().default(true),
+    }),
   }),
   [SystemRoles.USER]: roleSchema.extend({
     name: z.literal(SystemRoles.USER),
@@ -158,6 +184,8 @@ const defaultRolesSchema = z.object({
     [PermissionTypes.ASSISTANT_CREATOR]: AssistantCreatorPermissionsSchema.extend({
       [Permissions.USE]: z.boolean().default(false),  
     }),
+    [PermissionTypes.TEMPORARY_CHAT]: temporaryChatPermissionsSchema,
+    [PermissionTypes.RUN_CODE]: runCodePermissionsSchema,
   }),
 });
 
@@ -174,6 +202,8 @@ export const roleDefaults = defaultRolesSchema.parse({
      * @Author Enrique M. Pedroza Castillo
      */
     [PermissionTypes.ASSISTANT_CREATOR]: {[Permissions.USE]: true},
+    [PermissionTypes.TEMPORARY_CHAT]: {},
+    [PermissionTypes.RUN_CODE]: {},
   },
   [SystemRoles.USER]: {
     name: SystemRoles.USER,
@@ -187,5 +217,7 @@ export const roleDefaults = defaultRolesSchema.parse({
      * @Author Enrique M. Pedroza Castillo
      */
     [PermissionTypes.ASSISTANT_CREATOR]: {[Permissions.USE]: false },
+    [PermissionTypes.TEMPORARY_CHAT]: {},
+    [PermissionTypes.RUN_CODE]: {},
   },
 });

@@ -145,6 +145,7 @@
     "vite": "^6.1.0",
     "vite-plugin-node-polyfills": "^0.17.0",
     "vite-plugin-pwa": "^0.21.1",
-    "gpt-tokenizer": "^2.7.0"
+    "gpt-tokenizer": "^2.7.0",
+    "vite-plugin-compression": "^0.5.1"
   }
 }
