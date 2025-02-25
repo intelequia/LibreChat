@@ -61,6 +61,7 @@ const initializeClient = async ({ req, res, version, endpointOption, initAppClie
   const userProvidesURL = isUserProvided(AZURE_ASSISTANTS_BASE_URL);
 
   let userValues = null;
+  
   if (userProvidesKey || userProvidesURL) {
     const expiresAt = await getUserKeyExpiry({
       userId: req.user.id,

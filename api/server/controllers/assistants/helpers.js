@@ -7,6 +7,17 @@ const {
 const {
   initializeClient: initAzureClient,
 } = require('~/server/services/Endpoints/azureAssistants');
+
+/**
+ * imported Azure Agent Client
+ * @author: Enrique M. Pedroza Castillo 
+ * @organization: Intelequia
+ */
+const {
+  initializeClient: initAzureAgentClient,
+} = require('~/server/services/Endpoints/azureAgents');
+const {AIProjectsClient} = require ('@azure/ai-projects')
+
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
 const { getLogStores } = require('~/cache');
 const {verifyAssistantPermissions} = require('~/utils');
@@ -210,6 +221,12 @@ async function getOpenAIClient({ req, res, endpointOption, initAppClient, overri
     result = await initializeClient({ req, res, version, endpointOption, initAppClient });
   } else if (endpoint === EModelEndpoint.azureAssistants) {
     result = await initAzureClient({ req, res, version, endpointOption, initAppClient });
+    /**
+     * Added agent client to azure ai assistant client object
+     * @author Enrique M. Pedroza Castillo
+     * @organization Intelequia
+     */
+    result.agentClient = await initAzureAgentClient({ req, res, version, endpointOption, initAppClient });
   }
 
   return result;

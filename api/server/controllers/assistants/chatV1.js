@@ -349,7 +349,7 @@ const chatV1 = async (req, res) => {
       });
     };
 
-    const { openai: _openai, client } = await getOpenAIClient({
+    const { openai: _openai, client, agentClient } = await getOpenAIClient({
       req,
       res,
       endpointOption,
@@ -409,6 +409,16 @@ const chatV1 = async (req, res) => {
       }
 
       const assistant = await openai.beta.assistants.retrieve(assistant_id);
+      /**
+       * retrieve all agents assistan 
+       * @author Enrique M. Pedroza Castillo
+       * @organization Intelequia
+       */
+      if(agentClient){
+        const agents = await agentClient.agents.listAgents()
+        console.log(agents)
+      }
+      
       const visionToolIndex = assistant.tools.findIndex(
         (tool) => tool?.function && tool?.function?.name === ImageVisionTool.function.name,
       );

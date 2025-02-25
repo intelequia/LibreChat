@@ -89,6 +89,7 @@
     "@playwright/test": "^1.50.1",
     "@types/react-virtualized": "^9.22.0",
     "cross-env": "^7.0.3",
+    "elliptic": "^6.6.1",
     "eslint": "^9.20.1",
     "eslint-config-prettier": "^10.0.1",
     "eslint-import-resolver-typescript": "^3.7.0",
@@ -108,8 +109,7 @@
     "prettier": "^3.5.0",
     "prettier-eslint": "^16.3.0",
     "prettier-plugin-tailwindcss": "^0.6.11",
-    "typescript-eslint": "^8.24.0",
-    "elliptic": "^6.6.1"
+    "typescript-eslint": "^8.24.0"
   },
   "overrides": {
     "elliptic": "^6.6.1",
@@ -140,6 +140,7 @@
     ]
   },
   "dependencies": {
+    "@azure/core-auth": "^1.9.0",
     "@azure/identity": "^4.4.1",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "applicationinsights": "^3.2.2",
