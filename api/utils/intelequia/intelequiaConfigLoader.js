@@ -20,9 +20,9 @@ async function intelequiaConfigLoader() {
     const result = await loadPermissionConfigFiles(url)
     const { permissions, functions, assistantAdminRole } = result;
 
-    global.myCache.set("functions", functions);
-    global.myCache.set("permissions", permissions);
-    global.myCache.set("assistantAdminRole", assistantAdminRole);
+    global.myCache.set("functions", functions, process.env.USER_GROUPS_CACHE_TTL);
+    global.myCache.set("permissions", permissions, process.env.USER_GROUPS_CACHE_TTL);
+    global.myCache.set("assistantAdminRole", assistantAdminRole, process.env.USER_GROUPS_CACHE_TTL);
 
   }
   else {
@@ -92,13 +92,19 @@ async function loadPermissionConfigFiles(url) {
 async function updateUserInfoInCache(jwt, user) {
   let userIdToken = jwtDecode(jwt)
 
-  const adminGroup = global.myCache.get("assistantAdminRole");
+  let adminGroup = global.myCache.get("assistantAdminRole");
+  if(adminGroup == null){
+    await intelequiaConfigLoader();
+    adminGroup = global.myCache.get("assistantAdminRole");
+  }
 
   const userGroupsInToken = userIdToken["groups"]
 
   global.myCache.set(user._id.toString(), userGroupsInToken, process.env.USER_GROUPS_CACHE_TTL)
 
   const role = userGroupsInToken.includes(adminGroup) ? 'ADMIN' : 'USER';
+
+
   try{
     await User.updateOne({ email: user.email }, { $set: { role } });
     logger.info( `[updateUserInfoInCache] User info in cache updated successfuly`, );
