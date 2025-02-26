@@ -5,6 +5,7 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 // Import your JSON translations
 import translationEn from './en/translation.json';
 import translationAr from './ar/translation.json';
+import translationCa from './ca/translation.json';
 import translationDe from './de/translation.json';
 import translationEs from './es/translation.json';
 import translationEt from './et/translation.json';
@@ -34,6 +35,7 @@ export const resources = {
   'zh-Hans': { translation: translationZh_Hans },
   'zh-Hant': { translation: translationZh_Hant },
   de: { translation: translationDe },
+  ca: { translation: translationCa },
   es: { translation: translationEs },
   et: { translation: translationEt },
   fr: { translation: translationFr },

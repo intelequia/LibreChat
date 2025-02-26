@@ -55,6 +55,7 @@ export const LangSelector = ({
     { value: 'zh-Hant', label: localize('com_nav_lang_traditional_chinese') },
     { value: 'ar-EG', label: localize('com_nav_lang_arabic') },
     { value: 'de-DE', label: localize('com_nav_lang_german') },
+    { value: 'ca-ES', label: localize('com_nav_lang_catala') },
     { value: 'es-ES', label: localize('com_nav_lang_spanish') },
     { value: 'et-EE', label: localize('com_nav_lang_estonian') },
     { value: 'fr-FR', label: localize('com_nav_lang_french') },
@@ -72,7 +73,6 @@ export const LangSelector = ({
     { value: 'id-ID', label: localize('com_nav_lang_indonesia') },
     { value: 'he-HE', label: localize('com_nav_lang_hebrew') },
     { value: 'fi-FI', label: localize('com_nav_lang_finnish') },
-    { value: 'ca-ES', label: localize('com_nav_lang_catala') },
   ];
 
   return (
