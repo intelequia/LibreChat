@@ -408,16 +408,15 @@ const chatV1 = async (req, res) => {
         return;
       }
 
-      const assistant = await openai.beta.assistants.retrieve(assistant_id);
       /**
-       * retrieve all agents assistan 
+       * Check if Assistant is an agent, if its so retrieves agents otherwise retrieves agent
        * @author Enrique M. Pedroza Castillo
        * @organization Intelequia
        */
-      if(agentClient){
-        const agents = await agentClient.agents.listAgents()
-        console.log(agents)
-      }
+      const agentsIds = global.myCache.get("agents")
+      const assistant = agentsIds.includes(assistant_id)? 
+        await agentClient.agents.getAgent(assistant_id) :
+        await openai.beta.assistants.retrieve(assistant_id);
       
       const visionToolIndex = assistant.tools.findIndex(
         (tool) => tool?.function && tool?.function?.name === ImageVisionTool.function.name,
@@ -489,8 +488,15 @@ const chatV1 = async (req, res) => {
 
         userMessage.file_ids = file_ids;
       }
+      /**
+       * Check if Assistant is an agent, if its so retrieves agents otherwise retrieves assistant
+       * @author Enrique M. Pedroza Castillo
+       * @organization Intelequia
+       */
+      const agentsIds = global.myCache.get("agents")
+      const client = agentsIds.includes(assistant_id)? agentClient:openai
 
-      const result = await initThread({ openai, body: initThreadBody, thread_id });
+      const result = await initThread({ openai:client, body: initThreadBody, thread_id });
       thread_id = result.thread_id;
 
       createOnTextProgress({
@@ -598,19 +604,30 @@ const chatV1 = async (req, res) => {
         /* NOTE:
          * By default, a Run will use the model and tools configuration specified in Assistant object,
          * but you can override most of these when creating the Run for added flexibility:
+         * 
+         * Modified to support Azure Agents
+         * @author Enrique M. Pedroza Castillo
+         * @orgainization Intelequia
          */
-        const run = await createRun({
-          openai,
-          thread_id,
-          body,
-        });
+        const agentsIds = global.myCache.get("agents")
+        let run, client;
+        if(body.assistant_id.includes(agentsIds)){
+          run = await agentClient.agents.createRun(thread_id,body.assistant_id)
+          client = agentClient
+          client.req = openai.req
+          client.responseMessage = openai.responseMessage
+        }
+        else {
+          run = await createRun({openai,thread_id,body,});
+          client = openai
+        }
 
         run_id = run.id;
         await cache.set(cacheKey, `${thread_id}:${run_id}`, Time.TEN_MINUTES);
         sendInitialResponse();
 
         // todo: retry logic
-        response = await runAssistant({ userEmail, openai, thread_id, run_id });
+        response = await runAssistant({ userEmail, openai:client, thread_id, run_id });
         return;
       }
 

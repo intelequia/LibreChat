@@ -393,7 +393,7 @@ async function runAssistant({
       steps = klona(finalSteps);
     },
   });
-
+  
   const { endpoint = EModelEndpoint.azureAssistants } = openai.req.body;
   /** @type {TCustomConfig.endpoints.assistants} */
   const assistantsEndpointConfig = openai.req.app.locals?.[endpoint] ?? {};

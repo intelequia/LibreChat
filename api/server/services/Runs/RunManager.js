@@ -91,8 +91,9 @@ class RunManager {
    * @param {boolean} [params.final] - The end of the run polling loop, due to `requires_action`, `cancelling`, `cancelled`, `failed`, `completed`, or `expired` statuses.
    */
   async fetchRunSteps({ openai, thread_id, run_id, runStatus, final = false }) {
+    const isAgentClient = openai.constructor.name == 'AIProjectsClient'
     // const { data: steps, first_id, last_id, has_more } = await openai.beta.threads.runs.steps.list(thread_id, run_id);
-    const { data: _steps } = await openai.beta.threads.runs.steps.list(
+    const { data: _steps } = isAgentClient ? await openai.agents.listRunSteps(thread_id, run_id):await openai.beta.threads.runs.steps.list(
       thread_id,
       run_id,
       {},
@@ -164,6 +165,8 @@ class RunManager {
    * @param {boolean} params.isLast - Whether the current step is the last step of the list.
    */
   async handleStep({ step, runStatus, final, isLast }) {
+
+    
     if (this.handlers[runStatus]) {
       return await this.handlers[runStatus]({ step, final, isLast });
     }

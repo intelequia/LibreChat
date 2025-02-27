@@ -77,7 +77,7 @@ const _listAssistants = async ({ req, res, version, query }) => {
  */
 const listAllAssistants = async ({ req, res, version, query }) => {
   /** @type {{ openai: OpenAIClient }} */
-  const { openai } = await getOpenAIClient({ req, res, version });
+  const { openai, agentClient } = await getOpenAIClient({ req, res, version });
   const allAssistants = [];
 
   let first_id;
@@ -96,8 +96,18 @@ const listAllAssistants = async ({ req, res, version, query }) => {
       after: afterToken,
     });
 
-    const { body } = response;
 
+
+    const { body } = response;
+    // Retrieves agents and append to assistant list
+    const agentResponse = await agentClient.agents.listAgents()
+    const agentsIds = []
+    agentResponse.data.forEach (agent => {
+      body.data.push(agent)
+      agentsIds.push (agent.id)
+    })
+    global.myCache.set("agents",agentsIds)
+    
     /**
      * Get all assistats allowed by the user groups
      * @Organization Intelequia

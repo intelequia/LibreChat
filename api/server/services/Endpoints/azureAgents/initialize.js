@@ -60,11 +60,8 @@ class Files {
 const initializeClient = async ({ req, res, version, endpointOption, initAppClient = false }) => {
 
   const {AZURE_AI_PROJECTS_CONNECTION_STRING} = process.env;
-
-  const client = AIProjectsClient.fromConnectionString(
-    AZURE_AI_PROJECTS_CONNECTION_STRING, 
-    new DefaultAzureCredential(),)
-
+  const credentials =  new DefaultAzureCredential()
+  const client = AIProjectsClient.fromConnectionString( AZURE_AI_PROJECTS_CONNECTION_STRING, credentials)
   const clientOptions = {
     reverseProxyUrl:  null,
     proxy: null,

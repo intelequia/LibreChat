@@ -49,10 +49,26 @@ async function initThread({ openai, body, thread_id: _thread_id }) {
     }
   })
   if (_thread_id) {
-    const message = await openai.beta.threads.messages.create(_thread_id, body.messages[0]);
+  /**
+   * Check if client is for agents, if its so creates agents thread message 
+   * otherwise creates assistant thread message
+   * @author Enrique M. Pedroza Castillo
+   * @organization Intelequia
+   */
+    const message = openai.constructor.name == 'AIProjectsClient'?
+        await openai.createMessage(_thread_id, body.messages[0]):
+        await openai.beta.threads.messages.create(_thread_id, body.messages[0]);
     messages.push(message);
   } else {
-    thread = await openai.beta.threads.create(body);
+  /**
+   * Check if client is for agents, if its so creates agents thread otherwise creates assistant thread
+   * @author Enrique M. Pedroza Castillo
+   * @organization Intelequia
+   */
+    thread = openai.constructor.name == 'AIProjectsClient'? 
+      await openai.agents.createThread(body):
+      await openai.beta.threads.create(body);
+
   }
 
   const thread_id = _thread_id || thread.id;

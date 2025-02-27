@@ -70,6 +70,8 @@ async function waitForRun({
   let timeElapsed = 0;
   let run;
 
+  const isAgentClient = openai.constructor.name == 'AIProjectsClient'
+  const messages = await openai.agents.listMessages(thread_id)
   const cache = getLogStores(CacheKeys.ABORT_KEYS);
   const cacheKey = `${openai.req.user.id}:${openai.responseMessage.conversationId}`;
 
@@ -89,7 +91,7 @@ async function waitForRun({
     while (!updatedRun && attempt < maxRetries) {
       try {
         updatedRun = await withTimeout(
-          retrieveRun({ thread_id, run_id, timeout: raceTimeoutMs, openai }),
+          isAgentClient? openai.agents.getRun(thread_id,run_id) : retrieveRun({ thread_id, run_id, timeout: raceTimeoutMs, openai }),
           raceTimeoutMs,
           `[heartbeat ${i}] ${runIdLog} | Run retrieval timed out after ${raceTimeoutMs} ms. Trying again (attempt ${
             attempt + 1
