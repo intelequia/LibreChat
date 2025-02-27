@@ -94,11 +94,14 @@ async function updateUserInfoInCache(jwt, user) {
 
   const adminGroup = global.myCache.get("assistantAdminRole");
 
-  const userGroupsInToken = userIdToken["groups"]
+  let userGroupsInToken = userIdToken["groups"]
 
   global.myCache.set(user._id.toString(), userGroupsInToken, process.env.USER_GROUPS_CACHE_TTL)
 
-  const role = userGroupsInToken.includes(adminGroup) ? 'ADMIN' : 'USER';
+  userGroupsInToken = undefined
+  const role = userGroupsInToken ?
+    (userGroupsInToken.includes(adminGroup) ? 'ADMIN' : 'USER') :
+    'USER';
   await User.updateOne({ email: user.email }, { $set: { role } });
 }
 
