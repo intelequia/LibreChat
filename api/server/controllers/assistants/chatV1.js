@@ -55,7 +55,7 @@ async function sendResponseTelemetry(req, conversationId, response, model)  {
   for (let i =0; i< messagesText.length; i++){
     if(messagesText[i].text)
       messagesHistory.push(messagesText[i].text)
-    if(messagesText[i].content) {
+    if(messagesText[i].content && messagesText[i].content.length > 0 ) {
       if(messagesText[i].content[0].type === 'text')
         messagesHistory.push(messagesText[i].content[0].text.value)
       else
@@ -113,6 +113,8 @@ const chatV1 = async (req, res) => {
 
   /** @type {OpenAIClient} */
   let openai;
+
+  let agentClient;
   /** @type {string|undefined} - the current thread id */
   let thread_id = _thread_id;
   /** @type {string|undefined} - the current run id */
@@ -131,7 +133,7 @@ const chatV1 = async (req, res) => {
   let requestMessage = null;
   /** @type {undefined | Promise<ChatCompletion>} */
   let visionPromise;
-
+  
   const userMessageId = v4();
   const responseMessageId = v4();
 
@@ -207,8 +209,13 @@ const chatV1 = async (req, res) => {
     await sleep(2000);
 
     let run;
+    const agentsIds = global.myCache.get("agents")
+    const isAgent = agentsIds.includes(assistant_id)
     try {
-      run = await openai.beta.threads.runs.retrieve(thread_id, run_id);
+      run = isAgent ? 
+        await agentClient.agents.getRun(thread_id, run_id) :
+        await openai.beta.threads.runs.retrieve(thread_id, run_id);
+        
       await recordUsage({
         ...run.usage,
         model: run.model,
@@ -222,7 +229,7 @@ const chatV1 = async (req, res) => {
     let finalEvent;
     try {
       const runMessages = await checkMessageGaps({
-        openai,
+        openai: isAgent? agentClient : openai,
         run_id,
         endpoint,
         thread_id,
@@ -349,7 +356,7 @@ const chatV1 = async (req, res) => {
       });
     };
 
-    const { openai: _openai, client, agentClient } = await getOpenAIClient({
+    const { openai: _openai, client, agentClient: _agentClient } = await getOpenAIClient({
       req,
       res,
       endpointOption,
@@ -357,6 +364,8 @@ const chatV1 = async (req, res) => {
     });
 
     openai = _openai;
+    agentClient = _agentClient;
+
     await validateAuthor({ req, openai });
 
     if (previousMessages.length) {
@@ -494,13 +503,17 @@ const chatV1 = async (req, res) => {
        * @organization Intelequia
        */
       const agentsIds = global.myCache.get("agents")
-      const client = agentsIds.includes(assistant_id)? agentClient:openai
+      const isAgent = agentsIds.includes(assistant_id)
 
-      const result = await initThread({ openai:client, body: initThreadBody, thread_id });
+      const result = await initThread({ 
+        openai: isAgent? agentClient : openai, 
+        body: initThreadBody, 
+        thread_id 
+      });
       thread_id = result.thread_id;
 
       createOnTextProgress({
-        openai,
+        openai: isAgent? agentClient : openai, 
         conversationId,
         userMessageId,
         messageId: responseMessageId,
@@ -560,6 +573,8 @@ const chatV1 = async (req, res) => {
           assistantId: body.assistant_id,
         },
       });
+      const agentsIds = global.myCache.get("agents")
+      const isAgent = agentsIds.includes(body.assistant_id)
 
       sendMessage(res, {
         sync: true,
@@ -568,7 +583,7 @@ const chatV1 = async (req, res) => {
         requestMessage,
         responseMessage: {
           user: req.user.id,
-          messageId: openai.responseMessage.messageId,
+          messageId:  isAgent? agentClient.responseMessage.messageId : openai.responseMessage.messageId,
           parentMessageId: userMessageId,
           conversationId,
           assistant_id,
@@ -610,24 +625,33 @@ const chatV1 = async (req, res) => {
          * @orgainization Intelequia
          */
         const agentsIds = global.myCache.get("agents")
-        let run, client;
-        if(body.assistant_id.includes(agentsIds)){
+        const isAgent = body.assistant_id.includes(agentsIds)
+        let run;
+
+        if(isAgent){
           run = await agentClient.agents.createRun(thread_id,body.assistant_id)
-          client = agentClient
-          client.req = openai.req
-          client.responseMessage = openai.responseMessage
+          agentClient.req = openai.req
+          agentClient.res = openai.res
         }
-        else {
-          run = await createRun({openai,thread_id,body,});
-          client = openai
-        }
+        else 
+          run = await createRun({
+            openai: isAgent? agentClient : openai,
+            thread_id,
+            body,
+          });
+        
 
         run_id = run.id;
         await cache.set(cacheKey, `${thread_id}:${run_id}`, Time.TEN_MINUTES);
         sendInitialResponse();
 
         // todo: retry logic
-        response = await runAssistant({ userEmail, openai:client, thread_id, run_id });
+        response = await runAssistant({ 
+          userEmail, 
+          openai: isAgent? agentClient: openai, 
+          thread_id, 
+          run_id 
+        });
         return;
       }
 
@@ -714,9 +738,11 @@ const chatV1 = async (req, res) => {
         client,
       });
     }
+    const agentsIds = global.myCache.get("agents")
+    const isAgent = agentsIds.includes(body.assistant_id)
 
     await addThreadMetadata({
-      openai,
+      openai: isAgent? agentClient : openai,
       thread_id,
       messageId: responseMessage.messageId,
       messages: response.messages,

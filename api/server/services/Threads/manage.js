@@ -56,7 +56,7 @@ async function initThread({ openai, body, thread_id: _thread_id }) {
    * @organization Intelequia
    */
     const message = openai.constructor.name == 'AIProjectsClient'?
-        await openai.createMessage(_thread_id, body.messages[0]):
+        await openai.agents.createMessage(_thread_id, body.messages[0]):
         await openai.beta.threads.messages.create(_thread_id, body.messages[0]);
     messages.push(message);
   } else {
@@ -223,15 +223,12 @@ async function saveAssistantMessage(req, params) {
 async function addThreadMetadata({ openai, thread_id, messageId, messages }) {
   const promises = [];
   for (const message of messages) {
-    promises.push(
-      openai.beta.threads.messages.update(thread_id, message.id, {
-        metadata: {
-          messageId,
-        },
-      }),
+    promises.push( 
+      openai.constructor.name == 'AIProjectsClient'?
+        openai.agents.updateMessage(thread_id, message.id, { metadata: { messageId, }, }):
+        openai.beta.threads.messages.update(thread_id, message.id, { metadata: { messageId, }, }),
     );
   }
-
   return await Promise.all(promises);
 }
 

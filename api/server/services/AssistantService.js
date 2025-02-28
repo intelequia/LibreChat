@@ -179,6 +179,9 @@ function createInProgressHandler(openai, thread_id, messages) {
    * @type {InProgressFunction}
    */
   async function in_progress({ step }) {
+    const agentsIds = global.myCache.get("agents")
+    const isAgent = agentsIds.includes(step.assistantId)
+
     if (step.type === StepTypes.TOOL_CALLS) {
       const { tool_calls } = step.step_details;
 
@@ -272,14 +275,20 @@ function createInProgressHandler(openai, thread_id, messages) {
         openai.seenToolCalls.set(toolCall.id, toolCall);
       }
     } else if (step.type === StepTypes.MESSAGE_CREATION && step.status === StepStatus.COMPLETED) {
-      const { message_id } = step.step_details.message_creation;
+      const message_id  = isAgent ? step.stepDetails.messageCreation.messageId : step.step_details.message_creation.message_id;
       if (openai.seenCompletedMessages.has(message_id)) {
         return;
       }
 
       openai.seenCompletedMessages.add(message_id);
+      let message  
+      if(isAgent){
+        const messageList = await openai.agents.listMessages(thread_id,message_id)
+        message = messageList.data.find(msg => msg.id === message_id )
+      } 
+      else
+        message = await openai.beta.threads.messages.retrieve(thread_id, message_id);
 
-      const message = await openai.beta.threads.messages.retrieve(thread_id, message_id);
       if (!message?.content?.length) {
         return;
       }

@@ -71,7 +71,6 @@ async function waitForRun({
   let run;
 
   const isAgentClient = openai.constructor.name == 'AIProjectsClient'
-  const messages = await openai.agents.listMessages(thread_id)
   const cache = getLogStores(CacheKeys.ABORT_KEYS);
   const cacheKey = `${openai.req.user.id}:${openai.responseMessage.conversationId}`;
 
