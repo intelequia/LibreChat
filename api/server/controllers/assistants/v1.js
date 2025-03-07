@@ -140,8 +140,12 @@ const retrieveAssistant = async (req, res) => {
  */
 const patchAssistant = async (req, res) => {
   try {
-    const { openai } = await getOpenAIClient({ req, res });
+    const { openai, agentClient } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
+
+    const agentsIds = global.myCache.get("agents")
+    const isAgent = agentsIds.includes(req.params.id)
+
     /**
      * Custom event to track when an assistant has been updated
      * @Organization Intelequia
@@ -209,7 +213,9 @@ const patchAssistant = async (req, res) => {
       updateData.model = openai.locals.azureOptions.azureOpenAIApiDeploymentName;
     }
 
-    const updatedAssistant = await openai.beta.assistants.update(assistant_id, updateData);
+    const updatedAssistant = isAgent? 
+      await agentClient.agents.updateAgent(assistant_id, updateData):
+      await openai.beta.assistants.update(assistant_id, updateData);
 
     if (conversation_starters !== undefined) {
       const conversationStartersUpdate = await updateAssistantDoc(

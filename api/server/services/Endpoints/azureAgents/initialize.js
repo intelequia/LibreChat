@@ -76,6 +76,7 @@ const initializeClient = async ({ req, res, version, endpointOption, initAppClie
   /** @type {AzureOptions | undefined} */
   // let azureOptions;
 
+  client.agents.files = new Files(client)
   if (azureConfig && azureConfig.assistants) {
     const { modelGroupMap, groupMap, assistantModels } = azureConfig;
     const modelName = req.body.model ?? req.query.model ?? assistantModels[0];
