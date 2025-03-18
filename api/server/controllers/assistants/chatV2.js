@@ -28,7 +28,7 @@ const { getTransactions } = require('~/models/Transaction');
 const checkBalance = require('~/models/checkBalance');
 const { getConvo } = require('~/models/Conversation');
 const getLogStores = require('~/cache/getLogStores');
-const { getModelMaxTokens } = require('~/utils');
+const { getModelMaxTokens, intelequiaCountTokens } = require('~/utils');
 const { getOpenAIClient } = require('./helpers');
 const { logger } = require('~/config');
 
@@ -62,6 +62,8 @@ const chatV2 = async (req, res) => {
 
   /** @type {OpenAIClient} */
   let openai;
+  let agentClient;
+
   /** @type {string|undefined} - the current thread id */
   let thread_id = _thread_id;
   /** @type {string|undefined} - the current run id */
@@ -107,6 +109,29 @@ const chatV2 = async (req, res) => {
   const handleError = createErrorHandler({ req, res, getContext });
 
   try {
+        /**
+         * Telemetry logs
+         * @Organization Intelequia
+         * @Author Enrique M. Pedroza Castillo
+         */
+        const messageTokens = intelequiaCountTokens(text, model);
+        global.appInsights.trackEvent({
+          name: 'AzureAssistantsQuery',
+          properties: {
+            userId: req.user.id,
+            userEmail: req.user.email,
+            charactersLength: text.length,
+            messageTokens: messageTokens.prompt,
+            model: model,
+            conversationId: conversationId,
+            assistantId: assistant_id,
+          },
+        });
+        res.on('close', async () => {
+          if (!completedRun) {
+            await handleError(new Error('Request closed'));
+          }
+        });
     res.on('close', async () => {
       if (!completedRun) {
         await handleError(new Error('Request closed'));
@@ -158,7 +183,7 @@ const chatV2 = async (req, res) => {
       });
     };
 
-    const { openai: _openai, client } = await getOpenAIClient({
+    const { openai: _openai, client, agentClient: _agentClient } = await getOpenAIClient({
       req,
       res,
       endpointOption,
@@ -166,6 +191,16 @@ const chatV2 = async (req, res) => {
     });
 
     openai = _openai;
+    agentClient = _agentClient;
+
+    /**
+     * Check if Assistant is an agent, if its so retrieves agents otherwise retrieves assistant
+     * @author Enrique M. Pedroza Castillo
+     * @organization Intelequia
+     */
+    const agentsIds = global.myCache.get("agents")
+    const isAgent = agentsIds.includes(assistant_id)
+
     await validateAuthor({ req, openai });
 
     if (previousMessages.length) {
@@ -272,11 +307,16 @@ const chatV2 = async (req, res) => {
         },
       };
 
-      const result = await initThread({ openai, body: initThreadBody, thread_id });
+      const result = await initThread({ 
+        openai: isAgent? agentClient : openai, 
+        body: initThreadBody, 
+        thread_id 
+      });
+
       thread_id = result.thread_id;
 
       createOnTextProgress({
-        openai,
+        openai: isAgent? agentClient : openai, 
         conversationId,
         userMessageId,
         messageId: responseMessageId,
@@ -322,6 +362,22 @@ const chatV2 = async (req, res) => {
     await Promise.all(promises);
 
     const sendInitialResponse = () => {
+
+      /**
+       * Custom event to track when assistant completion query has started
+       * @Organization Intelequia
+       * @Author Enrique M. Pedroza Castillo
+       */
+      global.appInsights.trackEvent({
+        name: 'AzureAssistantsAnswerStarted',
+        properties: {
+          userId: req.user.id,
+          userEmail: req.user.email,
+          model: model,
+          assistantId: body.assistant_id,
+        },
+      });
+
       sendMessage(res, {
         sync: true,
         conversationId,
@@ -329,7 +385,7 @@ const chatV2 = async (req, res) => {
         requestMessage,
         responseMessage: {
           user: req.user.id,
-          messageId: openai.responseMessage.messageId,
+          messageId: isAgent? agentClient.responseMessage.messageId : openai.responseMessage.messageId,
           parentMessageId: userMessageId,
           conversationId,
           assistant_id,
@@ -346,8 +402,12 @@ const chatV2 = async (req, res) => {
       if (endpoint === EModelEndpoint.azureAssistants) {
         body.model = openai._options.model;
         openai.attachedFileIds = attachedFileIds;
+
+        const userEmail = req.user.email;
+
         if (retry) {
           response = await runAssistant({
+            userEmail,
             openai,
             thread_id,
             run_id,
@@ -359,19 +419,37 @@ const chatV2 = async (req, res) => {
         /* NOTE:
          * By default, a Run will use the model and tools configuration specified in Assistant object,
          * but you can override most of these when creating the Run for added flexibility:
+         * 
+         * Modified to support Azure Agents
+         * @author Enrique M. Pedroza Castillo
+         * @orgainization Intelequia
          */
-        const run = await createRun({
-          openai,
-          thread_id,
-          body,
-        });
+
+        let run ;
+        if(isAgent){
+          run = await agentClient.agents.createRun(thread_id,body.assistant_id)
+          agentClient.req = openai.req
+          agentClient.res = openai.res
+        }
+        else 
+          run = await createRun({
+            openai: isAgent? agentClient : openai,
+            thread_id,
+            body,
+          });
+       
 
         run_id = run.id;
         await cache.set(cacheKey, `${thread_id}:${run_id}`, Time.TEN_MINUTES);
         sendInitialResponse();
 
         // todo: retry logic
-        response = await runAssistant({ openai, thread_id, run_id });
+        response = await runAssistant({ 
+          userEmail, 
+          openai: isAgent? agentClient: openai, 
+          thread_id, 
+          run_id 
+        });
         return;
       }
 
@@ -468,7 +546,7 @@ const chatV2 = async (req, res) => {
     }
 
     await addThreadMetadata({
-      openai,
+      openai: isAgent? agentClient : openai,
       thread_id,
       messageId: responseMessage.messageId,
       messages: response.messages,

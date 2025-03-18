@@ -391,9 +391,14 @@ const processFileUpload = async ({ req, res, metadata }) => {
 
   /** @type {OpenAI | undefined} */
   let openai;
+  let agentClient;
   if (checkOpenAIStorage(source)) {
-    ({ openai } = await getOpenAIClient({ req }));
+    ({ openai, agentClient } = await getOpenAIClient({ req }));
   }
+  const agentsIds = global.myCache.get("agents")
+  const isAgent = agentsIds.includes(metadata.assistant_id)
+
+  const client = isAgent ? agentClient : openai;
 
   const { file } = req;
   const {
@@ -408,10 +413,10 @@ const processFileUpload = async ({ req, res, metadata }) => {
     req,
     file,
     file_id,
-    openai,
+    openai:client,
   });
   if(metadata.knowledge == 'true'){
-    await handleKnowledge ({ fileId:id, assistantId:metadata.assistant_id }, openai)
+    await handleKnowledge ({ fileId:id, assistantId:metadata.assistant_id }, client)
   }
   else if ( isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
     await openai.beta.assistants.files.create(metadata.assistant_id, {
@@ -420,7 +425,7 @@ const processFileUpload = async ({ req, res, metadata }) => {
   } else if (isAssistantUpload && !metadata.message_file) {
     await addResourceFileId({
       req,
-      openai,
+      openai:client,
       file_id: id,
       assistant_id: metadata.assistant_id,
       tool_resource: metadata.tool_resource,

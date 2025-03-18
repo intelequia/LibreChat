@@ -119,8 +119,17 @@ const createAssistant = async (req, res) => {
 const retrieveAssistant = async (req, res) => {
   try {
     /* NOTE: not actually being used right now */
-    const { openai } = await getOpenAIClient({ req, res });
+    const { openai, agentClient } = await getOpenAIClient({ req, res });
     const assistant_id = req.params.id;
+
+    /**
+     * Check if Assistant is an agent, if its so retrieves agents otherwise retrieves assistant
+     * @author Enrique M. Pedroza Castillo
+     * @organization Intelequia
+     */
+    const agentsIds = global.myCache.get("agents")
+    const isAgent = agentsIds.includes(assistant_id)
+
     const assistant = await openai.beta.assistants.retrieve(assistant_id);
     res.json(assistant);
   } catch (error) {

@@ -14,12 +14,18 @@ const { logger } = require('~/config');
  * @returns {Promise<OpenAIFile>}
  */
 async function uploadOpenAIFile({ req, file, openai }) {
+  const isAgentClient = openai.constructor.name == 'AIProjectsClient'
   const { height, width } = req.body;
   const isImage = height && width;
-  const uploadedFile = await openai.files.create({
-    file: fs.createReadStream(file.path),
-    purpose: isImage ? FilePurpose.Vision : FilePurpose.Assistants,
-  });
+  
+  const uploadedFile = isAgentClient? 
+      await openai.agents.uploadFile(fs.createReadStream(file.path),FilePurpose.Assistants,{
+        fileName: file.filename
+      }) :
+      await openai.files.create({
+        file: fs.createReadStream(file.path),
+        purpose: isImage ? FilePurpose.Vision : FilePurpose.Assistants,
+      });
 
   logger.debug(
     `[uploadOpenAIFile] User ${req.user.id} successfully uploaded file to OpenAI`,

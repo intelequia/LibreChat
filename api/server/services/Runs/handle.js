@@ -44,7 +44,12 @@ async function withTimeout(promise, timeoutMs, timeoutMessage) {
  * @return {Promise<Run>} A promise that resolves to the created run object.
  */
 async function createRun({ openai, thread_id, body }) {
-  return await openai.beta.threads.runs.create(thread_id, body);
+  const isAgentClient = openai.constructor.name == 'AIProjectsClient'
+
+  // await openai.beta.threads.runs.create(thread_id, body)
+  return isAgentClient? 
+    await openai.agents.createRun(thread_id, body.assistant_id) :
+    await openai.beta.threads.runs.create(thread_id, body);
 }
 
 /**

@@ -215,7 +215,7 @@ const chatV1 = async (req, res) => {
       run = isAgent ? 
         await agentClient.agents.getRun(thread_id, run_id) :
         await openai.beta.threads.runs.retrieve(thread_id, run_id);
-        
+         
       await recordUsage({
         ...run.usage,
         model: run.model,
@@ -366,6 +366,14 @@ const chatV1 = async (req, res) => {
     openai = _openai;
     agentClient = _agentClient;
 
+    /**
+     * Check if Assistant is an agent, if its so retrieves agents otherwise retrieves assistant
+     * @author Enrique M. Pedroza Castillo
+     * @organization Intelequia
+     */
+    const agentsIds = global.myCache.get("agents")
+    const isAgent = agentsIds.includes(assistant_id)
+
     await validateAuthor({ req, openai });
 
     if (previousMessages.length) {
@@ -497,13 +505,6 @@ const chatV1 = async (req, res) => {
 
         userMessage.file_ids = file_ids;
       }
-      /**
-       * Check if Assistant is an agent, if its so retrieves agents otherwise retrieves assistant
-       * @author Enrique M. Pedroza Castillo
-       * @organization Intelequia
-       */
-      const agentsIds = global.myCache.get("agents")
-      const isAgent = agentsIds.includes(assistant_id)
 
       const result = await initThread({ 
         openai: isAgent? agentClient : openai, 
@@ -652,6 +653,13 @@ const chatV1 = async (req, res) => {
           thread_id, 
           run_id 
         });
+
+        if(response.text == '' && isAgent && response.messages.length == 0 ){
+          const listMessages = await agentClient.agents.listMessages(thread_id)
+          response.messages.push(listMessages.data[0])
+          response.text = listMessages.data[0].content[0].text.value;
+          console.log("Done")
+        }
         return;
       }
 
@@ -738,8 +746,6 @@ const chatV1 = async (req, res) => {
         client,
       });
     }
-    const agentsIds = global.myCache.get("agents")
-    const isAgent = agentsIds.includes(body.assistant_id)
 
     await addThreadMetadata({
       openai: isAgent? agentClient : openai,
@@ -767,7 +773,7 @@ const chatV1 = async (req, res) => {
         conversationId,
       });
     }
-    await sendResponseTelemetry(req, conversationId, response, model)
+    // await sendResponseTelemetry(req, conversationId, response, model)
 
   } catch (error) {
     await handleError(error);

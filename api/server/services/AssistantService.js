@@ -182,8 +182,12 @@ function createInProgressHandler(openai, thread_id, messages) {
     const agentsIds = global.myCache.get("agents")
     const isAgent = agentsIds.includes(step.assistantId)
 
-    if (step.type === StepTypes.TOOL_CALLS) {
-      const { tool_calls } = step.step_details;
+    if (step.type === StepTypes.TOOL_CALLS ) {
+      let tool_calls ;
+      if(isAgent)
+        tool_calls = step.stepDetails.toolCalls
+      else
+        tool_calls  = step.step_details.tool_calls;
 
       for (const _toolCall of tool_calls) {
         /** @type {StepToolCall} */
@@ -195,14 +199,15 @@ function createInProgressHandler(openai, thread_id, messages) {
           continue;
         }
 
+        // Verify if its a new Tool Call
         let toolCallIndex = openai.mappedOrder.get(toolCall.id);
         if (toolCallIndex === undefined) {
-          // New tool call
           toolCallIndex = openai.index;
           openai.mappedOrder.set(toolCall.id, openai.index);
           openai.index++;
         }
 
+        // Check if its in progress, if its status is "complete" set tollCall.progress = 1 (100%)
         if (step.status === StepStatus.IN_PROGRESS) {
           toolCall.progress =
             previousCall && previousCall.progress
@@ -213,6 +218,7 @@ function createInProgressHandler(openai, thread_id, messages) {
           openai.completeToolCallSteps.add(step.id);
         }
 
+        // If tool is Code Interpreter and its complete
         if (
           toolCall.type === ToolCallTypes.CODE_INTERPRETER &&
           step.status === StepStatus.COMPLETED
@@ -274,7 +280,9 @@ function createInProgressHandler(openai, thread_id, messages) {
         // Update the stored tool call
         openai.seenToolCalls.set(toolCall.id, toolCall);
       }
-    } else if (step.type === StepTypes.MESSAGE_CREATION && step.status === StepStatus.COMPLETED) {
+    } else if (
+      step.type === StepTypes.MESSAGE_CREATION && step.status === StepStatus.COMPLETED
+    ) {
       const message_id  = isAgent ? step.stepDetails.messageCreation.messageId : step.step_details.message_creation.message_id;
       if (openai.seenCompletedMessages.has(message_id)) {
         return;
@@ -369,14 +377,6 @@ async function runAssistant({
       logger.debug(`[runAssistant] Final step for ${run_id} with status ${runStatus}`, step);
 
       const promises = [];
-      // promises.push(
-      //   openai.beta.threads.messages.list(thread_id, defaultOrderQuery),
-      // );
-
-      // const finalSteps = stepsByStatus[runStatus];
-      // for (const stepPromise of finalSteps) {
-      //   promises.push(stepPromise);
-      // }
 
       // loop across all statuses
       for (const [_status, stepsPromises] of Object.entries(stepsByStatus)) {
@@ -386,7 +386,7 @@ async function runAssistant({
       const resolved = await Promise.all(promises);
       const finalSteps = filterSteps(steps.concat(resolved));
 
-      if (step.type === StepTypes.MESSAGE_CREATION) {
+      if (step.type === StepTypes.MESSAGE_CREATION ) {
         const incompleteToolCallSteps = finalSteps.filter(
           (s) => s && s.type === StepTypes.TOOL_CALLS && !openai.completeToolCallSteps.has(s.id),
         );
