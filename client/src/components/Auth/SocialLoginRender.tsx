@@ -17,9 +17,11 @@ function SocialLoginRender({
     return null;
   }
 
-  let autoRedirectOpenId = !startupConfig?.emailLoginEnabled 
-          && startupConfig?.openidLoginEnabled
-          && startupConfig?.socialLogins?.length === 1;
+  // let autoRedirectOpenId = !startupConfig?.emailLoginEnabled 
+  //         && startupConfig?.openidLoginEnabled
+  //         && startupConfig?.socialLogins?.length === 1;
+
+  let autoRedirectOpenId =  startupConfig?.openidAutoRedirect && startupConfig?.openidLoginEnabled;
 
   const providerComponents = {
     discord: startupConfig.discordLoginEnabled && (

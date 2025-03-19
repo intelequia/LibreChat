@@ -35,7 +35,7 @@ function AuthLayout({
   pathname: string;
   error: TranslationKeys | null;
 }) {
-  const localize = useLocalize();
+  const localize = useLocalize(); 
 
   const hasStartupConfigError = startupConfigError !== null && startupConfigError !== undefined;
   const DisplayError = () => {
