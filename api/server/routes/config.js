@@ -81,6 +81,7 @@ router.get('/', async function (req, res) {
       publicSharedLinksEnabled,
       analyticsGtmId: process.env.ANALYTICS_GTM_ID,
       instanceProjectId: instanceProject._id.toString(),
+
     };
 
     if (ldap) {
@@ -100,6 +101,8 @@ router.get('/', async function (req, res) {
     payload.businessChatBackgroundDark = process.env.BUSINESS_CHAT_BACKGROUND_DARK || "#141414";
 
     payload.balanceEnabled = process.env.CHECK_BALANCE == 'true'? true : false
+    payload.openidAutoRedirect = process.env.OPENID_AUTOREDIRECT== 'true'? true : false;
+
     await cache.set(CacheKeys.STARTUP_CONFIG, payload);
     return res.status(200).send(payload);
   } catch (err) {
