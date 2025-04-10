@@ -44,7 +44,7 @@ const addTitle = async (req, { text, response, client }) => {
    * @Author Enrique M. Pedroza Castillo
    */
   global.appInsights.trackEvent({
-    name: 'Azure OpenAI Title Generation',
+    name: 'Title Generation',
     properties: {
       userId: req.user.id,
       userEmail: req.user.email,

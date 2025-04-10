@@ -179,7 +179,7 @@ export default function AssistantPanel({
           name,
           description,
           instructions,
-          conversation_starters: starters.filter((starter) => starter.trim() !== ''),
+          conversation_starters: starters?.filter((starter) => starter.trim() !== ''),
           model,
           tools,
           endpoint,
