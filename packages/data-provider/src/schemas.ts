@@ -20,6 +20,7 @@ export enum EModelEndpoint {
   anthropic = 'anthropic',
   assistants = 'assistants',
   azureAssistants = 'azureAssistants',
+  azureAgents = 'azureAgents',
   agents = 'agents',
   custom = 'custom',
   bedrock = 'bedrock',
@@ -68,14 +69,21 @@ export const getSettingsKeys = (endpoint: EModelEndpoint | string, model: string
   return [combinedKey, endpointKey];
 };
 
-export type AssistantsEndpoint = EModelEndpoint.assistants | EModelEndpoint.azureAssistants;
+export type AssistantsEndpoint = EModelEndpoint.assistants | EModelEndpoint.azureAssistants | EModelEndpoint.azureAgents;
 
 export const isAssistantsEndpoint = (_endpoint?: AssistantsEndpoint | null | string): boolean => {
   const endpoint = _endpoint ?? '';
   if (!endpoint) {
     return false;
   }
-  return endpoint.toLowerCase().endsWith(EModelEndpoint.assistants);
+  const normalized = String(endpoint).toLowerCase();
+
+  const validEndpoints = [
+    EModelEndpoint.assistants.toLowerCase(),
+    EModelEndpoint.azureAssistants.toLowerCase(),
+    EModelEndpoint.azureAgents.toLowerCase()
+  ];
+  return validEndpoints.includes(normalized);
 };
 
 export type AgentProvider = Exclude<keyof typeof EModelEndpoint, EModelEndpoint.agents> | string;

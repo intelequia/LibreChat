@@ -43,6 +43,11 @@ module.exports = {
       AZURE_ASSISTANTS_BASE_URL,
       EModelEndpoint.azureAssistants,
     ),
+    [EModelEndpoint.azureAgents]: generateConfig(
+      azureAssistantsApiKey,
+      AZURE_ASSISTANTS_BASE_URL,
+      EModelEndpoint.azureAgents,
+    ),
     [EModelEndpoint.bedrock]: generateConfig(
       process.env.BEDROCK_AWS_SECRET_ACCESS_KEY ?? process.env.BEDROCK_AWS_DEFAULT_REGION,
     ),

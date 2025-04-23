@@ -174,6 +174,7 @@ export enum AgentCapabilities {
 }
 
 export const defaultAssistantsVersion = {
+  [EModelEndpoint.azureAgents]: 1,
   [EModelEndpoint.assistants]: 2,
   [EModelEndpoint.azureAssistants]: 1,
 };
@@ -674,6 +675,7 @@ export const alternateName = {
   [EModelEndpoint.assistants]: 'Assistants',
   [EModelEndpoint.agents]: 'Agents',
   [EModelEndpoint.azureAssistants]: 'Azure Assistants',
+  [EModelEndpoint.azureAgents]:'Azure Agents',
   [EModelEndpoint.azureOpenAI]: 'Azure OpenAI',
   [EModelEndpoint.chatGPTBrowser]: 'ChatGPT',
   [EModelEndpoint.gptPlugins]: 'Plugins',
@@ -819,6 +821,7 @@ export const EndpointURLs: { [key in EModelEndpoint]: string } = {
   [EModelEndpoint.azureOpenAI]: `/api/ask/${EModelEndpoint.azureOpenAI}`,
   [EModelEndpoint.chatGPTBrowser]: `/api/ask/${EModelEndpoint.chatGPTBrowser}`,
   [EModelEndpoint.azureAssistants]: '/api/assistants/v1/chat',
+  [EModelEndpoint.azureAgents]: '/api/assistants/v1/chat',
   [EModelEndpoint.assistants]: '/api/assistants/v2/chat',
   [EModelEndpoint.agents]: `/api/${EModelEndpoint.agents}/chat`,
   [EModelEndpoint.bedrock]: `/api/${EModelEndpoint.bedrock}/chat`,

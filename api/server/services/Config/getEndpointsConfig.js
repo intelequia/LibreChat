@@ -11,9 +11,9 @@ const getLogStores = require('~/cache/getLogStores');
 async function getEndpointsConfig(req) {
   const cache = getLogStores(CacheKeys.CONFIG_STORE);
   const cachedEndpointsConfig = await cache.get(CacheKeys.ENDPOINT_CONFIG);
-  if (cachedEndpointsConfig) {
-    return cachedEndpointsConfig;
-  }
+  // if (cachedEndpointsConfig) {
+  //   return cachedEndpointsConfig;
+  // }
 
   const defaultEndpointsConfig = await loadDefaultEndpointsConfig(req);
   const customConfigEndpoints = await loadConfigEndpoints(req);
