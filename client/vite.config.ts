@@ -1,75 +1,51 @@
 import path, { resolve } from 'path';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
-import { defineConfig, createLogger } from 'vite';
+import { defineConfig } from 'vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import { compression } from 'vite-plugin-compression2';
 import type { Plugin } from 'vite';
-import wasm from 'vite-plugin-wasm';
-
-const logger = createLogger();
-const originalWarning = logger.warn;
-logger.warn = (msg, options) => {
-  /* Suppresses:
-   [vite:css] Complex selectors in '.group:focus-within .dark\:group-focus-within\:text-gray-300:is(.dark *)' can not be transformed to an equivalent selector without ':is()'.
-   */
-  if (msg.includes('vite:css') && msg.includes('^^^^^^^')) {
-    return;
-  }
-  /* Suppresses:
-(!) Some chunks are larger than 500 kB after minification. Consider:
-- Using dynamic import() to code-split the application
-- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
-- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
-   */
-  if (msg.includes('Use build.rollupOptions.output.manualChunks')) {
-    return;
-  }
-  originalWarning(msg, options);
-};
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  customLogger: logger,
   server: {
-    fs: {
-      cachedChecks: false,
-    },
     host: 'localhost',
     port: 3090,
     strictPort: false,
     proxy: {
       '/api': {
-        target: 'https://localhost',
+        target: 'http://localhost:3080',
         changeOrigin: true,
       },
       '/oauth': {
-        target: 'https://localhost',
+        target: 'http://localhost:3080',
         changeOrigin: true,
       },
     },
   },
-  // All other env variables are filtered out
+  // Set the directory where environment variables are loaded from and restrict prefixes
   envDir: '../',
   envPrefix: ['VITE_', 'SCRIPT_', 'DOMAIN_', 'ALLOW_'],
   plugins: [
-    wasm(),
     react(),
     nodePolyfills(),
     VitePWA({
       injectRegister: 'auto', // 'auto' | 'manual' | 'disabled'
       registerType: 'autoUpdate', // 'prompt' | 'autoUpdate'
       devOptions: {
-        enabled: false, // enable/disable registering SW in development mode
+        enabled: false, // disable service worker registration in development mode
       },
+      useCredentials: true,
       workbox: {
-        cleanupOutdatedCaches: true, // Add this line to clean up outdated caches
-        globPatterns: ['assets/**/*.{png,jpg,svg,ico}', '**/*.{js,css,html,ico,woff2}'],
+        globPatterns: ['**/*'],
+        globIgnores: ['images/**/*'],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         navigateFallbackDenylist: [/^\/oauth/],
       },
+      includeAssets: ['**/*'],
       manifest: {
-        name: 'Intelewriter',
-        short_name: 'Intelewriter',
+        name: 'LibreChat',
+        short_name: 'LibreChat',
         start_url: '/',
         display: 'standalone',
         background_color: '#000000',
@@ -86,59 +62,95 @@ export default defineConfig({
             type: 'image/png',
           },
           {
-            src: '/assets/icon-80x80.png',
-            sizes: '80x80',
+            src: '/assets/apple-touch-icon-180x180.png',
+            sizes: '180x180',
             type: 'image/png',
+          },
+          {
+            src: '/assets/icon-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
+          },
+          {
+            src: '/assets/maskable-icon.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
         ],
       },
     }),
     sourcemapExclude({ excludeNodeModules: true }),
+    compression({
+      threshold: 10240,
+    }),
   ],
   publicDir: './public',
   build: {
     sourcemap: process.env.NODE_ENV === 'development',
     outDir: './dist',
+    minify: 'terser',
     rollupOptions: {
+      preserveEntrySignatures: 'strict',
       // external: ['uuid'],
       output: {
-        manualChunks: (id) => {
-          if (id.includes('node_modules/highlight.js')) {
-            return 'markdown_highlight';
-          }
-          if (id.includes('node_modules/hast-util-raw')) {
-            return 'markdown_large';
-          }
-          if (id.includes('node_modules/katex')) {
-            return 'markdown_large';
-          }
+        manualChunks(id: string) {
           if (id.includes('node_modules')) {
+            // Group Radix UI libraries together.
+            if (id.includes('@radix-ui')) {
+              return 'radix-ui';
+            }
+            // Group framer-motion separately.
+            if (id.includes('framer-motion')) {
+              return 'framer-motion';
+            }
+            // Group markdown-related libraries.
+            if (id.includes('node_modules/highlight.js')) {
+              return 'markdown_highlight';
+            }
+            if (id.includes('node_modules/hast-util-raw') || id.includes('node_modules/katex')) {
+              return 'markdown_large';
+            }
+            // Group TanStack libraries together.
+            if (id.includes('@tanstack')) {
+              return 'tanstack-vendor';
+            }
+            // Additional grouping for other node_modules:
+            if (id.includes('@headlessui')) {
+              return 'headlessui';
+            }
+
+            // Everything else falls into a generic vendor chunk.
             return 'vendor';
           }
+          // Create a separate chunk for all locale files under src/locales.
+          if (id.includes(path.join('src', 'locales'))) {
+            return 'locales';
+          }
+          // Let Rollup decide automatically for any other files.
+          return null;
         },
         entryFileNames: 'assets/[name].[hash].js',
         chunkFileNames: 'assets/[name].[hash].js',
         assetFileNames: (assetInfo) => {
-          if (assetInfo.name && /\.(woff|woff2|eot|ttf|otf)$/.test(assetInfo.name)) {
-            return 'assets/[name][extname]';
+          if (assetInfo.names && /\.(woff|woff2|eot|ttf|otf)$/.test(assetInfo.names)) {
+            return 'assets/fonts/[name][extname]';
           }
           return 'assets/[name].[hash][extname]';
         },
       },
       /**
-       * Ignore "use client" waning since we are not using SSR
+       * Ignore "use client" warning since we are not using SSR
        * @see {@link https://github.com/TanStack/query/pull/5161#issuecomment-1477389761 Preserve 'use client' directives TanStack/query#5161}
        */
       onwarn(warning, warn) {
-        if (
-          // warning.code === 'MODULE_LEVEL_DIRECTIVE' &&
-          warning.message.includes('Error when using sourcemap')
-        ) {
+        if (warning.message.includes('Error when using sourcemap')) {
           return;
         }
         warn(warning);
       },
     },
+    chunkSizeWarningLimit: 1200,
   },
   resolve: {
     alias: {

@@ -13,7 +13,7 @@ import {
   AzureMinimalIcon,
   CustomMinimalIcon,
 } from '~/components/svg';
-import UnknownIcon from '~/components/Chat/Menus/Endpoints/UnknownIcon';
+import UnknownIcon from '~/hooks/Endpoint/UnknownIcon';
 import { IconProps } from '~/common';
 import { cn } from '~/utils';
 
@@ -25,7 +25,7 @@ type EndpointIcon = {
 
 function getOpenAIColor(_model: string | null | undefined) {
   const model = _model?.toLowerCase() ?? '';
-  if (model && /\bo1\b/i.test(model)) {
+  if (model && /\b(o1|o3)\b/i.test(model)) {
     return '#000000';
   }
   return model.includes('gpt-4') ? '#AB68FF' : '#19C37D';
@@ -63,7 +63,6 @@ const MessageEndpointIcon: React.FC<IconProps> = (props) => {
     button,
     iconURL = '',
     endpoint,
-    jailbreak,
     size = 30,
     model = '',
     assistantName,
@@ -163,23 +162,6 @@ const MessageEndpointIcon: React.FC<IconProps> = (props) => {
       bg: '#268672',
       name: alternateName[EModelEndpoint.bedrock],
     },
-    [EModelEndpoint.bingAI]: {
-      icon:
-        jailbreak === true ? (
-          <img src="/assets/bingai-jb.png" alt="Bing Icon" />
-        ) : (
-          <img src="/assets/bingai.png" alt="Sydney Icon" />
-        ),
-      name: jailbreak === true ? 'Sydney' : 'BingAI',
-    },
-    [EModelEndpoint.chatGPTBrowser]: {
-      icon: <GPTIcon size={size * 0.5555555555555556} />,
-      bg:
-        typeof model === 'string' && model.toLowerCase().includes('gpt-4')
-          ? '#AB68FF'
-          : `rgba(0, 163, 255, ${button === true ? 0.75 : 1})`,
-      name: 'ChatGPT',
-    },
     [EModelEndpoint.custom]: {
       icon: <CustomMinimalIcon size={size * 0.7} />,
       name: 'Custom',
@@ -204,7 +186,7 @@ const MessageEndpointIcon: React.FC<IconProps> = (props) => {
 
   let { icon, bg, name } =
     endpoint != null && endpoint && endpointIcons[endpoint]
-      ? endpointIcons[endpoint] ?? {}
+      ? (endpointIcons[endpoint] ?? {})
       : (endpointIcons.default as EndpointIcon);
 
   if (iconURL && endpointIcons[iconURL]) {

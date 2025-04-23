@@ -1,5 +1,6 @@
 import * as types from '../types';
 import * as r from '../roles';
+import * as p from '../permissions';
 import {
   Tools,
   Assistant,
@@ -48,8 +49,6 @@ export type PresetDeleteResponse = {
 export type UpdatePresetOptions = MutationOptions<types.TPreset, types.TPreset>;
 
 export type DeletePresetOptions = MutationOptions<PresetDeleteResponse, types.TPreset | undefined>;
-
-export type LogoutOptions = MutationOptions<unknown, undefined>;
 
 /* Assistant mutations */
 
@@ -253,9 +252,9 @@ export type UpdatePermVars<T> = {
   updates: Partial<T>;
 };
 
-export type UpdatePromptPermVars = UpdatePermVars<r.TPromptPermissions>;
+export type UpdatePromptPermVars = UpdatePermVars<p.TPromptPermissions>;
 
-export type UpdateAgentPermVars = UpdatePermVars<r.TAgentPermissions>;
+export type UpdateAgentPermVars = UpdatePermVars<p.TAgentPermissions>;
 
 export type UpdatePermResponse = r.TRole;
 
@@ -331,3 +330,10 @@ export type EditArtifactOptions = MutationOptions<
   unknown,
   Error
 >;
+
+export type TLogoutResponse = {
+  message: string;
+  redirect?: string;
+};
+
+export type LogoutOptions = MutationOptions<TLogoutResponse, undefined>;

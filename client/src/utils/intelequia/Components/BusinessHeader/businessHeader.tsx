@@ -38,6 +38,7 @@ const BusinessHeader: FC = () => {
         }
         
         const result: StartupConfig = await response.json(); 
+        console.log(response);
         setData(result);  
       } catch (error) {
         console.log(error);
