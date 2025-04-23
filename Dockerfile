@@ -1,4 +1,4 @@
-# v0.7.6
+# v0.7.7
 
 # Base node image
 FROM node:20-alpine AS node
@@ -20,13 +20,17 @@ RUN \
     npm config set fetch-retry-maxtimeout 600000 ; \
     npm config set fetch-retries 5 ; \
     npm config set fetch-retry-mintimeout 15000 ; \
-    npm install --no-audit; \
+    npm install --force --no-audit; \
     # React client build
     NODE_OPTIONS="--max-old-space-size=2048" npm run frontend; \
     npm prune --production; \
     npm cache clean --force
 
 RUN mkdir -p /app/client/public/images /app/api/logs
+
+COPY ./code-interpreter/CodeExecutor.cjs /app/api/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
+
+COPY ./code-interpreter/CodeExecutor.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
 
 # Node API setup
 EXPOSE 3080

@@ -397,8 +397,12 @@ async function runAssistant({
   const { endpoint = EModelEndpoint.azureAssistants } = openai.req.body;
   /** @type {TCustomConfig.endpoints.assistants} */
   const assistantsEndpointConfig = openai.req.app.locals?.[endpoint] ?? {};
-  const { pollIntervalMs, timeoutMs } = assistantsEndpointConfig;
+  let { pollIntervalMs, timeoutMs } = assistantsEndpointConfig;
 
+
+  if (endpoint == EModelEndpoint.azureAssistants)
+    pollIntervalMs = 5000
+  
   const run = await waitForRun({
     openai,
     run_id,

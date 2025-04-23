@@ -5,17 +5,16 @@ const {
   isAgentsEndpoint,
   isParamEndpoint,
   EModelEndpoint,
+  ContentTypes,
+  excludedKeys,
   ErrorTypes,
   Constants,
-  CacheKeys,
-  Time,
 } = require('librechat-data-provider');
-const { getMessages, saveMessage, updateMessage, saveConvo } = require('~/models');
-const { addSpaceIfNeeded, isEnabled } = require('~/server/utils');
+const { getMessages, saveMessage, updateMessage, saveConvo, getConvo } = require('~/models');
+const { checkBalance } = require('~/models/balanceMethods');
 const { truncateToolCallOutputs } = require('./prompts');
-const checkBalance = require('~/models/checkBalance');
+const { addSpaceIfNeeded } = require('~/server/utils');
 const { getFiles } = require('~/models/File');
-const { getLogStores } = require('~/cache');
 const TextStream = require('./TextStream');
 const { logger } = require('~/config');
 
@@ -54,6 +53,18 @@ class BaseClient {
     this.outputTokensKey = 'completion_tokens';
     /** @type {Set<string>} */
     this.savedMessageIds = new Set();
+    /**
+     * Flag to determine if the client re-submitted the latest assistant message.
+     * @type {boolean | undefined} */
+    this.continued;
+    /**
+     * Flag to determine if the client has already fetched the conversation while saving new messages.
+     * @type {boolean | undefined} */
+    this.fetchedConvo;
+    /** @type {TMessage[]} */
+    this.currentMessages = [];
+    /** @type {import('librechat-data-provider').VisionModes | undefined} */
+    this.visionMode;
   }
 
   setOptions() {
@@ -355,17 +366,14 @@ class BaseClient {
    *  context: TMessage[],
    *  remainingContextTokens: number,
    *  messagesToRefine: TMessage[],
-   *  summaryIndex: number,
-   * }>} An object with four properties: `context`, `summaryIndex`, `remainingContextTokens`, and `messagesToRefine`.
+   * }>} An object with three properties: `context`, `remainingContextTokens`, and `messagesToRefine`.
    *    `context` is an array of messages that fit within the token limit.
-   *    `summaryIndex` is the index of the first message in the `messagesToRefine` array.
    *    `remainingContextTokens` is the number of tokens remaining within the limit after adding the messages to the context.
    *    `messagesToRefine` is an array of messages that were not added to the context because they would have exceeded the token limit.
    */
   async getMessagesWithinTokenLimit({ messages: _messages, maxContextTokens, instructions }) {
     // Every reply is primed with <|start|>assistant<|message|>, so we
     // start with 3 tokens for the label after all messages have been counted.
-    let summaryIndex = -1;
     let currentTokenCount = 3;
     const instructionsTokenCount = instructions?.tokenCount ?? 0;
     let remainingContextTokens =
@@ -398,14 +406,12 @@ class BaseClient {
     }
 
     const prunedMemory = messages;
-    summaryIndex = prunedMemory.length - 1;
     remainingContextTokens -= currentTokenCount;
 
     return {
       context: context.reverse(),
       remainingContextTokens,
       messagesToRefine: prunedMemory,
-      summaryIndex,
     };
   }
 
@@ -448,7 +454,7 @@ class BaseClient {
 
     let orderedWithInstructions = this.addInstructions(orderedMessages, instructions);
 
-    let { context, remainingContextTokens, messagesToRefine, summaryIndex } =
+    let { context, remainingContextTokens, messagesToRefine } =
       await this.getMessagesWithinTokenLimit({
         messages: orderedWithInstructions,
         instructions,
@@ -518,7 +524,7 @@ class BaseClient {
     }
 
     // Make sure to only continue summarization logic if the summary message was generated
-    shouldSummarize = summaryMessage && shouldSummarize;
+    shouldSummarize = summaryMessage != null && shouldSummarize === true;
 
     logger.debug('[BaseClient] Context Count (2/2)', {
       remainingContextTokens,
@@ -528,17 +534,18 @@ class BaseClient {
     /** @type {Record<string, number> | undefined} */
     let tokenCountMap;
     if (buildTokenMap) {
-      tokenCountMap = orderedWithInstructions.reduce((map, message, index) => {
+      const currentPayload = shouldSummarize ? orderedWithInstructions : context;
+      tokenCountMap = currentPayload.reduce((map, message, index) => {
         const { messageId } = message;
         if (!messageId) {
           return map;
         }
 
-        if (shouldSummarize && index === summaryIndex && !usePrevSummary) {
+        if (shouldSummarize && index === messagesToRefine.length - 1 && !usePrevSummary) {
           map.summaryMessage = { ...summaryMessage, messageId, tokenCount: summaryTokenCount };
         }
 
-        map[messageId] = orderedWithInstructions[index].tokenCount;
+        map[messageId] = currentPayload[index].tokenCount;
         return map;
       }, {});
     }
@@ -589,6 +596,7 @@ class BaseClient {
       } else {
         latestMessage.text = generation;
       }
+      this.continued = true;
     } else {
       this.currentMessages.push(userMessage);
     }
@@ -626,6 +634,12 @@ class BaseClient {
       }
     }
 
+    /**
+     * Retrievign needed data to track token ussage
+     * @organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+
     const User = require('~/models/User');
     const { email } = await User.findOne({ _id: user }).lean();
 
@@ -635,7 +649,7 @@ class BaseClient {
        * @Author Enrique M. Pedroza Castillo
        */
     global.appInsights.trackEvent({
-      name: 'AzureQuery',
+      name: this.options.endpoint == "azureOpenAI"?'AzureQuery':'AgentQuery',
       properties: {
         userId: user,
         userEmail: email,
@@ -646,8 +660,9 @@ class BaseClient {
       },
     });
 
+    const balance = this.options.req?.app?.locals?.balance;
     if (
-      isEnabled(process.env.CHECK_BALANCE) &&
+      balance?.enabled &&
       supportsBalanceCheck[this.options.endpointType ?? this.options.endpoint]
     ) {
       await checkBalance({
@@ -670,7 +685,7 @@ class BaseClient {
        * @Author Enrique M. Pedroza Castillo
        */
     global.appInsights.trackEvent({
-      name: 'AzureAnswerStarted',
+      name: this.options.endpoint == "azureOpenAI"? 'AzureAnswerStarted':'AgentAnswerStarted',
       properties: {
         userId: user,
         userEmail: email,
@@ -701,7 +716,8 @@ class BaseClient {
       responseMessage.text = addSpaceIfNeeded(generation) + completion;
     } else if (
       Array.isArray(completion) &&
-      isParamEndpoint(this.options.endpoint, this.options.endpointType)
+      (this.clientName === EModelEndpoint.agents ||
+        isParamEndpoint(this.options.endpoint, this.options.endpointType))
     ) {
       responseMessage.text = '';
       responseMessage.content = completion;
@@ -739,7 +755,7 @@ class BaseClient {
        * @Author Enrique M. Pedroza Castillo
        */
       global.appInsights.trackEvent({
-        name: 'AzureAnswerEnded',
+        name: this.options.endpoint == "azureOpenAI"? 'AzureAnswerEnded':'AgentAnswerEnded',
         properties: {
           userId: user,
           userEmail: email,
@@ -772,17 +788,6 @@ class BaseClient {
 
     this.responsePromise = this.saveMessageToDatabase(responseMessage, saveOptions, user);
     this.savedMessageIds.add(responseMessage.messageId);
-    if (responseMessage.text) {
-      const messageCache = getLogStores(CacheKeys.MESSAGES);
-      messageCache.set(
-        responseMessageId,
-        {
-          text: responseMessage.text,
-          complete: true,
-        },
-        Time.FIVE_MINUTES,
-      );
-    }
     delete responseMessage.tokenCount;
     return responseMessage;
   }
@@ -920,16 +925,40 @@ class BaseClient {
       return { message: savedMessage };
     }
 
-    const conversation = await saveConvo(
-      this.options.req,
-      {
-        conversationId: message.conversationId,
-        endpoint: this.options.endpoint,
-        endpointType: this.options.endpointType,
-        ...endpointOptions,
-      },
-      { context: 'api/app/clients/BaseClient.js - saveMessageToDatabase #saveConvo' },
-    );
+    const fieldsToKeep = {
+      conversationId: message.conversationId,
+      endpoint: this.options.endpoint,
+      endpointType: this.options.endpointType,
+      ...endpointOptions,
+    };
+
+    const existingConvo =
+      this.fetchedConvo === true
+        ? null
+        : await getConvo(this.options.req?.user?.id, message.conversationId);
+
+    const unsetFields = {};
+    const exceptions = new Set(['spec', 'iconURL']);
+    if (existingConvo != null) {
+      this.fetchedConvo = true;
+      for (const key in existingConvo) {
+        if (!key) {
+          continue;
+        }
+        if (excludedKeys.has(key) && !exceptions.has(key)) {
+          continue;
+        }
+
+        if (endpointOptions?.[key] === undefined) {
+          unsetFields[key] = 1;
+        }
+      }
+    }
+
+    const conversation = await saveConvo(this.options.req, fieldsToKeep, {
+      context: 'api/app/clients/BaseClient.js - saveMessageToDatabase #saveConvo',
+      unsetFields,
+    });
 
     return { message: savedMessage, conversation };
   }
@@ -1050,11 +1079,17 @@ class BaseClient {
     const processValue = (value) => {
       if (Array.isArray(value)) {
         for (let item of value) {
-          if (!item || !item.type || item.type === 'image_url') {
+          if (
+            !item ||
+            !item.type ||
+            item.type === ContentTypes.THINK ||
+            item.type === ContentTypes.ERROR ||
+            item.type === ContentTypes.IMAGE_URL
+          ) {
             continue;
           }
 
-          if (item.type === 'tool_call' && item.tool_call != null) {
+          if (item.type === ContentTypes.TOOL_CALL && item.tool_call != null) {
             const toolName = item.tool_call?.name || '';
             if (toolName != null && toolName && typeof toolName === 'string') {
               numTokens += this.getTokenCount(toolName);
@@ -1150,11 +1185,15 @@ class BaseClient {
         return message;
       }
 
-      const files = await getFiles({
-        file_id: { $in: fileIds },
-      });
+      const files = await getFiles(
+        {
+          file_id: { $in: fileIds },
+        },
+        {},
+        {},
+      );
 
-      await this.addImageURLs(message, files);
+      await this.addImageURLs(message, files, this.visionMode);
 
       this.message_file_map[message.messageId] = files;
       return message;

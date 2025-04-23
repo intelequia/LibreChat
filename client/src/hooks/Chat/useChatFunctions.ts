@@ -4,9 +4,9 @@ import {
   Constants,
   QueryKeys,
   ContentTypes,
+  EModelEndpoint,
   parseCompactConvo,
   isAssistantsEndpoint,
-  EModelEndpoint,
 } from 'librechat-data-provider';
 import { useSetRecoilState, useResetRecoilState, useRecoilValue } from 'recoil';
 import type {
@@ -20,15 +20,24 @@ import type { SetterOrUpdater } from 'recoil';
 import type { TAskFunction, ExtendedFile } from '~/common';
 import useSetFilesToDelete from '~/hooks/Files/useSetFilesToDelete';
 import useGetSender from '~/hooks/Conversations/useGetSender';
+import store, { useGetEphemeralAgent } from '~/store';
 import { getArtifactsMode } from '~/utils/artifacts';
 import { getEndpointField, logger } from '~/utils';
 import useUserKey from '~/hooks/Input/useUserKey';
-import store from '~/store';
 
 const logChatRequest = (request: Record<string, unknown>) => {
   logger.log('=====================================\nAsk function called with:');
   logger.dir(request);
   logger.log('=====================================');
+};
+
+const usesContentStream = (endpoint: EModelEndpoint | undefined, endpointType?: string) => {
+  if (endpointType === EModelEndpoint.custom) {
+    return true;
+  }
+  if (endpoint === EModelEndpoint.openAI || endpoint === EModelEndpoint.azureOpenAI) {
+    return true;
+  }
 };
 
 export default function useChatFunctions({
@@ -55,6 +64,7 @@ export default function useChatFunctions({
   setSubmission: SetterOrUpdater<TSubmission | null>;
   setLatestMessage?: SetterOrUpdater<TMessage | null>;
 }) {
+  const getEphemeralAgent = useGetEphemeralAgent();
   const codeArtifacts = useRecoilValue(store.codeArtifacts);
   const includeShadcnui = useRecoilValue(store.includeShadcnui);
   const customPromptMode = useRecoilValue(store.customPromptMode);
@@ -62,6 +72,7 @@ export default function useChatFunctions({
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(index));
   const setFilesToDelete = useSetFilesToDelete();
   const getSender = useGetSender();
+  const isTemporary = useRecoilValue(store.isTemporary);
 
   const queryClient = useQueryClient();
   const { getExpiry } = useUserKey(conversation?.endpoint ?? '');
@@ -108,6 +119,7 @@ export default function useChatFunctions({
       return;
     }
 
+    const ephemeralAgent = getEphemeralAgent(conversationId ?? Constants.NEW_CONVO);
     const isEditOrContinue = isEdited || isContinued;
 
     let currentMessages: TMessage[] | null = overrideMessages ?? getMessages() ?? [];
@@ -160,7 +172,10 @@ export default function useChatFunctions({
         endpointType,
         overrideConvoId,
         overrideUserMessageId,
-        artifacts: getArtifactsMode({ codeArtifacts, includeShadcnui, customPromptMode }),
+        artifacts:
+          endpoint !== EModelEndpoint.agents
+            ? getArtifactsMode({ codeArtifacts, includeShadcnui, customPromptMode })
+            : undefined,
       },
       convo,
     ) as TEndpointOption;
@@ -218,9 +233,8 @@ export default function useChatFunctions({
       conversationId,
       unfinished: false,
       isCreatedByUser: false,
-      isEdited: isEditOrContinue,
-      iconURL: convo.iconURL,
-      model: convo.model,
+      iconURL: convo?.iconURL,
+      model: convo?.model,
       error: false,
     };
 
@@ -237,6 +251,17 @@ export default function useChatFunctions({
       ];
     } else if (endpoint === EModelEndpoint.agents) {
       initialResponse.model = conversation?.agent_id ?? '';
+      initialResponse.text = '';
+      initialResponse.content = [
+        {
+          type: ContentTypes.TEXT,
+          [ContentTypes.TEXT]: {
+            value: responseText,
+          },
+        },
+      ];
+      setShowStopButton(true);
+    } else if (usesContentStream(endpoint, endpointType)) {
       initialResponse.text = '';
       initialResponse.content = [
         {
@@ -273,6 +298,8 @@ export default function useChatFunctions({
       isContinued,
       isRegenerate,
       initialResponse,
+      isTemporary,
+      ephemeralAgent,
     };
 
     if (isRegenerate) {

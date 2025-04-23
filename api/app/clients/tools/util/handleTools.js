@@ -5,19 +5,23 @@ const { createCodeExecutionTool, EnvVar } = require('@librechat/agents');
 const { getUserPluginAuthValue } = require('~/server/services/PluginService');
 const {
   availableTools,
+  manifestToolMap,
   // Basic Tools
   GoogleSearchAPI,
   // Structured Tools
   DALLE3,
+  FluxAPI,
+  OpenWeather,
   StructuredSD,
   StructuredACS,
   TraversaalSearch,
   StructuredWolfram,
+  createYouTubeTools,
   TavilySearchResults,
-  OpenWeather,
 } = require('../');
 const { primeFiles: primeCodeFiles } = require('~/server/services/Files/Code/process');
 const { createFileSearchTool, primeFiles: primeSearchFiles } = require('./fileSearch');
+const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { createMCPTool } = require('~/server/services/MCP');
 const { loadSpecs } = require('./loadSpecs');
 const { logger } = require('~/config');
@@ -93,45 +97,6 @@ const validateTools = async (user, tools = []) => {
   }
 };
 
-const loadAuthValues = async ({ userId, authFields, throwError = true }) => {
-  let authValues = {};
-
-  /**
-   * Finds the first non-empty value for the given authentication field, supporting alternate fields.
-   * @param {string[]} fields Array of strings representing the authentication fields. Supports alternate fields delimited by "||".
-   * @returns {Promise<{ authField: string, authValue: string} | null>} An object containing the authentication field and value, or null if not found.
-   */
-  const findAuthValue = async (fields) => {
-    for (const field of fields) {
-      let value = process.env[field];
-      if (value) {
-        return { authField: field, authValue: value };
-      }
-      try {
-        value = await getUserPluginAuthValue(userId, field, throwError);
-      } catch (err) {
-        if (field === fields[fields.length - 1] && !value) {
-          throw err;
-        }
-      }
-      if (value) {
-        return { authField: field, authValue: value };
-      }
-    }
-    return null;
-  };
-
-  for (let authField of authFields) {
-    const fields = authField.split('||');
-    const result = await findAuthValue(fields);
-    if (result) {
-      authValues[result.authField] = result.authValue;
-    }
-  }
-
-  return authValues;
-};
-
 /** @typedef {typeof import('@langchain/core/tools').Tool} ToolConstructor */
 /** @typedef {import('@langchain/core/tools').Tool} Tool */
 
@@ -150,6 +115,14 @@ const loadToolWithAuth = (userId, authFields, ToolConstructor, options = {}) => 
     const authValues = await loadAuthValues({ userId, authFields });
     return new ToolConstructor({ ...options, ...authValues, userId });
   };
+};
+
+/**
+ * @param {string} toolKey
+ * @returns {Array<string>}
+ */
+const getAuthFields = (toolKey) => {
+  return manifestToolMap[toolKey]?.authConfig.map((auth) => auth.authField) ?? [];
 };
 
 /**
@@ -178,8 +151,10 @@ const loadTools = async ({
   returnMap = false,
 }) => {
   const toolConstructors = {
+    flux: FluxAPI,
     calculator: Calculator,
     google: GoogleSearchAPI,
+    open_weather: OpenWeather,
     wolfram: StructuredWolfram,
     'stable-diffusion': StructuredSD,
     'azure-ai-search': StructuredACS,
@@ -191,20 +166,26 @@ const loadTools = async ({
     "microsoft-graph": MicrosoftGraph,
     tavily_search_results_json: TavilySearchResults,
     "sharepoint": Sharepoint,
-    open_weather: OpenWeather,
   };
 
   const customConstructors = {
     serpapi: async () => {
-      let apiKey = process.env.SERPAPI_API_KEY;
+      const authFields = getAuthFields('serpapi');
+      let envVar = authFields[0] ?? '';
+      let apiKey = process.env[envVar];
       if (!apiKey) {
-        apiKey = await getUserPluginAuthValue(user, 'SERPAPI_API_KEY');
+        apiKey = await getUserPluginAuthValue(user, envVar);
       }
       return new SerpAPI(apiKey, {
         location: 'Austin,Texas,United States',
         hl: 'en',
         gl: 'us',
       });
+    },
+    youtube: async () => {
+      const authFields = getAuthFields('youtube');
+      const authValues = await loadAuthValues({ userId: user, authFields });
+      return createYouTubeTools(authValues);
     },
   };
 
@@ -225,20 +206,11 @@ const loadTools = async ({
   };
 
   const toolOptions = {
-    serpapi: { location: 'Austin,Texas,United States', hl: 'en', gl: 'us' },
+    flux: imageGenOptions,
     dalle: imageGenOptions,
     'stable-diffusion': imageGenOptions,
+    serpapi: { location: 'Austin,Texas,United States', hl: 'en', gl: 'us' },
   };
-
-  const toolAuthFields = {};
-
-  availableTools.forEach((tool) => {
-    if (customConstructors[tool.pluginKey]) {
-      return;
-    }
-
-    toolAuthFields[tool.pluginKey] = tool.authConfig.map((auth) => auth.authField);
-  });
 
   const toolContextMap = {};
   const remainingTools = [];
@@ -247,16 +219,29 @@ const loadTools = async ({
   for (const tool of tools) {
     if (tool === Tools.execute_code) {
       requestedTools[tool] = async () => {
-        const authValues = await loadAuthValues({
-          userId: user,
-          authFields: [EnvVar.CODE_API_KEY],
-        });
+        // const authValues = await loadAuthValues({
+        //   userId: user,
+        //   authFields: [EnvVar.CODE_API_KEY],
+        // });
+        const authValues= {
+          LIBRECHAT_CODE_API_KEY: "dfgsdfg",
+        }
         const codeApiKey = authValues[EnvVar.CODE_API_KEY];
         const { files, toolContext } = await primeCodeFiles(options, codeApiKey);
         if (toolContext) {
           toolContextMap[tool] = toolContext;
         }
+        /**
+         * Retrievign needed data to track token ussage
+         * @organization Intelequia
+         * @Author Enrique M. Pedroza Castillo
+         */
+
+        const User = require('~/models/User');
+        const { email } = await User.findOne({ _id: user }).lean();
+
         const CodeExecutionTool = createCodeExecutionTool({
+          user_email:email,
           user_id: user,
           files,
           ...authValues,
@@ -294,7 +279,7 @@ const loadTools = async ({
       const options = toolOptions[tool] || {};
       const toolInstance = loadToolWithAuth(
         user,
-        toolAuthFields[tool],
+        getAuthFields(tool),
         toolConstructors[tool],
         options,
       );
@@ -308,7 +293,7 @@ const loadTools = async ({
      * @Author Enrique M. Pedroza Castillo
      */
 
-    if(process.env.ENABLE_PERMISSION_MANAGE == "true"){
+    if(process.env.ENABLE_PERMISSION_MANAGE == "true" && tool != "image_vision" ){
       const {status,value} = await VerifyAzureAIFunctionsTool(tool, user, toolOptions,loadToolWithAuth,toolAuthFields,toolConstructors);
       if(status){
         requestedTools[tool] = value;
@@ -370,7 +355,6 @@ const loadTools = async ({
 
 module.exports = {
   loadToolWithAuth,
-  loadAuthValues,
   validateTools,
   loadTools,
 };
