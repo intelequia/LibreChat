@@ -215,6 +215,8 @@ const getOpenAIModels = async (opts) => {
     key = 'AZURE_OPENAI_MODELS';
   } else if (opts.plugins) {
     key = 'PLUGIN_MODELS';
+  } else if (opts.azureAgents){
+    key = 'AZURE_AGENTS_MODELS';
   } else {
     key = 'OPENAI_MODELS';
   }

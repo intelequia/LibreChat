@@ -285,14 +285,14 @@ const chatV1 = async (req, res) => {
      * @Organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */
-    const messageTokens = intelequiaCountTokens(text, model);
+    const messageTokens = intelequiaCountTokens([text], model);
     global.appInsights.trackEvent({
       name: 'AzureAssistantsQuery',
       properties: {
         userId: req.user.id,
         userEmail: req.user.email,
         charactersLength: text.length,
-        messageTokens: messageTokens.length,
+        messageTokens: messageTokens.completion,
         model: model,
         conversationId: conversationId,
         assistantId: assistant_id,

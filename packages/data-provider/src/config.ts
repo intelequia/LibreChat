@@ -174,7 +174,7 @@ export enum AgentCapabilities {
 }
 
 export const defaultAssistantsVersion = {
-  [EModelEndpoint.azureAgents]: 1,
+  [EModelEndpoint.azureAgents]: 2,
   [EModelEndpoint.assistants]: 2,
   [EModelEndpoint.azureAssistants]: 1,
 };
