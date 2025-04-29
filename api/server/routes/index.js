@@ -1,4 +1,5 @@
 const assistants = require('./assistants');
+const azureAgents = require('./azureAgents');
 const categories = require('./categories');
 const tokenizer = require('./tokenizer');
 const endpoints = require('./endpoints');
@@ -53,6 +54,7 @@ module.exports = {
   endpoints,
   tokenizer,
   assistants,
+  azureAgents,
   categories,
   staticRoute,
   banner,

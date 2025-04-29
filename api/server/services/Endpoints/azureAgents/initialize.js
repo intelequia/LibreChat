@@ -7,6 +7,8 @@ const { DefaultAzureCredential } = require('@azure/identity');
 const { isUserProvided } = require('~/server/utils');
 
 
+
+
 class Files {
   constructor(client) {
     this._client = client;
@@ -73,47 +75,24 @@ const initializeClient = async ({ req, res, version, endpointOption, initAppClie
 
   const credentials =  new DefaultAzureCredential()
 
-  const clientOptions = {
-    req,
-    res,
-    ...endpointOption,
-  };
-
 
   /** @type {TAzureConfig | undefined} */
   const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
 
-
-  /** @type {AzureOptions | undefined} */
-  let azureOptions;
+  const client = AIProjectsClient.fromConnectionString( AZURE_AI_PROJECTS_CONNECTION_STRING, credentials)
+  client.options = {}
 
   if(azureConfig && azureConfig.assistants){
     
     if (initAppClient) {
-      clientOptions.titleConvo = azureConfig.titleConvo;
-      clientOptions.titleModel = azureConfig.titleModel;
-      clientOptions.titleMethod = azureConfig.titleMethod ?? 'completion';
-
-      const groupName = modelGroupMap[modelName].group;
-      clientOptions.addParams = azureConfig.groupMap[groupName].addParams;
-      clientOptions.dropParams = azureConfig.groupMap[groupName].dropParams;
-      clientOptions.forcePrompt = azureConfig.groupMap[groupName].forcePrompt;
-
-      clientOptions.reverseProxyUrl = baseURL ?? clientOptions.reverseProxyUrl;
-      clientOptions.headers = opts.defaultHeaders;
-      clientOptions.azure = !serverless && azureOptions;
-      if (serverless === true) {
-        clientOptions.defaultQuery = azureOptions.azureOpenAIApiVersion
-          ? { 'api-version': azureOptions.azureOpenAIApiVersion }
-          : undefined;
-        clientOptions.headers['api-key'] = apiKey;
-      }
+      client.options.titleConvo = azureConfig.titleConvo;
+      client.options.titleModel = azureConfig.titleModel;
+      client.options.titleMethod = azureConfig.titleMethod ?? 'completion';
     }
   }
 
 
 
-  const client = AIProjectsClient.fromConnectionString( AZURE_AI_PROJECTS_CONNECTION_STRING, credentials)
   
   client.agents.files = new Files(client)
 

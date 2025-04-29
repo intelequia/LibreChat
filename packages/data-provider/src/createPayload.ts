@@ -19,7 +19,6 @@ export default function createPayload(submission: t.TSubmission) {
   };
 
   let server = EndpointURLs[endpointType ?? endpoint];
-  console.log("DATA_PROVIDER: createPayload", server, endpoint, endpointType);
   const isEphemeralAgent = (ephemeralAgent?.mcp?.length ?? 0) > 0 && !s.isAgentsEndpoint(endpoint);
 
   if (isEdited && s.isAssistantsEndpoint(endpoint)) {
