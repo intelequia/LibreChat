@@ -68,8 +68,6 @@ export default function useSideNavLinks({
 
     if (
       isAssistantsEndpoint(endpoint) &&
-      endpointsConfig?.[EModelEndpoint.assistants] &&
-      endpointsConfig[EModelEndpoint.assistants].disableBuilder !== true &&
       keyProvided &&
       hasAccessToAssistantCreator
     ) {
