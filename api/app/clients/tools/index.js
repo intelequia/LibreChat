@@ -10,6 +10,7 @@ const StructuredACS = require('./structured/AzureAISearch');
 const StructuredSD = require('./structured/StableDiffusion');
 const GoogleSearchAPI = require('./structured/GoogleSearch');
 const TraversaalSearch = require('./structured/TraversaalSearch');
+const createOpenAIImageTools = require('./structured/OpenAIImageTools');
 const TavilySearchResults = require('./structured/TavilySearchResults');
 /**
  * Intelequia Plugins
@@ -57,4 +58,5 @@ module.exports = {
   Dataverse,
   MicrosoftGraph,
   BingSearch,
+  createOpenAIImageTools,
 };

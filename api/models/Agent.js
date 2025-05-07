@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const { agentSchema } = require('@librechat/data-schemas');
-const { SystemRoles } = require('librechat-data-provider');
+const { SystemRoles, Tools } = require('librechat-data-provider');
 const { GLOBAL_PROJECT_NAME, EPHEMERAL_AGENT_ID, mcp_delimiter } =
   require('librechat-data-provider').Constants;
 const { CONFIG_STORE, STARTUP_CONFIG } = require('librechat-data-provider').CacheKeys;
@@ -51,16 +51,22 @@ const loadEphemeralAgent = ({ req, agent_id, endpoint, model_parameters: _m }) =
   const mcpServers = new Set(req.body.ephemeralAgent?.mcp);
   /** @type {string[]} */
   const tools = [];
+  if (req.body.ephemeralAgent?.execute_code === true) {
+    tools.push(Tools.execute_code);
+  }
 
-  for (const toolName of Object.keys(availableTools)) {
-    if (!toolName.includes(mcp_delimiter)) {
-      continue;
-    }
-    const mcpServer = toolName.split(mcp_delimiter)?.[1];
-    if (mcpServer && mcpServers.has(mcpServer)) {
-      tools.push(toolName);
+  if (mcpServers.size > 0) {
+    for (const toolName of Object.keys(availableTools)) {
+      if (!toolName.includes(mcp_delimiter)) {
+        continue;
+      }
+      const mcpServer = toolName.split(mcp_delimiter)?.[1];
+      if (mcpServer && mcpServers.has(mcpServer)) {
+        tools.push(toolName);
+      }
     }
   }
+
   const instructions = req.body.promptPrefix;
   return {
     id: agent_id,
@@ -147,9 +153,11 @@ const updateAgent = async (searchParameter, updateData) => {
  */
 const addAgentResourceFile = async ({ agent_id, tool_resource, file_id }) => {
   const searchParameter = { id: agent_id };
-
+  let agent = await getAgent(searchParameter);
+  if (!agent) {
+    throw new Error('Agent not found for adding resource file');
+  }
   const fileIdsPath = `tool_resources.${tool_resource}.file_ids`;
-
   await Agent.updateOne(
     {
       id: agent_id,
@@ -162,7 +170,12 @@ const addAgentResourceFile = async ({ agent_id, tool_resource, file_id }) => {
     },
   );
 
-  const updateData = { $addToSet: { [fileIdsPath]: file_id } };
+  const updateData = {
+    $addToSet: {
+      tools: tool_resource,
+      [fileIdsPath]: file_id,
+    },
+  };
 
   const updatedAgent = await updateAgent(searchParameter, updateData);
   if (updatedAgent) {
@@ -295,7 +308,7 @@ const getListAgents = async (searchParameter) => {
  * This function also updates the corresponding projects to include or exclude the agent ID.
  *
  * @param {Object} params - Parameters for updating the agent's projects.
- * @param {import('librechat-data-provider').TUser} params.user - Parameters for updating the agent's projects.
+ * @param {MongoUser} params.user - Parameters for updating the agent's projects.
  * @param {string} params.agentId - The ID of the agent to update.
  * @param {string[]} [params.projectIds] - Array of project IDs to add to the agent.
  * @param {string[]} [params.removeProjectIds] - Array of project IDs to remove from the agent.

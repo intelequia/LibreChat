@@ -61,7 +61,10 @@ class ModelEndHandler {
       }
 
       this.collectedUsage.push(usage);
-      if (!graph.clientOptions?.disableStreaming) {
+      const streamingDisabled = !!(
+        graph.clientOptions?.disableStreaming || graph?.boundModel?.disableStreaming
+      );
+      if (!streamingDisabled) {
         return;
       }
       if (!data.output.content) {
@@ -246,7 +249,11 @@ function createToolEndCallback({ req, res, artifactPromises }) {
     if (output.artifact.content) {
       /** @type {FormattedContent[]} */
       const content = output.artifact.content;
-      for (const part of content) {
+      for (let i = 0; i < content.length; i++) {
+        const part = content[i];
+        if (!part) {
+          continue;
+        }
         if (part.type !== 'image_url') {
           continue;
         }
@@ -254,8 +261,10 @@ function createToolEndCallback({ req, res, artifactPromises }) {
         artifactPromises.push(
           (async () => {
             const filename = `${output.name}_${output.tool_call_id}_img_${nanoid()}`;
+            const file_id = output.artifact.file_ids?.[i];
             const file = await saveBase64Image(url, {
               req,
+              file_id,
               filename,
               endpoint: metadata.provider,
               context: FileContext.image_generation,

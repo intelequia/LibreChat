@@ -62,8 +62,6 @@ const SidePanel = ({
     () => getEndpointField(endpointsConfig, endpoint, 'type'),
     [endpoint, endpointsConfig],
   );
-  const assistants = useMemo(() => endpointsConfig?.[endpoint ?? ''], [endpoint, endpointsConfig]);
-  const agents = useMemo(() => endpointsConfig?.[endpoint ?? ''], [endpoint, endpointsConfig]);
 
   const userProvidesKey = useMemo(
     () => !!(endpointsConfig?.[endpoint ?? '']?.userProvide ?? false),
@@ -91,10 +89,8 @@ const SidePanel = ({
   }, []);
 
   const Links = useSideNavLinks({
-    agents,
     endpoint,
     hidePanel,
-    assistants,
     keyProvided,
     endpointType,
     interfaceConfig,
