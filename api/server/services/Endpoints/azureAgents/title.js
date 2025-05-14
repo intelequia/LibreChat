@@ -3,6 +3,7 @@ const { saveConvo } = require('~/models/Conversation');
 const getLogStores = require('~/cache/getLogStores');
 const { isEnabled } = require('~/server/utils');
 
+
 const addTitle = async (req, { text, responseText, conversationId, azureAgentClient }) => {
   const { TITLE_CONVO = 'true' } = process.env ?? {};
   if (!isEnabled(TITLE_CONVO)) {
@@ -15,9 +16,8 @@ const addTitle = async (req, { text, responseText, conversationId, azureAgentCli
 
   const titleCache = getLogStores(CacheKeys.GEN_TITLE);
   const key = `${req.user.id}-${conversationId}`;
-
-  // const title = await azureAgentClient.titleConvo({ text, conversationId, responseText });
-  const title = "Mi titulo";
+  const model = azureAgentClient.res.req.body.model;
+  const title = await azureAgentClient.titleConvo({ text, conversationId, responseText, model, req });
   await titleCache.set(key, title, 120000);
 
   await saveConvo(

@@ -4,9 +4,7 @@ const {
   defaultOrderQuery,
   defaultAssistantsVersion,
 } = require('librechat-data-provider');
-const {
-  initializeClient: initAzureClient,
-} = require('~/server/services/Endpoints/azureAssistants');
+
 /**
  * imported Azure Agent Client
  * @author: Enrique M. Pedroza Castillo 
@@ -16,7 +14,6 @@ const {
   initializeClient: initAzureAgentClient,
 } = require('~/server/services/Endpoints/azureAgents');
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
-const { getLogStores } = require('~/cache');
 const {verifyAssistantPermissions} = require('~/utils');
 const { getEndpointsConfig } = require('~/server/services/Config');
 
