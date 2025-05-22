@@ -1,6 +1,6 @@
 import React, { Fragment } from 'react';
 import { EarthIcon } from 'lucide-react';
-import { isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint, isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
 import type { TModelSpec } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import { useModelSelectorContext } from '../ModelSelectorContext';
@@ -39,7 +39,7 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
       </div>
     );
   }
-
+  console.log("RESULTS ", results) 
   return (
     <>
       {results.map((item, i) => {
@@ -102,6 +102,12 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
             const filteredModels = endpoint.label.toLowerCase().includes(lowerQuery)
               ? endpoint.models
               : endpoint.models.filter((model) => {
+                console.log("Endpoint value", endpoint.value)
+                if(endpoint.value === EModelEndpoint.azureAgents) {
+                  console.log("Endpoint assistant names", endpoint.assistantNames) 
+                  console.log("Endpoint model.name", model.name)
+                  console.log("Endpoint", endpoint)
+                }
                 let modelName = model.name;
                 if (
                   isAgentsEndpoint(endpoint.value) &&

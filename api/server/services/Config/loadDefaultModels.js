@@ -52,6 +52,10 @@ async function loadDefaultModels(req) {
         logger.error('Error fetching Azure OpenAI Assistants API models:', error);
         return [];
       }),
+      getOpenAIModels({ azureAgents: true }).catch((error) => {
+        logger.error('Error fetching Azure OpenAI Agents API models:', error);
+        return [];
+      }),
       Promise.resolve(getGoogleModels()).catch((error) => {
         logger.error('Error getting Google models:', error);
         return [];
@@ -61,7 +65,6 @@ async function loadDefaultModels(req) {
         return [];
       }),
     ]);
-
     return {
       [EModelEndpoint.openAI]: openAI,
       [EModelEndpoint.agents]: openAI,
@@ -71,6 +74,7 @@ async function loadDefaultModels(req) {
       [EModelEndpoint.azureOpenAI]: azureOpenAI,
       [EModelEndpoint.assistants]: assistants,
       [EModelEndpoint.azureAssistants]: azureAssistants,
+      [EModelEndpoint.azureAgents]: openAI,
       [EModelEndpoint.bedrock]: bedrock,
     };
   } catch (error) {
