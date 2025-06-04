@@ -91,9 +91,6 @@ const initializeClient = async ({ req, res, version, endpointOption, initAppClie
       client.options.titleMethod = azureConfig.titleMethod ?? 'completion';
     }
   }
-
-
-
   
   client.agents.files = new Files(client)
 

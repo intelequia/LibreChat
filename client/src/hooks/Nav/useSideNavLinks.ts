@@ -8,7 +8,7 @@ import {
   EModelEndpoint,
   Permissions,
 } from 'librechat-data-provider';
-import type { TConfig, TInterfaceConfig, TEndpointsConfig } from 'librechat-data-provider';
+import type { TInterfaceConfig, TEndpointsConfig } from 'librechat-data-provider';
 import type { NavLink } from '~/common';
 import AgentPanelSwitch from '~/components/SidePanel/Agents/AgentPanelSwitch';
 import BookmarkPanel from '~/components/SidePanel/Bookmarks/BookmarkPanel';
@@ -20,8 +20,6 @@ import { Blocks, AttachmentIcon } from '~/components/svg';
 import { useHasAccess } from '~/hooks';
 export default function useSideNavLinks({
   hidePanel,
-  assistants,
-  agents,
   keyProvided,
   endpoint,
   endpointType,
@@ -29,8 +27,6 @@ export default function useSideNavLinks({
   endpointsConfig,
 }: {
   hidePanel: () => void;
-  assistants?: TConfig | null;
-  agents?: TConfig | null;
   keyProvided: boolean;
   endpoint?: EModelEndpoint | null;
   endpointType?: EModelEndpoint | null;
@@ -72,8 +68,6 @@ export default function useSideNavLinks({
 
     if (
       isAssistantsEndpoint(endpoint) &&
-      assistants &&
-      assistants.disableBuilder !== true &&
       keyProvided &&
       hasAccessToAssistantCreator
     ) {
@@ -90,8 +84,7 @@ export default function useSideNavLinks({
       endpointsConfig?.[EModelEndpoint.agents] &&
       hasAccessToAgents &&
       hasAccessToCreateAgents &&
-      agents &&
-      agents.disableBuilder !== true
+      endpointsConfig[EModelEndpoint.agents].disableBuilder !== true
     ) {
       links.push({
         title: 'com_sidepanel_agent_builder',
@@ -156,13 +149,11 @@ export default function useSideNavLinks({
     return links;
   }, [
     hasAccessToAssistantCreator,
-    endpointsConfig?.[EModelEndpoint.agents],
+    endpointsConfig,
     interfaceConfig.parameters,
     keyProvided,
-    assistants,
     endpointType,
     endpoint,
-    agents,
     hasAccessToAgents,
     hasAccessToPrompts,
     hasAccessToBookmarks,

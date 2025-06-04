@@ -42,7 +42,8 @@ export type TEndpointOption = {
 };
 
 export type TEphemeralAgent = {
-  mcp: string[];
+  mcp?: string[];
+  execute_code?: boolean;
 };
 
 export type TPayload = Partial<TMessage> &
@@ -64,6 +65,7 @@ export type TSubmission = {
   isTemporary: boolean;
   messages: TMessage[];
   isRegenerate?: boolean;
+  isResubmission?: boolean;
   initialResponse?: TMessage;
   conversation: Partial<TConversation>;
   endpointOption: TEndpointOption;

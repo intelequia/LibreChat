@@ -1,6 +1,6 @@
 const { ToolCallTypes } = require('librechat-data-provider');
 const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
-const { validateAndUpdateTool } = require('~/server/services/ActionService');
+const { validateAndUpdateTool,deleteAssistantActions } = require('~/server/services/ActionService');
 const { updateAssistantDoc } = require('~/models/Assistant');
 const { manifestToolMap } = require('~/app/clients/tools');
 const { getOpenAIClient } = require('./helpers');
@@ -12,10 +12,10 @@ const { logger } = require('~/config');
  * @param {AssistantCreateParams} req.body - The assistant creation parameters.
  * @returns {Assistant} 201 - success response - application/json
  */
-const createAssistant = async (req, res) => {
+const createAzureAgent = async (req, res) => {
   try {
     /** @type {{ openai: OpenAIClient }} */
-    const { openai } = await getOpenAIClient({ req, res });
+    const azureAgentClient = await getOpenAIClient({ req, res });
 
     const {
       tools = [],
@@ -50,7 +50,7 @@ const createAssistant = async (req, res) => {
       .flat();
 
     let azureModelIdentifier = null;
-    if (openai.locals?.azureOptions) {
+    if (azureAgentClient.locals?.azureOptions) {
       azureModelIdentifier = assistantData.model;
       assistantData.model = openai.locals.azureOptions.azureOpenAIApiDeploymentName;
     }
@@ -60,7 +60,7 @@ const createAssistant = async (req, res) => {
       endpoint,
     };
 
-    const assistant = await openai.beta.assistants.create(assistantData);
+    const azureAgent = await azureAgentClient.agents.createAgent(assistantData.model,assistantData);
 
     const createData = { user: req.user.id };
     if (conversation_starters) {
@@ -70,23 +70,23 @@ const createAssistant = async (req, res) => {
       createData.append_current_datetime = append_current_datetime;
     }
 
-    const document = await updateAssistantDoc({ assistant_id: assistant.id }, createData);
+    const document = await updateAssistantDoc({ assistant_id: azureAgent.id }, createData);
 
     if (azureModelIdentifier) {
-      assistant.model = azureModelIdentifier;
+      azureAgent.model = azureModelIdentifier;
     }
 
     if (document.conversation_starters) {
-      assistant.conversation_starters = document.conversation_starters;
+      azureAgent.conversation_starters = document.conversation_starters;
     }
     if (append_current_datetime !== undefined) {
-      assistant.append_current_datetime = append_current_datetime;
+      azureAgent.append_current_datetime = append_current_datetime;
     }
 
-    logger.debug('/assistants/', assistant);
-    res.status(201).json(assistant);
+    logger.debug('/azureAgents/', azureAgent);
+    res.status(201).json(azureAgent);
   } catch (error) {
-    logger.error('[/assistants] Error creating assistant', error);
+    logger.error('[/azureAgents] Error creating assistant', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -95,15 +95,18 @@ const createAssistant = async (req, res) => {
  * Modifies an assistant.
  * @param {object} params
  * @param {Express.Request} params.req
- * @param {OpenAIClient} params.openai
+ * @param {AIProjectsClient} params.azureAgentClient
  * @param {string} params.assistant_id
- * @param {AssistantUpdateParams} params.updateData
+ * @param {AzureAgentUpdateParams} params.updateData
  * @returns {Promise<Assistant>} The updated assistant.
  */
-const updateAssistant = async ({ req, openai, assistant_id, updateData }) => {
-  await validateAuthor({ req, openai });
+const updateAzureAgent = async ({ req, azureAgentClient, assistant_id, updateData }) => {
+  await validateAuthor({ req, azureAgentClient });
   const tools = [];
   let conversation_starters = null;
+  
+  updateData.toolResources = updateData.tool_resources ;
+  delete updateData.tool_resources;
 
   if (updateData?.conversation_starters) {
     const conversationStartersUpdate = await updateAssistantDoc(
@@ -167,33 +170,32 @@ const updateAssistant = async ({ req, openai, assistant_id, updateData }) => {
     }
   }
 
-  if (hasFileSearch && !updateData.tool_resources) {
-    const assistant = await openai.beta.assistants.retrieve(assistant_id);
-    updateData.tool_resources = assistant.tool_resources ?? null;
+  if (hasFileSearch && !updateData.toolResources) {
+    const azureAgent = await azureAgentClient.agents.getAgent(assistant_id);
+    updateData.toolResources = azureAgent.toolResources ?? null;
   }
 
-  if (hasFileSearch && !updateData.tool_resources?.file_search) {
-    updateData.tool_resources = {
-      ...(updateData.tool_resources ?? {}),
-      file_search: {
-        vector_store_ids: [],
+  if (hasFileSearch && !updateData.toolResources?.fileSearch) {
+    updateData.toolResources = {
+      ...(updateData.toolResources ?? {}),
+      fileSearch: {
+        vectorStoreIds: [],
       },
     };
   }
 
   updateData.tools = tools;
 
-  if (openai.locals?.azureOptions && updateData.model) {
+  if (azureAgentClient.locals?.azureOptions && updateData.model) {
     updateData.model = openai.locals.azureOptions.azureOpenAIApiDeploymentName;
   }
 
-  const assistant = await openai.beta.assistants.update(assistant_id, updateData);
-
+  const azureAgent = azureAgentClient.agents.updateAgent(assistant_id, updateData);
   if (conversation_starters) {
-    assistant.conversation_starters = conversation_starters;
+    azureAgent.conversation_starters = conversation_starters;
   }
 
-  return assistant;
+  return azureAgent;
 };
 
 /**
@@ -276,11 +278,11 @@ const deleteResourceFileId = async ({ req, openai, assistant_id, tool_resource, 
  */
 const patchAssistant = async (req, res) => {
   try {
-    const { openai } = await getOpenAIClient({ req, res });
+    const azureAgentClient = await getOpenAIClient({ req, res });
     const assistant_id = req.params.id;
     const { endpoint: _e, ...updateData } = req.body;
     updateData.tools = updateData.tools ?? [];
-    const updatedAssistant = await updateAssistant({ req, openai, assistant_id, updateData });
+    const updatedAssistant = await updateAzureAgent({ req, azureAgentClient, assistant_id, updateData });
     res.json(updatedAssistant);
   } catch (error) {
     logger.error('[/assistants/:id] Error updating assistant', error);
@@ -288,10 +290,53 @@ const patchAssistant = async (req, res) => {
   }
 };
 
+
+/**
+ * Deletes an assistant.
+ * @route DELETE /assistants/:id
+ * @param {object} req - Express Request
+ * @param {object} req.params - Request params
+ * @param {string} req.params.id - Assistant identifier.
+ * @returns {Assistant} 200 - success response - application/json
+ */
+const deleteAzureAgent = async (req, res) => {
+  try {
+    const azureAgentClient = await getOpenAIClient({ req, res });
+    await validateAuthor({ req, azureAgentClient });
+    /**
+     * Custom event to track when an assistant has been deleted
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    global.appInsights.trackEvent({
+      name: 'AssistantDeleted',
+      properties: {
+        userId: req.user.id,
+        userEmail: req.user.email,
+        assistantName: req.params.id,
+      },
+    });
+
+    const assistant_id = req.params.id;
+    const deletionStatus = await azureAgentClient.agents.deleteAgent(assistant_id);
+    if (deletionStatus?.deleted) {
+      await deleteAssistantActions({ req, assistant_id });
+    }
+    res.json(deletionStatus);
+  } catch (error) {
+    logger.error('[/assistants/:id] Error deleting assistant', error);
+    res.status(500).json({ error: 'Error deleting assistant' });
+  }
+};
+
+
+
+
 module.exports = {
   patchAssistant,
-  createAssistant,
-  updateAssistant,
+  createAzureAgent,
+  updateAzureAgent,
   addResourceFileId,
   deleteResourceFileId,
+  deleteAzureAgent,
 };

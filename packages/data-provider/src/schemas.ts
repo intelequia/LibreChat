@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Tools } from './types/assistants';
 import type { TMessageContentParts, FunctionTool, FunctionToolCall } from './types/assistants';
+import type { TEphemeralAgent } from './types';
 import type { TFile } from './types/files';
 
 export const isUUID = z.string().uuid();
@@ -94,6 +95,21 @@ export const isAgentsEndpoint = (_endpoint?: EModelEndpoint.agents | null | stri
     return false;
   }
   return endpoint === EModelEndpoint.agents;
+};
+
+export const isEphemeralAgent = (
+  endpoint?: EModelEndpoint.agents | null | string,
+  ephemeralAgent?: TEphemeralAgent | null,
+) => {
+  if (!ephemeralAgent) {
+    return false;
+  }
+  if (isAgentsEndpoint(endpoint)) {
+    return false;
+  }
+  const hasMCPSelected = (ephemeralAgent?.mcp?.length ?? 0) > 0;
+  const hasCodeSelected = (ephemeralAgent?.execute_code ?? false) === true;
+  return hasMCPSelected || hasCodeSelected;
 };
 
 export const isParamEndpoint = (
@@ -647,6 +663,8 @@ export const tPresetSchema = tConversationSchema
 export const tConvoUpdateSchema = tConversationSchema.merge(
   z.object({
     endpoint: extendedModelEndpointSchema.nullable(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
   }),
 );
 
