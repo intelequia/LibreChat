@@ -869,8 +869,12 @@ export const useUploadAssistantAvatarMutation = (
   unknown // context
 > => {
   return useMutation([MutationKeys.assistantAvatarUpload], {
-    mutationFn: ({ postCreation, ...variables }: t.AssistantAvatarVariables) =>
-      dataService.uploadAssistantAvatar(variables),
+    mutationFn: ({ postCreation, ...variables }: t.AssistantAvatarVariables) =>{
+      const {endpoint} = variables;
+      return endpoint == "azureAgents" ? 
+        dataService.uploadAzureAgentsAvatar(variables): 
+        dataService.uploadAssistantAvatar(variables);
+    },
     ...(options || {}),
   });
 };

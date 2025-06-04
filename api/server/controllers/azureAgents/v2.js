@@ -1,10 +1,12 @@
-const { ToolCallTypes } = require('librechat-data-provider');
+const fs = require('fs').promises;
+const { ToolCallTypes, FileContext } = require('librechat-data-provider');
 const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
 const { validateAndUpdateTool,deleteAssistantActions } = require('~/server/services/ActionService');
 const { updateAssistantDoc } = require('~/models/Assistant');
 const { manifestToolMap } = require('~/app/clients/tools');
 const { getOpenAIClient } = require('./helpers');
 const { logger } = require('~/config');
+const { uploadImageBuffer, filterFile } = require('~/server/services/Files/process');
 
 /**
  * Create an assistant.
@@ -330,6 +332,92 @@ const deleteAzureAgent = async (req, res) => {
 };
 
 
+/**
+ * Uploads and updates an avatar for a specific assistant.
+ * @route POST /:assistant_id/avatar
+ * @param {object} req - Express Request
+ * @param {object} req.params - Request params
+ * @param {string} req.params.assistant_id - The ID of the assistant.
+ * @param {Express.Multer.File} req.file - The avatar image file.
+ * @param {object} req.body - Request body
+ * @returns {Object} 200 - success response - application/json
+ */
+const uploadAzureAgentAvatar = async (req, res) => {
+  try {
+    filterFile({ req, file: req.file, image: true, isAvatar: true });
+    const { assistant_id } = req.params;
+    if (!assistant_id) {
+      return res.status(400).json({ message: 'Assistant ID is required' });
+    }
+
+    const azureAgentClient = await getOpenAIClient({ req, res });
+    await validateAuthor({ req, azureAgentClient });
+
+    const buffer = await fs.readFile(req.file.path);
+    const image = await uploadImageBuffer({
+      req,
+      context: FileContext.avatar,
+      metadata: { buffer },
+    });
+
+    let _metadata;
+
+    try {
+      const assistant = await azureAgentClient.agents.getAgent(assistant_id);
+      if (assistant) {
+        _metadata = assistant.metadata;
+      }
+    } catch (error) {
+      logger.error('[/:assistant_id/avatar] Error fetching assistant', error);
+      _metadata = {};
+    }
+
+    if (_metadata.avatar && _metadata.avatar_source) {
+      const { deleteFile } = getStrategyFunctions(_metadata.avatar_source);
+      try {
+        await deleteFile(req, { filepath: _metadata.avatar });
+        await deleteFileByFilter({ user: req.user.id, filepath: _metadata.avatar });
+      } catch (error) {
+        logger.error('[/:assistant_id/avatar] Error deleting old avatar', error);
+      }
+    }
+
+    const metadata = {
+      ..._metadata,
+      avatar: image.filepath,
+      avatar_source: req.app.locals.fileStrategy,
+    };
+
+    const promises = [];
+    promises.push(
+      updateAssistantDoc(
+        { assistant_id },
+        {
+          avatar: {
+            filepath: image.filepath,
+            source: req.app.locals.fileStrategy,
+          },
+          user: req.user.id,
+        },
+      ),
+    );
+    promises.push(azureAgentClient.agents.updateAgent(assistant_id, { metadata }));
+
+    const resolved = await Promise.all(promises);
+    res.status(201).json(resolved[1]);
+  } catch (error) {
+    const message = 'An error occurred while updating the Assistant Avatar';
+    logger.error(message, error);
+    res.status(500).json({ message });
+  } finally {
+    try {
+      await fs.unlink(req.file.path);
+      logger.debug('[/:agent_id/avatar] Temp. image upload file deleted');
+    } catch (error) {
+      logger.debug('[/:agent_id/avatar] Temp. image upload file already deleted');
+    }
+  }
+};
 
 
 module.exports = {
@@ -339,4 +427,5 @@ module.exports = {
   addResourceFileId,
   deleteResourceFileId,
   deleteAzureAgent,
+  uploadAzureAgentAvatar
 };

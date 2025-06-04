@@ -70,12 +70,12 @@ router.delete('/:id', v2.deleteAzureAgent);
 
 /**
  * Uploads and updates an avatar for a specific assistant.
- * @route POST /avatar/:assistant_id
+ * @route POST /:assistant_id/avatar
  * @param {string} req.params.assistant_id - The ID of the assistant.
  * @param {Express.Multer.File} req.file - The avatar image file.
  * @param {string} [req.body.metadata] - Optional metadata for the assistant's avatar.
  * @returns {Object} 200 - success response - application/json
  */
-// router.post('/avatar/:assistant_id', v2.uploadAssistantAvatar);
+router.post('/:assistant_id/avatar', v2.uploadAzureAgentAvatar);
 
 module.exports = router;

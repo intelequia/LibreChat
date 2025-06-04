@@ -513,6 +513,17 @@ export const uploadAvatar = (data: FormData): Promise<f.AvatarUploadResponse> =>
   return request.postMultiPart(endpoints.avatar(), data);
 };
 
+export const uploadAzureAgentsAvatar = (data: m.AssistantAvatarVariables): Promise<a.Assistant> => {
+  return request.postMultiPart(
+    endpoints.azureAgents({
+      isAvatar: true,
+      path: `${data.assistant_id}/avatar`,
+      options: { model: data.model, endpoint: data.endpoint },
+    }),
+    data.formData,
+  );
+};
+
 export const uploadAssistantAvatar = (data: m.AssistantAvatarVariables): Promise<a.Assistant> => {
   return request.postMultiPart(
     endpoints.assistants({

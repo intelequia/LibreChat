@@ -68,14 +68,6 @@ router.delete('/:id', controllers.deleteAssistant);
  */
 router.get('/', controllers.listAssistants);
 
-/**
- * Uploads and updates an avatar for a specific assistant.
- * @route POST /assistants/:assistant_id/avatar/
- * @param {string} req.params.assistant_id - The ID of the assistant.
- * @param {Express.Multer.File} req.file - The avatar image file.
- * @param {string} [req.body.metadata] - Optional metadata for the assistant's avatar.
- * @returns {Object} 200 - success response - application/json
- */
-avatar.post('/:assistant_id/avatar/', controllers.uploadAssistantAvatar);
+
 
 module.exports = { v1: router, avatar };
