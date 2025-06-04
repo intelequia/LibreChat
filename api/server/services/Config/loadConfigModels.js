@@ -1,4 +1,4 @@
-const { EModelEndpoint, extractEnvVariable } = require('librechat-data-provider');
+const { EModelEndpoint, extractEnvVariable, defaultModels } = require('librechat-data-provider');
 const { isUserProvided, normalizeEndpointName } = require('~/server/utils');
 const { fetchModels } = require('~/server/services/ModelService');
 const { getCustomConfig } = require('./getCustomConfig');
@@ -19,6 +19,7 @@ async function loadConfigModels(req) {
   const modelsConfig = {};
   const azureEndpoint = endpoints[EModelEndpoint.azureOpenAI];
   const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
+
   const { modelNames } = azureConfig ?? {};
 
   if (modelNames && azureEndpoint) {
@@ -30,7 +31,15 @@ async function loadConfigModels(req) {
   }
 
   if (azureEndpoint?.assistants && azureConfig.assistantModels) {
-    modelsConfig[EModelEndpoint.azureAssistants] = azureConfig.assistantModels;
+    const defaultAssistantModels = defaultModels[EModelEndpoint.azureAssistants] || [];
+    modelsConfig[EModelEndpoint.azureAssistants] = azureConfig.assistantModels.filter(
+      (model) => defaultAssistantModels.includes(model),
+    );
+
+    const defaultAzureAgentModels = defaultModels[EModelEndpoint.azureAgents] || [];
+    modelsConfig[EModelEndpoint.azureAgents] = azureConfig.assistantModels.filter(
+      (model) => defaultAzureAgentModels.includes(model),
+    );
   }
 
   if (!Array.isArray(endpoints[EModelEndpoint.custom])) {

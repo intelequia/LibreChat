@@ -195,7 +195,9 @@ const getOpenAIModels = async (opts) => {
     models = defaultModels[EModelEndpoint.assistants];
   } else if (opts.azure) {
     models = defaultModels[EModelEndpoint.azureAssistants];
-  }
+  } else if (opts.azureAgents) {
+    models = defaultModels[EModelEndpoint.azureAgents];
+  } 
 
   if (opts.plugins) {
     models = models.filter(
