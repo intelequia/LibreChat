@@ -175,6 +175,12 @@ export const createAssistant = ({
   return request.post(endpoints.assistants({ version }), data);
 };
 
+export const createAzureAgent = ({
+  ...data
+}: a.AssistantCreateParams): Promise<a.Assistant> => {
+  return request.post(endpoints.azureAgents({}), data);
+};
+
 export const getAssistantById = ({
   endpoint,
   assistant_id,
@@ -190,6 +196,21 @@ export const getAssistantById = ({
       endpoint,
       version,
     }),
+  );
+};
+
+export const updateAzureAgent = ({
+  assistant_id,
+  data,
+}: {
+  assistant_id: string;
+  data: a.AssistantUpdateParams;
+}): Promise<a.Assistant> => {
+  return request.patch(
+    endpoints.azureAgents({
+      path: assistant_id,
+    }),
+    data,
   );
 };
 
@@ -222,6 +243,19 @@ export const deleteAssistant = ({
       path: assistant_id,
       options: { model, endpoint },
       version,
+    }),
+  );
+};
+
+export const deleteAzureAgent = ({
+  assistant_id,
+  model,
+  endpoint,
+}: m.DeleteAssistantBody ): Promise<void> => {
+  return request.delete(
+    endpoints.azureAgents({
+      path: assistant_id,
+      options: { model, endpoint },
     }),
   );
 };

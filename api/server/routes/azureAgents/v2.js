@@ -1,6 +1,6 @@
 const express = require('express');
-const v1 = require('~/server/controllers/assistants/v1');
-const v2 = require('~/server/controllers/assistants/v2');
+const v2 = require('~/server/controllers/azureAgents/v2');
+
 const documents = require('./documents');
 const actions = require('./actions');
 const tools = require('./tools');
@@ -33,7 +33,7 @@ router.use('/documents', documents);
  * @param {AssistantCreateParams} req.body - The assistant creation parameters.
  * @returns {Assistant} 201 - success response - application/json
  */
-router.post('/', v2.createAssistant);
+router.post('/', v2.createAzureAgent);
 
 /**
  * Retrieves an assistant.
@@ -41,7 +41,7 @@ router.post('/', v2.createAssistant);
  * @param {string} req.params.id - Assistant identifier.
  * @returns {Assistant} 200 - success response - application/json
  */
-router.get('/:id', v1.retrieveAssistant);
+// router.get('/:id', v2.retrieveAssistant);
 
 /**
  * Modifies an assistant.
@@ -58,7 +58,7 @@ router.patch('/:id', v2.patchAssistant);
  * @param {string} req.params.id - Assistant identifier.
  * @returns {Assistant} 200 - success response - application/json
  */
-router.delete('/:id', v1.deleteAssistant);
+router.delete('/:id', v2.deleteAzureAgent);
 
 /**
  * Returns a list of assistants.
@@ -66,7 +66,7 @@ router.delete('/:id', v1.deleteAssistant);
  * @param {AssistantListParams} req.query - The assistant list parameters for pagination and sorting.
  * @returns {AssistantListResponse} 200 - success response - application/json
  */
-router.get('/', v1.listAssistants);
+// router.get('/', v2.listAssistants);
 
 /**
  * Uploads and updates an avatar for a specific assistant.
@@ -76,6 +76,6 @@ router.get('/', v1.listAssistants);
  * @param {string} [req.body.metadata] - Optional metadata for the assistant's avatar.
  * @returns {Object} 200 - success response - application/json
  */
-router.post('/avatar/:assistant_id', v1.uploadAssistantAvatar);
+// router.post('/avatar/:assistant_id', v2.uploadAssistantAvatar);
 
 module.exports = router;
