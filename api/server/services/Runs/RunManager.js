@@ -83,7 +83,7 @@ function getAzureAgentDetailsSignature(details) {
   if (details.type === 'message_creation') {
     return `${details.type}-${details.messageCreation.messageId}`;
   } else if (details.type === 'tool_calls') {
-    const toolCallsSignature = details.tool_calls.map(getToolCallSignature).join('|');
+    const toolCallsSignature = details.toolCalls.map(getToolCallSignature).join('|');
     return `${details.type}-${toolCallsSignature}`;
   }
   return 'unknown-type';
@@ -187,9 +187,8 @@ class RunManager {
    * @param {boolean} [params.final] - The end of the run polling loop, due to `requires_action`, `cancelling`, `cancelled`, `failed`, `completed`, or `expired` statuses.
    */
   async fetchAzureAgentRunSteps({ azureAgentClient, thread_id, run_id, runStatus, final = false }) {
-
     try{
-      const { data: _steps } = await azureAgentClient.agents.listRunSteps(thread_id, run_id)
+      let { data: _steps } = await azureAgentClient.agents.listRunSteps(thread_id, run_id)
 
       const steps = _steps.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 

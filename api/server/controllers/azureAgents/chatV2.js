@@ -427,7 +427,7 @@ const chatV2 = async (req, res) => {
       return res.end();
     }
 
-    if (response.run.status === RunStatus.IN_PROGRESS) {
+    if (response.run.status === RunStatus.IN_PROGRESS || response.run.status === RunStatus.REQUIRES_ACTION ) {
       processRun(true);
     }
 
@@ -461,7 +461,7 @@ const chatV2 = async (req, res) => {
     }
     await saveAssistantMessage(req, { ...responseMessage, model });
 
-    if (parentMessageId === Constants.NO_PARENT && !_thread_id) {
+    if (parentMessageId === Constants.NO_PARENT && !thread_id) {
       addTitle(req, {
         text,
         responseText: response.text,
@@ -479,7 +479,9 @@ const chatV2 = async (req, res) => {
 
     if (!response.run.usage) {
       await sleep(3000);
-      completedRun = await azureAgentClient.beta.threads.runs.retrieve(thread_id, response.run.id);
+
+      completedRun = await azureAgentClient.agents.getRun(thread_id, run_id);
+      // completedRun = await azureAgentClient.beta.threads.runs.retrieve(thread_id, response.run.id);
       if (completedRun.usage) {
         await recordUsage({
           ...completedRun.usage,

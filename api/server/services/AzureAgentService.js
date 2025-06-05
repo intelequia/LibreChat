@@ -180,9 +180,9 @@ function createInProgressHandler(azureAgentClient, thread_id, messages) {
    */
   async function in_progress({ step }) {
     if (step.type === StepTypes.TOOL_CALLS) {
-      const { tool_calls } = step.step_details;
+      const { toolCalls } = step.stepDetails;
 
-      for (const _toolCall of tool_calls) {
+      for (const _toolCall of toolCalls) {
         /** @type {StepToolCall} */
         const toolCall = _toolCall;
         const previousCall = azureAgentClient.seenToolCalls.get(toolCall.id);
@@ -388,7 +388,6 @@ async function runAssistant({
     },
   });
 
-  const { endpoint = EModelEndpoint.azureAssistants } = azureAgentClient.req.body;
   /** @type {TCustomConfig.endpoints.assistants} */
   const assistantsEndpointConfig = azureAgentClient.req.app.locals?.[EModelEndpoint.azureAssistants] ?? {};
   let { pollIntervalMs, timeoutMs } = assistantsEndpointConfig;
@@ -402,7 +401,7 @@ async function runAssistant({
     timeout: timeoutMs,
   });
 
-  if (!run.required_action) {
+  if (!run.requiredAction) {
     // const { messages: sortedMessages, text } = await processMessages(azureAgentClient, messages);
     // return { run, steps, messages: sortedMessages, text };
     const sortedMessages = messages.sort((a, b) => a.created_at - b.created_at);
@@ -415,9 +414,9 @@ async function runAssistant({
     };
   }
 
-  const { submit_tool_outputs } = run.required_action;
+  const { submitToolOutputs } = run.requiredAction;
 
-  const actions = submit_tool_outputs.tool_calls.map((item) => {
+  const actions = submitToolOutputs.toolCalls.map((item) => {
     const functionCall = item.function;
     const args = JSON.parse(functionCall.arguments);
 
@@ -450,9 +449,21 @@ async function runAssistant({
     };
   });
 
-  const outputs = await processRequiredActions(azureAgentClient, actions);
+  let outputs = await processRequiredActions(azureAgentClient, actions);
+  
+  // Transform property names in each tool output
+  if (outputs && outputs.tool_outputs && Array.isArray(outputs.tool_outputs)) {
+    outputs.tool_outputs = outputs.tool_outputs.map(output => {
+      // Create a new object with the toolCallId property instead of tool_call_id
+      const transformedOutput = {
+        toolCallId: output.tool_call_id,
+        output: output.output
+      };
+      return transformedOutput;
+    });
+  }
 
-  const toolRun = await azureAgentClient.beta.threads.runs.submitToolOutputs(run.thread_id, run.id, outputs);
+  const toolRun = await azureAgentClient.agents.submitToolOutputsToRun(run.threadId, run.id, outputs.tool_outputs);
 
   // Recursive call with accumulated steps and messages
   return await runAssistant({
