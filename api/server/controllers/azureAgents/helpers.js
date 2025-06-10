@@ -263,13 +263,15 @@ const listAgentsForAzure = async ({ req, res, version, azureConfig = {}, query }
       return { ...assistant, model: firstModel };
     }),
   );
-
+  const uniqueData = data.filter((item, index, self) =>
+    index === self.findIndex(obj => obj.id === item.id)
+  );
   return {
-    first_id: data[0]?.id,
-    last_id: data[data.length - 1]?.id,
+    first_id: uniqueData[0]?.id,
+    last_id: uniqueData[uniqueData.length - 1]?.id,
     object: 'list',
     has_more: false,
-    data,
+    data:uniqueData,
   };
 };
 
