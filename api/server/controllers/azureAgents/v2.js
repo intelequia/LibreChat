@@ -4,9 +4,10 @@ const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
 const { validateAndUpdateTool,deleteAssistantActions } = require('~/server/services/ActionService');
 const { updateAssistantDoc } = require('~/models/Assistant');
 const { manifestToolMap } = require('~/app/clients/tools');
-const { getOpenAIClient } = require('./helpers');
+const { getOpenAIClient, fetchAssistants } = require('./helpers');
 const { logger } = require('~/config');
 const { uploadImageBuffer, filterFile } = require('~/server/services/Files/process');
+const { SaveFunctionsInCache } = require('~/utils');
 
 /**
  * Create an assistant.
@@ -62,8 +63,7 @@ const createAzureAgent = async (req, res) => {
       endpoint,
     };
 
-    const azureAgent = await azureAgentClient.agents.createAgent(assistantData.model,assistantData);
-
+    const azureAgent = await azureAgentClient.createAgent(assistantData.model,assistantData);
     const createData = { user: req.user.id };
     if (conversation_starters) {
       createData.conversation_starters = conversation_starters;
@@ -192,7 +192,7 @@ const updateAzureAgent = async ({ req, azureAgentClient, assistant_id, updateDat
     updateData.model = openai.locals.azureOptions.azureOpenAIApiDeploymentName;
   }
 
-  const azureAgent = azureAgentClient.agents.updateAgent(assistant_id, updateData);
+  const azureAgent = azureAgentClient.updateAgent(assistant_id, updateData);
   if (conversation_starters) {
     azureAgent.conversation_starters = conversation_starters;
   }
@@ -311,7 +311,7 @@ const deleteAzureAgent = async (req, res) => {
      * @Author Enrique M. Pedroza Castillo
      */
     global.appInsights.trackEvent({
-      name: 'AssistantDeleted',
+      name: 'AzureAgentDeleted',
       properties: {
         userId: req.user.id,
         userEmail: req.user.email,
@@ -320,7 +320,7 @@ const deleteAzureAgent = async (req, res) => {
     });
 
     const assistant_id = req.params.id;
-    const deletionStatus = await azureAgentClient.agents.deleteAgent(assistant_id);
+    const deletionStatus = await azureAgentClient.deleteAgent(assistant_id);
     if (deletionStatus?.deleted) {
       await deleteAssistantActions({ req, assistant_id });
     }
@@ -363,7 +363,7 @@ const uploadAzureAgentAvatar = async (req, res) => {
     let _metadata;
 
     try {
-      const assistant = await azureAgentClient.agents.getAgent(assistant_id);
+      const assistant = await azureAgentClient.getAgent(assistant_id);
       if (assistant) {
         _metadata = assistant.metadata;
       }
@@ -401,7 +401,7 @@ const uploadAzureAgentAvatar = async (req, res) => {
         },
       ),
     );
-    promises.push(azureAgentClient.agents.updateAgent(assistant_id, { metadata }));
+    promises.push(azureAgentClient.updateAgent(assistant_id, { metadata }));
 
     const resolved = await Promise.all(promises);
     res.status(201).json(resolved[1]);
@@ -419,6 +419,30 @@ const uploadAzureAgentAvatar = async (req, res) => {
   }
 };
 
+/**
+ * Returns a list of assistants.
+ * @route GET /assistants
+ * @param {object} req - Express Request
+ * @param {AssistantListParams} req.query - The assistant list parameters for pagination and sorting.
+ * @returns {AssistantListResponse} 200 - success response - application/json
+ */
+const listAssistants = async (req, res) => {
+  try {
+    const body = await fetchAssistants({ req, res });
+
+    /**
+     * saves functions specifications 
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
+    SaveFunctionsInCache(body.data);
+
+    res.json(body);
+  } catch (error) {
+    logger.error('[/assistants] Error listing assistants', error);
+    res.status(500).json({ message: 'Error listing assistants' });
+  }
+};
 
 module.exports = {
   patchAssistant,
@@ -427,5 +451,6 @@ module.exports = {
   addResourceFileId,
   deleteResourceFileId,
   deleteAzureAgent,
-  uploadAzureAgentAvatar
+  uploadAzureAgentAvatar,
+  listAssistants
 };

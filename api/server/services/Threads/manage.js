@@ -96,10 +96,10 @@ async function initAzureAgentThread({ azureAgentClient, body, thread_id: _thread
     }
   })
   if (_thread_id) {
-    const message = await azureAgentClient.agents.createMessage(_thread_id, body.messages[0]);
+    const message = await azureAgentClient.messages.create(_thread_id, body.messages[0].role, body.messages[0].content);
     messages.push(message);
   } else {
-    thread = await azureAgentClient.agents.createThread(body);
+    thread = await azureAgentClient.threads.create(body);
   }
 
   const thread_id = _thread_id || thread.id;
@@ -279,8 +279,10 @@ async function addThreadMetadata({ openai, thread_id, messageId, messages }) {
 async function addAzureAgentThreadMetadata({ azureAgentClient, thread_id, messageId, messages }) {
   const promises = [];
   for (const message of messages) {
+
+
     promises.push(
-      azureAgentClient.agents.updateMessage(thread_id, message.id, {
+      azureAgentClient.messages.update(thread_id, message.id, {
         metadata: {
           messageId,
         },

@@ -282,8 +282,11 @@ function createInProgressHandler(azureAgentClient, thread_id, messages) {
       azureAgentClient.seenCompletedMessages.add(messageId);
       
       let message;
-      const messageList = await azureAgentClient.agents.listMessages(thread_id, messageId);
-      message = messageList.data.find(msg => msg.id === messageId )
+      let messageList = [] ;
+      for await (const message of azureAgentClient.messages.list(thread_id, messageId)){
+        messageList.push(message);
+      }
+      message = messageList.find(msg => msg.id === messageId )
       
       if (!message?.content?.length) {
         return;
@@ -402,8 +405,6 @@ async function runAssistant({
   });
 
   if (!run.requiredAction) {
-    // const { messages: sortedMessages, text } = await processMessages(azureAgentClient, messages);
-    // return { run, steps, messages: sortedMessages, text };
     const sortedMessages = messages.sort((a, b) => a.created_at - b.created_at);
     return {
       run,
@@ -463,8 +464,8 @@ async function runAssistant({
     });
   }
 
-  const toolRun = await azureAgentClient.agents.submitToolOutputsToRun(run.threadId, run.id, outputs.tool_outputs);
-
+  // const toolRun = await azureAgentClient.agents.submitToolOutputsToRun(run.threadId, run.id, outputs.tool_outputs);
+  const toolRun = await azureAgentClient.runs.submitToolOutputs(run.threadId, run.id, outputs.tool_outputs);
   // Recursive call with accumulated steps and messages
   return await runAssistant({
     userEmail,

@@ -461,7 +461,7 @@ const chatV2 = async (req, res) => {
     }
     await saveAssistantMessage(req, { ...responseMessage, model });
 
-    if (parentMessageId === Constants.NO_PARENT && !thread_id) {
+    if (parentMessageId === Constants.NO_PARENT) {
       addTitle(req, {
         text,
         responseText: response.text,
@@ -481,7 +481,6 @@ const chatV2 = async (req, res) => {
       await sleep(3000);
 
       completedRun = await azureAgentClient.agents.getRun(thread_id, run_id);
-      // completedRun = await azureAgentClient.beta.threads.runs.retrieve(thread_id, response.run.id);
       if (completedRun.usage) {
         await recordUsage({
           ...completedRun.usage,

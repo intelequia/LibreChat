@@ -1,4 +1,6 @@
-const {AIProjectsClient} = require ('@azure/ai-projects')
+const {AIProjectClient} = require ('@azure/ai-projects')
+const { AgentsClient } = require ("@azure/ai-agents");
+
 const {
   EModelEndpoint,
 } = require('librechat-data-provider');
@@ -48,14 +50,14 @@ class Files {
   }
 }
 
-const initializeClient = async ({ req, res, version, endpointOption, initAppClient = false }) => {
+const initializeClient = async ({ req, res, initAppClient = false }) => {
 
 
-  const {AZURE_AI_PROJECTS_CONNECTION_STRING} = process.env;
+  const {AZURE_AI_PROJECT_ENDPOINT} = process.env;
 
-  const usersProvidesProjectConnectionString = isUserProvided(AZURE_AI_PROJECTS_CONNECTION_STRING);
+  const usersProvidesProjectConnectionString = isUserProvided(AZURE_AI_PROJECT_ENDPOINT);
 
-  if (!AZURE_AI_PROJECTS_CONNECTION_STRING && !usersProvidesProjectConnectionString) {
+  if (!AZURE_AI_PROJECT_ENDPOINT && !usersProvidesProjectConnectionString) {
     throw new Error('Azure Agents Project Connection String is not provided. Please provide it again.');
   }
 
@@ -80,7 +82,8 @@ const initializeClient = async ({ req, res, version, endpointOption, initAppClie
   /** @type {TAzureConfig | undefined} */
   const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
 
-  const client = AIProjectsClient.fromConnectionString( AZURE_AI_PROJECTS_CONNECTION_STRING, credentials)
+  const client = new AgentsClient(AZURE_AI_PROJECT_ENDPOINT, credentials);
+
   client.options = {}
 
   if(azureConfig && azureConfig.assistants){
@@ -92,7 +95,7 @@ const initializeClient = async ({ req, res, version, endpointOption, initAppClie
     }
   }
   
-  client.agents.files = new Files(client)
+  client.files = new Files(client)
 
   client.req = req;
   client.res = res;
@@ -162,170 +165,5 @@ const titleConvo = async ({ text, conversationId, responseText = '', model, req 
   }
 
 }
-
-// /**
-//    * Generates a concise title for a conversation based on the user's input text and response.
-//    * Uses either specified method or starts with the OpenAI `functions` method (using LangChain).
-//    * If the `functions` method fails, it falls back to the `completion` method,
-//    * which involves sending a chat completion request with specific instructions for title generation.
-//    *
-//    * @param {Object} params - The parameters for the conversation title generation.
-//    * @param {string} params.text - The user's input.
-//    * @param {string} [params.conversationId] - The current conversationId, if not already defined on client initialization.
-//    * @param {string} [params.responseText=''] - The AI's immediate response to the user.
-//    *
-//    * @returns {Promise<string | 'New Chat'>} A promise that resolves to the generated conversation title.
-//    *                            In case of failure, it will return the default title, "New Chat".
-//    */
-//   async function titleConvo({ text, conversationId, responseText = '' }) {
-//     this.conversationId = conversationId;
-
-//     if (this.options.attachments) {
-//       delete this.options.attachments;
-//     }
-
-//     let title = 'New Chat';
-//     const convo = `||>User:
-// "${truncateText(text)}"
-// ||>Response:
-// "${JSON.stringify(truncateText(responseText))}"`;
-
-//     const { OPENAI_TITLE_MODEL } = process.env ?? {};
-
-//     let model = this.options.titleModel ?? OPENAI_TITLE_MODEL ?? openAISettings.model.default;
-//     if (model === Constants.CURRENT_MODEL) {
-//       model = this.modelOptions.model;
-//     }
-
-//     const modelOptions = {
-//       // TODO: remove the gpt fallback and make it specific to endpoint
-//       model,
-//       temperature: 0.2,
-//       presence_penalty: 0,
-//       frequency_penalty: 0,
-//       max_tokens: 16,
-//     };
-
-//     /** @type {TAzureConfig | undefined} */
-//     const azureConfig = this.options?.req?.app?.locals?.[EModelEndpoint.azureOpenAI];
-
-//     const resetTitleOptions = !!(
-//       (this.azure && azureConfig) ||
-//       (azureConfig && this.options.endpoint === EModelEndpoint.azureOpenAI)
-//     );
-
-//     if (resetTitleOptions) {
-//       const { modelGroupMap, groupMap } = azureConfig;
-//       const {
-//         azureOptions,
-//         baseURL,
-//         headers = {},
-//         serverless,
-//       } = mapModelToAzureConfig({
-//         modelName: modelOptions.model,
-//         modelGroupMap,
-//         groupMap,
-//       });
-
-//       this.options.headers = resolveHeaders(headers);
-//       this.options.reverseProxyUrl = baseURL ?? null;
-//       this.langchainProxy = extractBaseURL(this.options.reverseProxyUrl);
-//       this.apiKey = azureOptions.azureOpenAIApiKey;
-
-//       const groupName = modelGroupMap[modelOptions.model].group;
-//       this.options.addParams = azureConfig.groupMap[groupName].addParams;
-//       this.options.dropParams = azureConfig.groupMap[groupName].dropParams;
-//       this.options.forcePrompt = azureConfig.groupMap[groupName].forcePrompt;
-//       this.azure = !serverless && azureOptions;
-//       if (serverless === true) {
-//         this.options.defaultQuery = azureOptions.azureOpenAIApiVersion
-//           ? { 'api-version': azureOptions.azureOpenAIApiVersion }
-//           : undefined;
-//         this.options.headers['api-key'] = this.apiKey;
-//       }
-//     }
-
-//     const titleChatCompletion = async () => {
-//       try {
-//         modelOptions.model = model;
-
-//         if (this.azure) {
-//           modelOptions.model = process.env.AZURE_OPENAI_DEFAULT_MODEL ?? modelOptions.model;
-//           this.azureEndpoint = genAzureChatCompletion(this.azure, modelOptions.model, this);
-//         }
-
-//         const instructionsPayload = [
-//           {
-//             role: this.options.titleMessageRole ?? (this.isOllama ? 'user' : 'system'),
-//             content: `Please generate ${titleInstruction}
-
-// ${convo}
-
-// ||>Title:`,
-//           },
-//         ];
-
-//         const promptTokens = this.getTokenCountForMessage(instructionsPayload[0]);
-
-//         let useChatCompletion = true;
-
-//         if (this.options.reverseProxyUrl === CohereConstants.API_URL) {
-//           useChatCompletion = false;
-//         }
-
-//         title = (
-//           await this.sendPayload(instructionsPayload, {
-//             modelOptions,
-//             useChatCompletion,
-//             context: 'title',
-//           })
-//         ).replaceAll('"', '');
-
-//         const completionTokens = this.getTokenCount(title);
-
-//         this.recordTokenUsage({ promptTokens, completionTokens, context: 'title' });
-//       } catch (e) {
-//         logger.error(
-//           '[OpenAIClient] There was an issue generating the title with the completion method',
-//           e,
-//         );
-//       }
-//     };
-
-//     if (this.options.titleMethod === 'completion') {
-//       await titleChatCompletion();
-//       logger.debug('[OpenAIClient] Convo Title: ' + title);
-//       return title;
-//     }
-
-//     try {
-//       this.abortController = new AbortController();
-//       const llm = this.initializeLLM({
-//         ...modelOptions,
-//         conversationId,
-//         context: 'title',
-//         tokenBuffer: 150,
-//       });
-
-//       title = await runTitleChain({ llm, text, convo, signal: this.abortController.signal });
-//     } catch (e) {
-//       if (e?.message?.toLowerCase()?.includes('abort')) {
-//         logger.debug('[OpenAIClient] Aborted title generation');
-//         return;
-//       }
-//       logger.error(
-//         '[OpenAIClient] There was an issue generating title with LangChain, trying completion method...',
-//         e,
-//       );
-
-//       await titleChatCompletion();
-//     }
-
-//     logger.debug('[OpenAIClient] Convo Title: ' + title);
-//     return title;
-//   }
-
-
-
 
 module.exports = initializeClient;

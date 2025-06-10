@@ -188,7 +188,10 @@ class RunManager {
    */
   async fetchAzureAgentRunSteps({ azureAgentClient, thread_id, run_id, runStatus, final = false }) {
     try{
-      let { data: _steps } = await azureAgentClient.agents.listRunSteps(thread_id, run_id)
+      let _steps = []
+      for await (const step of azureAgentClient.runSteps.list(thread_id, run_id)){
+        _steps.push(step);
+      }
 
       const steps = _steps.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 

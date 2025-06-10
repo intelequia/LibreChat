@@ -69,7 +69,7 @@ async function createRun({ openai, thread_id, body }) {
  * @return {Promise<Run>} A promise that resolves to the created run object.
  */
 async function createAzureAgentRun({ azureAgentClient, thread_id, body }) {
-  return await azureAgentClient.agents.createRun(thread_id, body.assistant_id);
+  return await azureAgentClient.runs.create(thread_id, body.assistant_id);
 }
 
 /**
@@ -115,7 +115,7 @@ async function waitForAzureAgentRun({
     while (!updatedRun && attempt < maxRetries) {
       try {
         updatedRun = await withTimeout(
-          azureAgentClient.agents.getRun(thread_id, run_id),
+          azureAgentClient.runs.get(thread_id, run_id),
           raceTimeoutMs,
           `[heartbeat ${i}] ${runIdLog} | Run retrieval timed out after ${raceTimeoutMs} ms. Trying again (attempt ${
             attempt + 1

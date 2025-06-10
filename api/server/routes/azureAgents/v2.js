@@ -66,7 +66,7 @@ router.delete('/:id', v2.deleteAzureAgent);
  * @param {AssistantListParams} req.query - The assistant list parameters for pagination and sorting.
  * @returns {AssistantListResponse} 200 - success response - application/json
  */
-// router.get('/', v2.listAssistants);
+router.get('/', v2.listAssistants);
 
 /**
  * Uploads and updates an avatar for a specific assistant.

@@ -82,26 +82,24 @@ const listAllAzureAgents = async ({ req, res, version, query }) => {
   let hasMore = true;
 
   if (global.myCache.get("permissions")) {
-    const response = await azureAgentClient.agents.listAgents({
-      ...query,
-      after: afterToken,
-    });
+    let agents = [];
 
-    const { data } = response;
+    for await (const agent of azureAgentClient.listAgents()){
+      agents.push(agent);
+    }
 
-    const allowedAzureAgents = await verifyAssistantPermissions(req.user._id.toString(), data);
+    const allowedAzureAgents = await verifyAssistantPermissions(req.user._id.toString(), agents);
 
     allowedAzureAgents.forEach((azureAgent) => allAzureAgents.push(azureAgent));
   } else {
     while (hasMore) {
-      const response = await azureAgentClient.agents.listAgents({
-        ...query,
-        after: afterToken,
-      });
+      let agents = [];
 
-      const { body } = response;
+      for await (const agent of azureAgentClient.listAgents()){
+        agents.push(agent);
+      }
 
-      allAzureAgents.push(...data);
+      allAzureAgents.push(agents);
       hasMore = body.has_more;
 
       if (!first_id) {
