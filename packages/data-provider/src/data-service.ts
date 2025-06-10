@@ -272,6 +272,16 @@ export const listAssistants = (
   );
 };
 
+export const listAzureAgents = (
+  params: a.AssistantListParams,
+): Promise<a.AssistantListResponse> => {
+  return request.get(
+    endpoints.azureAgents({
+      options: params,
+    }),
+  );
+};
+
 export function getAssistantDocs({
   endpoint,
   version,
