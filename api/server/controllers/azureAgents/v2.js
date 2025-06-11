@@ -173,7 +173,7 @@ const updateAzureAgent = async ({ req, azureAgentClient, assistant_id, updateDat
   }
 
   if (hasFileSearch && !updateData.toolResources) {
-    const azureAgent = await azureAgentClient.agents.getAgent(assistant_id);
+    const azureAgent = await azureAgentClient.getAgent(assistant_id);
     updateData.toolResources = azureAgent.toolResources ?? null;
   }
 

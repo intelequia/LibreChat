@@ -112,7 +112,7 @@ const Part = memo(
           />
         );
       } else if (toolCall.type === ToolCallTypes.CODE_INTERPRETER) {
-        const code_interpreter = toolCall[ToolCallTypes.CODE_INTERPRETER];
+        const code_interpreter = toolCall[ToolCallTypes.CODE_INTERPRETER] || toolCall["codeInterpreter"];
         return (
           <CodeAnalyze
             initialProgress={toolCall.progress ?? 0.1}

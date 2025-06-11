@@ -214,7 +214,7 @@ function createInProgressHandler(azureAgentClient, thread_id, messages) {
           toolCall.type === ToolCallTypes.CODE_INTERPRETER &&
           step.status === StepStatus.COMPLETED
         ) {
-          const { outputs } = toolCall[toolCall.type];
+          const { outputs } = toolCall.codeInterpreter;
 
           for (const output of outputs) {
             if (output.type !== 'image') {
