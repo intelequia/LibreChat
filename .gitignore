@@ -52,8 +52,9 @@ bower_components/
 *.d.ts
 !vite-env.d.ts
 
-# Cline
+# AI
 .clineignore
+.cursor
 
 # Floobits
 .floo
@@ -116,5 +117,13 @@ release/
 build.sh
 /.vs
 configFiles.zip
+
+# Helm
+helm/librechat/Chart.lock
+helm/**/charts/
+helm/**/.values.yaml
+
 !/client/src/@types/i18next.d.ts
-Azure Agents Files Modified
+
+# SAML Idp cert
+*.cert

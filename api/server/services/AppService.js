@@ -1,29 +1,37 @@
 const {
   FileSources,
-  EModelEndpoint,
   loadOCRConfig,
   processMCPEnv,
+  EModelEndpoint,
+  loadMemoryConfig,
   getConfigDefaults,
+  loadWebSearchConfig,
 } = require('librechat-data-provider');
-const { checkVariables, checkHealth, checkConfig, checkAzureVariables } = require('./start/checks');
+const { agentsConfigSetup } = require('@librechat/api');
+const {
+  checkHealth,
+  checkConfig,
+  checkVariables,
+  checkAzureVariables,
+  checkWebSearchConfig,
+} = require('./start/checks');
 const { azureAssistantsDefaults, assistantsConfigSetup } = require('./start/assistants');
 const { initializeAzureBlobService } = require('./Files/Azure/initialize');
 const { initializeFirebase } = require('./Files/Firebase/initialize');
 const loadCustomConfig = require('./Config/loadCustomConfig');
 const handleRateLimits = require('./Config/handleRateLimits');
 const { loadDefaultInterface } = require('./start/interface');
+const { loadTurnstileConfig } = require('./start/turnstile');
 const { azureConfigSetup } = require('./start/azureOpenAI');
 const { processModelSpecs } = require('./start/modelSpecs');
 const { initializeS3 } = require('./Files/S3/initialize');
 const { loadAndFormatTools } = require('./ToolService');
-const { agentsConfigSetup } = require('./start/agents');
-const { initializeRoles } = require('~/models/Role');
 const { isEnabled } = require('~/server/utils');
+const { initializeRoles } = require('~/models');
 const { getMCPManager } = require('~/config');
 const paths = require('~/config/paths');
 
 /**
- *
  * Loads custom config and initializes app-wide variables.
  * @function AppService
  * @param {Express.Application} app - The Express application object.
@@ -35,6 +43,9 @@ const AppService = async (app) => {
   const configDefaults = getConfigDefaults();
 
   const ocr = loadOCRConfig(config.ocr);
+  const webSearch = loadWebSearchConfig(config.webSearch);
+  checkWebSearchConfig(webSearch);
+  const memory = loadMemoryConfig(config.memory);
   const filteredTools = config.filteredTools;
   const includedTools = config.includedTools;
   const fileStrategy = config.fileStrategy ?? configDefaults.fileStrategy;
@@ -74,10 +85,13 @@ const AppService = async (app) => {
   const socialLogins =
     config?.registration?.socialLogins ?? configDefaults?.registration?.socialLogins;
   const interfaceConfig = await loadDefaultInterface(config, configDefaults);
+  const turnstileConfig = loadTurnstileConfig(config, configDefaults);
 
   const defaultLocals = {
     ocr,
     paths,
+    memory,
+    webSearch,
     fileStrategy,
     socialLogins,
     filteredTools,
@@ -85,11 +99,17 @@ const AppService = async (app) => {
     availableTools,
     imageOutputType,
     interfaceConfig,
+    turnstileConfig,
     balance,
   };
 
+  const agentsDefaults = agentsConfigSetup(config);
+
   if (!Object.keys(config).length) {
-    app.locals = defaultLocals;
+    app.locals = {
+      ...defaultLocals,
+      [EModelEndpoint.agents]: agentsDefaults,
+    };
     return;
   }
 
@@ -124,9 +144,7 @@ const AppService = async (app) => {
     );
   }
 
-  if (endpoints?.[EModelEndpoint.agents]) {
-    endpointLocals[EModelEndpoint.agents] = agentsConfigSetup(config);
-  }
+  endpointLocals[EModelEndpoint.agents] = agentsConfigSetup(config, agentsDefaults);
 
   const endpointKeys = [
     EModelEndpoint.openAI,

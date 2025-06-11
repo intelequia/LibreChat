@@ -1,13 +1,17 @@
 const cookies = require('cookie');
 const jwt = require('jsonwebtoken');
+const openIdClient = require('openid-client');
+const { logger } = require('@librechat/data-schemas');
 const {
   registerUser,
   resetPassword,
   setAuthTokens,
   requestPasswordReset,
+  setOpenIDAuthTokens,
 } = require('~/server/services/AuthService');
-const { findSession, getUserById, deleteAllUserSessions } = require('~/models');
-const { logger } = require('~/config');
+const { findUser, getUserById, deleteAllUserSessions, findSession } = require('~/models');
+const { getOpenIdConfig } = require('~/strategies');
+const { isEnabled } = require('~/server/utils');
 
 const registrationController = async (req, res) => {
   try {
@@ -56,7 +60,9 @@ const resetPasswordController = async (req, res) => {
 const refreshController = async (req, res) => {
 
   const refreshToken = req.headers.cookie ? cookies.parse(req.headers.cookie).refreshToken : null;
-
+  const token_provider = req.headers.cookie
+    ? cookies.parse(req.headers.cookie).token_provider
+    : null;
   if (!refreshToken) {
     /**
        * Custom event to track when refresh token is not provided
@@ -72,7 +78,22 @@ const refreshController = async (req, res) => {
     });
     return res.status(200).send('Refresh token not provided');
   }
-
+  if (token_provider === 'openid' && isEnabled(process.env.OPENID_REUSE_TOKENS) === true) {
+    try {
+      const openIdConfig = getOpenIdConfig();
+      const tokenset = await openIdClient.refreshTokenGrant(openIdConfig, refreshToken);
+      const claims = tokenset.claims();
+      const user = await findUser({ email: claims.email });
+      if (!user) {
+        return res.status(401).redirect('/login');
+      }
+      const token = setOpenIDAuthTokens(tokenset, res);
+      return res.status(200).send({ token, user });
+    } catch (error) {
+      logger.error('[refreshController] OpenID token refresh error', error);
+      return res.status(403).send('Invalid OpenID refresh token');
+    }
+  }
   try {
     const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await getUserById(payload.id, '-password -__v -totpSecret');
@@ -101,7 +122,10 @@ const refreshController = async (req, res) => {
     }
 
     // Find the session with the hashed refresh token
-    const session = await findSession({ userId: userId, refreshToken: refreshToken });
+    const session = await findSession({
+      userId: userId,
+      refreshToken: refreshToken,
+    });
 
     if (session && session.expiration > new Date()) {
       const token = await setAuthTokens(userId, res, session._id);

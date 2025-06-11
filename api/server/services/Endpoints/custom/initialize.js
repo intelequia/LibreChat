@@ -6,10 +6,9 @@ const {
   extractEnvVariable,
 } = require('librechat-data-provider');
 const { Providers } = require('@librechat/agents');
+const { getOpenAIConfig, createHandleLLMNewToken } = require('@librechat/api');
 const { getUserKeyValues, checkUserKeyExpiry } = require('~/server/services/UserService');
-const { getLLMConfig } = require('~/server/services/Endpoints/openAI/llm');
 const { getCustomEndpointConfig } = require('~/server/services/Config');
-const { createHandleLLMNewToken } = require('~/app/clients/generators');
 const { fetchModels } = require('~/server/services/ModelService');
 const OpenAIClient = require('~/app/clients/OpenAIClient');
 const { isUserProvided } = require('~/server/utils');
@@ -105,6 +104,7 @@ const initializeClient = async ({ req, res, endpointOption, optionsOnly, overrid
     headers: resolvedHeaders,
     addParams: endpointConfig.addParams,
     dropParams: endpointConfig.dropParams,
+    customParams: endpointConfig.customParams,
     titleConvo: endpointConfig.titleConvo,
     titleModel: endpointConfig.titleModel,
     forcePrompt: endpointConfig.forcePrompt,
@@ -143,7 +143,7 @@ const initializeClient = async ({ req, res, endpointOption, optionsOnly, overrid
         clientOptions,
       );
       clientOptions.modelOptions.user = req.user.id;
-      const options = getLLMConfig(apiKey, clientOptions, endpoint);
+      const options = getOpenAIConfig(apiKey, clientOptions, endpoint);
       if (!customOptions.streamRate) {
         return options;
       }

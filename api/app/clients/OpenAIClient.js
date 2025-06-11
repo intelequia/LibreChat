@@ -2,6 +2,14 @@ const { OllamaClient } = require('./OllamaClient');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { SplitStreamHandler, CustomOpenAIClient: OpenAI } = require('@librechat/agents');
 const {
+  isEnabled,
+  Tokenizer,
+  createFetch,
+  constructAzureURL,
+  genAzureChatCompletion,
+  createStreamEventHandlers,
+} = require('@librechat/api');
+const {
   Constants,
   ImageDetail,
   ContentTypes,
@@ -17,23 +25,15 @@ const {
   mapModelToAzureConfig,
 } = require('librechat-data-provider');
 const {
-  extractBaseURL,
-  constructAzureURL,
-  getModelMaxTokens,
-  genAzureChatCompletion,
-  getModelMaxOutputTokens,
-} = require('~/utils');
-const {
   truncateText,
   formatMessage,
   CUT_OFF_PROMPT,
   titleInstruction,
   createContextHandlers,
 } = require('./prompts');
+const { extractBaseURL, getModelMaxTokens, getModelMaxOutputTokens } = require('~/utils');
 const { encodeAndFormat } = require('~/server/services/Files/images/encode');
-const { createFetch, createStreamEventHandlers } = require('./generators');
-const { addSpaceIfNeeded, isEnabled, sleep } = require('~/server/utils');
-const Tokenizer = require('~/server/services/Tokenizer');
+const { addSpaceIfNeeded, sleep } = require('~/server/utils');
 const { spendTokens } = require('~/models/spendTokens');
 const { handleOpenAIErrors } = require('./tools/util');
 const { createLLM, RunManager } = require('./llm');
@@ -1285,6 +1285,14 @@ ${convo}
         modelOptions.messages[0].role = 'user';
       }
 
+      if (
+        (this.options.endpoint === EModelEndpoint.openAI ||
+          this.options.endpoint === EModelEndpoint.azureOpenAI) &&
+        modelOptions.stream === true
+      ) {
+        modelOptions.stream_options = { include_usage: true };
+      }
+
       if (this.options.addParams && typeof this.options.addParams === 'object') {
         const addParams = { ...this.options.addParams };
         modelOptions = {
@@ -1387,12 +1395,6 @@ ${convo}
           ...modelOptions,
           stream: true,
         };
-        if (
-          this.options.endpoint === EModelEndpoint.openAI ||
-          this.options.endpoint === EModelEndpoint.azureOpenAI
-        ) {
-          params.stream_options = { include_usage: true };
-        }
         const stream = await openai.beta.chat.completions
           .stream(params)
           .on('abort', () => {

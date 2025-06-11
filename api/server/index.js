@@ -24,8 +24,9 @@ const passport = require('passport');
 const mongoSanitize = require('express-mongo-sanitize');
 const fs = require('fs');
 const cookieParser = require('cookie-parser');
+const { connectDb, indexSync } = require('~/db');
+
 const { jwtLogin, passportLogin } = require('~/strategies');
-const { connectDb, indexSync } = require('~/lib/db');
 const { isEnabled } = require('~/server/utils');
 const { ldapLogin } = require('~/strategies');
 const { logger } = require('~/config');
@@ -42,20 +43,25 @@ const {intelequiaConfigLoader} = require('~/utils');
 global.myCache = new NodeCache();
 const { PORT, HOST, ALLOW_SOCIAL_LOGIN, DISABLE_COMPRESSION, TRUST_PROXY } = process.env ?? {};
 
-const port = Number(PORT) || 3080;
+// Allow PORT=0 to be used for automatic free port assignment
+const port = isNaN(Number(PORT)) ? 3080 : Number(PORT);
 const host = HOST || 'localhost';
 const trusted_proxy = Number(TRUST_PROXY) || 1; /* trust first proxy by default */
+
+const app = express();
 
 const startServer = async () => {
   if (typeof Bun !== 'undefined') {
     axios.defaults.headers.common['Accept-Encoding'] = 'gzip';
   }
   await connectDb();
+
   logger.info('Connected to MongoDB');
   await indexSync();
 
-  const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', trusted_proxy);
+
   await AppService(app);
 
   const indexPath = path.join(app.locals.paths.dist, 'index.html');
@@ -67,28 +73,29 @@ const startServer = async () => {
   app.use(noIndex);
   app.use(errorController);
   app.use(express.json({ limit: '3mb' }));
-  app.use(mongoSanitize());
   app.use(express.urlencoded({ extended: true, limit: '3mb' }));
-  app.use(staticCache(app.locals.paths.dist));
-  app.use(staticCache(app.locals.paths.fonts));
-  app.use(staticCache(app.locals.paths.assets));
-  app.set('trust proxy', trusted_proxy);
+  app.use(mongoSanitize());
   app.use(cors());
   app.use(cookieParser());
 
   if (!isEnabled(DISABLE_COMPRESSION)) {
     app.use(compression());
+  } else {
+    console.warn('Response compression has been disabled via DISABLE_COMPRESSION.');
   }
 
+  // Serve static assets with aggressive caching
+  app.use(staticCache(app.locals.paths.dist));
+  app.use(staticCache(app.locals.paths.fonts));
+  app.use(staticCache(app.locals.paths.assets));
+
   if (!ALLOW_SOCIAL_LOGIN) {
-    console.warn(
-      'Social logins are disabled. Set Environment Variable "ALLOW_SOCIAL_LOGIN" to true to enable them.',
-    );
+    console.warn('Social logins are disabled. Set ALLOW_SOCIAL_LOGIN=true to enable them.');
   }
 
   /* OAUTH */
   app.use(passport.initialize());
-  passport.use(await jwtLogin());
+  passport.use(jwtLogin());
   passport.use(passportLogin());
 
   /* LDAP Auth */
@@ -97,7 +104,7 @@ const startServer = async () => {
   }
 
   if (isEnabled(ALLOW_SOCIAL_LOGIN)) {
-    configureSocialLogins(app);
+    await configureSocialLogins(app);
   }
 
   app.use('/oauth', routes.oauth);
@@ -129,7 +136,7 @@ const startServer = async () => {
   app.use('/api/agents', routes.agents);
   app.use('/api/banner', routes.banner);
   app.use('/api/bedrock', routes.bedrock);
-
+  app.use('/api/memories', routes.memories);
   app.use('/api/tags', routes.tags);
   
   /**
@@ -155,7 +162,7 @@ const startServer = async () => {
   });
 
   app.listen(port, host, () => {
-    if (host == '0.0.0.0') {
+    if (host === '0.0.0.0') {
       logger.info(
         `Server listening on all interfaces at port ${port}. Use http://localhost:${port} to access it`,
       );
@@ -203,3 +210,6 @@ process.on('uncaughtException', (err) => {
 
   process.exit(1);
 });
+
+// export app for easier testing purposes
+module.exports = app;

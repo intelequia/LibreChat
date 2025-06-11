@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { MessageSquareQuote, ArrowRightToLine, Settings2, Bookmark } from 'lucide-react';
+import { MessageSquareQuote, ArrowRightToLine, Settings2, Database, Bookmark } from 'lucide-react';
 import {
   isAssistantsEndpoint,
   isAgentsEndpoint,
@@ -12,6 +12,7 @@ import type { TInterfaceConfig, TEndpointsConfig } from 'librechat-data-provider
 import type { NavLink } from '~/common';
 import AgentPanelSwitch from '~/components/SidePanel/Agents/AgentPanelSwitch';
 import BookmarkPanel from '~/components/SidePanel/Bookmarks/BookmarkPanel';
+import MemoryViewer from '~/components/SidePanel/Memories/MemoryViewer';
 import PanelSwitch from '~/components/SidePanel/Builder/PanelSwitch';
 import PromptsAccordion from '~/components/Prompts/PromptsAccordion';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
@@ -53,6 +54,14 @@ export default function useSideNavLinks({
     permissionType: PermissionTypes.BOOKMARKS,
     permission: Permissions.USE,
   });
+  const hasAccessToMemories = useHasAccess({
+    permissionType: PermissionTypes.MEMORIES,
+    permission: Permissions.USE,
+  });
+  const hasAccessToReadMemories = useHasAccess({
+    permissionType: PermissionTypes.MEMORIES,
+    permission: Permissions.READ,
+  });
   const hasAccessToAgents = useHasAccess({
     permissionType: PermissionTypes.AGENTS,
     permission: Permissions.USE,
@@ -68,6 +77,15 @@ export default function useSideNavLinks({
 
     if (
       isAssistantsEndpoint(endpoint) &&
+      ((endpoint === EModelEndpoint.assistants &&
+        endpointsConfig?.[EModelEndpoint.assistants] &&
+        endpointsConfig[EModelEndpoint.assistants].disableBuilder !== true) ||
+        (endpoint === EModelEndpoint.azureAssistants &&
+          endpointsConfig?.[EModelEndpoint.azureAssistants] &&
+          endpointsConfig[EModelEndpoint.azureAssistants].disableBuilder !== true) ||
+        (endpoint === EModelEndpoint.azureAgents &&
+          endpointsConfig?.[EModelEndpoint.azureAgents] &&
+          endpointsConfig[EModelEndpoint.azureAgents].disableBuilder !== true)) &&
       keyProvided &&
       hasAccessToAssistantCreator
     ) {
@@ -102,6 +120,16 @@ export default function useSideNavLinks({
         icon: MessageSquareQuote,
         id: 'prompts',
         Component: PromptsAccordion,
+      });
+    }
+
+    if (hasAccessToMemories && hasAccessToReadMemories) {
+      links.push({
+        title: 'com_ui_memories',
+        label: '',
+        icon: Database,
+        id: 'memories',
+        Component: MemoryViewer,
       });
     }
 
@@ -156,6 +184,8 @@ export default function useSideNavLinks({
     endpoint,
     hasAccessToAgents,
     hasAccessToPrompts,
+    hasAccessToMemories,
+    hasAccessToReadMemories,
     hasAccessToBookmarks,
     hasAccessToCreateAgents,
     hidePanel,
