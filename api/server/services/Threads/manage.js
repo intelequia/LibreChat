@@ -80,11 +80,13 @@ async function initAzureAgentThread({ azureAgentClient, body, thread_id: _thread
    * @Author Enrique M. Pedroza Castillo
    */
   body.messages.forEach(message => {
+
+    
     if (message.file_ids) {
       message.attachments = []
-      message.file_ids.forEach(file_id => {
+      message.file_ids.forEach(fileId => {
         message.attachments.push({
-          file_id: file_id,
+          fileId: fileId,
           tools: [
             {
               type: "file_search"

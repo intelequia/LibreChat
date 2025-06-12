@@ -256,8 +256,8 @@ const chatV2 = async (req, res) => {
           }
 
           userMessage.attachments.push({
-            file_id: file.file_id,
-            tools: [{ type: ToolCallTypes.CODE_INTERPRETER }],
+            fileId: file.file_id,
+            tools: [],
           });
 
           if (file.type.startsWith('image')) {
