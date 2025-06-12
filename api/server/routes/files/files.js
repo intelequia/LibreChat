@@ -15,6 +15,7 @@ const {
   processFileUpload,
   processDeleteRequest,
   processAgentFileUpload,
+  azureAgentsProcessFileUpload
 } = require('~/server/services/Files/process');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { getOpenAIClient } = require('~/server/controllers/assistants/helpers');
@@ -273,8 +274,10 @@ router.post('/', async (req, res) => {
     if (isAgentsEndpoint(metadata.endpoint)) {
       return await processAgentFileUpload({ req, res, metadata });
     }
-
-    await processFileUpload({ req, res, metadata });
+    const endpoint = metadata.endpoint
+    endpoint == "azureAgents" ?
+      await azureAgentsProcessFileUpload({ req, res, metadata }) :  
+      await processFileUpload({ req, res, metadata });
   } catch (error) {
     let message = 'Error processing file';
     logger.error('[/files] Error processing file:', error);

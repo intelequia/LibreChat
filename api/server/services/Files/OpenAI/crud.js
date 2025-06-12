@@ -40,6 +40,45 @@ async function uploadOpenAIFile({ req, file, openai }) {
 }
 
 /**
+ * Uploads a file that can be used across various OpenAI services.
+ *
+ * @param {Object} params - The params object.
+ * @param {ServerRequest} params.req - The request object from Express. It should have a `user` property with an `id`
+ *                       representing the user, and an `app.locals.paths` object with an `imageOutput` path.
+ * @param {Express.Multer.File} params.file - The file uploaded to the server via multer.
+ * @param {OpenAIClient} params.openai - The initialized OpenAI client.
+ * @returns {Promise<OpenAIFile>}
+ */
+async function uploadAzureAgentsFile({ req, file, client }) {
+  const { height, width } = req.body;
+  const isImage = height && width;
+  const fileStream = fs.createReadStream(file.path); 
+  const uploadedFile = await client.files.upload(
+   { file: fileStream,
+    purpose: isImage ? FilePurpose.Vision : FilePurpose.Assistants,
+  });
+
+
+  logger.debug(
+    `[uploadOpenAIFile] User ${req.user.id} successfully uploaded file to OpenAI`,
+    uploadedFile,
+  );
+
+  if (uploadedFile.status !== 'processed') {
+    const sleepTime = 2500;
+    logger.debug(
+      `[uploadOpenAIFile] File ${
+        uploadedFile.id
+      } is not yet processed. Waiting for it to be processed (${sleepTime / 1000}s)...`,
+    );
+    await sleep(sleepTime);
+  }
+
+  return isImage ? { ...uploadedFile, height, width } : uploadedFile;
+}
+
+
+/**
  * Deletes a file previously uploaded to OpenAI.
  *
  * @param {ServerRequest} req - The request object from Express.
@@ -78,4 +117,4 @@ async function getOpenAIFileStream(file_id, openai) {
   }
 }
 
-module.exports = { uploadOpenAIFile, deleteOpenAIFile, getOpenAIFileStream };
+module.exports = { uploadOpenAIFile, deleteOpenAIFile, getOpenAIFileStream,uploadAzureAgentsFile };

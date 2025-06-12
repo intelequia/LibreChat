@@ -95,7 +95,7 @@ const initializeClient = async ({ req, res, initAppClient = false }) => {
     }
   }
   
-  client.files = new Files(client)
+  // client.files = new Files(client)
 
   client.req = req;
   client.res = res;

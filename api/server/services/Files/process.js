@@ -375,6 +375,111 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
 };
 
 
+/**
+ * Applies the current strategy for file uploads.
+ * Saves file metadata to the database with an expiry TTL.
+ * Files must be deleted from the server filesystem manually.
+ *
+ * @param {Object} params - The parameters object.
+ * @param {ServerRequest} params.req - The Express request object.
+ * @param {Express.Response} params.res - The Express response object.
+ * @param {FileMetadata} params.metadata - Additional metadata for the file.
+ * @returns {Promise<void>}
+ */
+const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
+  const isAssistantUpload = isAssistantsEndpoint(metadata.endpoint);
+  const source = FileSources.azure;
+  const {handleFileUploadAzureAgent} = getStrategyFunctions(source);
+  // const { handleFileUpload } = getStrategyFunctions(source);
+  const { file_id, temp_file_id } = metadata;
+
+  /** @type {OpenAI | undefined} */
+  let client;
+  if (checkOpenAIStorage(source)) {
+    (client = await getOpenAIClient({ req }));
+  }
+
+  const { file } = req;
+  const {
+    id,
+    bytes,
+    filename,
+    filepath: _filepath,
+    embedded,
+    height,
+    width,
+  } = await handleFileUploadAzureAgent({
+    req,
+    file,
+    file_id,
+    client,
+  });
+  if(metadata.knowledge == 'true'){
+    await handleKnowledge ({ fileId:id, assistantId:metadata.assistant_id }, client)
+  }
+  else if ( isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
+    await client.beta.assistants.files.create(metadata.assistant_id, {
+      file_id: id,
+    });
+  } else if (isAssistantUpload && !metadata.message_file) {
+    await addResourceFileId({
+      req,
+      client,
+      file_id: id,
+      assistant_id: metadata.assistant_id,
+      tool_resource: metadata.tool_resource,
+    });
+  }
+
+  let filepath = isAssistantUpload ? `${client.baseURL}/files/${id}` : _filepath;
+  if (isAssistantUpload && file.mimetype.startsWith('image')) {
+    const result = await processImageFile({
+      req,
+      file,
+      metadata: { file_id: v4() },
+      returnFile: true,
+    });
+    filepath = result.filepath;
+  }
+
+  const result = await createFile(
+    {
+      user: req.user.id,
+      file_id: id ?? file_id,
+      temp_file_id,
+      bytes,
+      filepath,
+      filename: filename ?? file.originalname,
+      context: isAssistantUpload ? FileContext.assistants : FileContext.message_attachment,
+      model: isAssistantUpload ? req.body.model : undefined,
+      type: file.mimetype,
+      embedded,
+      source,
+      height,
+      width,
+    },
+    true,
+  );
+  const userId = result.user.toString();
+  const { email } = await findUser({ userId });
+  
+  /**
+   * Custom event to track when a user uploads files 
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  global.appInsights.trackEvent({
+    name: 'AzureUploadFile',
+    properties: {
+      userId: userId,
+      userEmail: email,
+      fileName: file.filename,
+      fileSize: file.size,
+      fileExtension: file.mimetype.split('/')[1],
+    },
+  });
+  res.status(200).json({ message: 'File uploaded and processed successfully', ...result });
+};
 
 /**
  * Applies the current strategy for file uploads.
@@ -390,7 +495,7 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
 const processFileUpload = async ({ req, res, metadata }) => {
   const isAssistantUpload = isAssistantsEndpoint(metadata.endpoint);
   const assistantSource =
-    metadata.endpoint === EModelEndpoint.azureAssistants ? FileSources.azure : FileSources.openai;
+    metadata.endpoint === EModelEndpoint.azureAssistants || EModelEndpoint.azureAgents? FileSources.azure : FileSources.openai;
   const source = isAssistantUpload ? assistantSource : FileSources.vectordb;
   const { handleFileUpload } = getStrategyFunctions(source);
   const { file_id, temp_file_id } = metadata;
@@ -982,6 +1087,7 @@ module.exports = {
   processImageFile,
   uploadImageBuffer,
   processFileUpload,
+  azureAgentsProcessFileUpload,
   processDeleteRequest,
   processAgentFileUpload,
   retrieveAndProcessFile,

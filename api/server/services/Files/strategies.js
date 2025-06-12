@@ -43,7 +43,7 @@ const {
   prepareAzureImageURL,
   processAzureAvatar,
 } = require('./Azure');
-const { uploadOpenAIFile, deleteOpenAIFile, getOpenAIFileStream } = require('./OpenAI');
+const { uploadOpenAIFile, deleteOpenAIFile, getOpenAIFileStream,uploadAzureAgentsFile } = require('./OpenAI');
 const { getCodeOutputDownloadStream, uploadCodeEnvFile } = require('./Code');
 const { uploadVectors, deleteVectors } = require('./VectorDB');
 const { uploadMistralOCR } = require('./MistralOCR');
@@ -155,6 +155,7 @@ const openAIStrategy = () => ({
   prepareImagePayload: null,
   deleteFile: deleteOpenAIFile,
   handleFileUpload: uploadOpenAIFile,
+  handleFileUploadAzureAgent:  uploadAzureAgentsFile,
   getDownloadStream: getOpenAIFileStream,
 });
 
