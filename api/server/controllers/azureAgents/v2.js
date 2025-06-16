@@ -287,7 +287,7 @@ const patchAssistant = async (req, res) => {
     const updatedAssistant = await updateAzureAgent({ req, azureAgentClient, assistant_id, updateData });
     res.json(updatedAssistant);
   } catch (error) {
-    logger.error('[/assistants/:id] Error updating assistant', error);
+    logger.error('[/azureAgents/:id] Error updating assistant', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -326,7 +326,7 @@ const deleteAzureAgent = async (req, res) => {
     }
     res.json(deletionStatus);
   } catch (error) {
-    logger.error('[/assistants/:id] Error deleting assistant', error);
+    logger.error('[/azureAgents/:id] Error deleting assistant', error);
     res.status(500).json({ error: 'Error deleting assistant' });
   }
 };
@@ -439,7 +439,7 @@ const listAssistants = async (req, res) => {
 
     res.json(body);
   } catch (error) {
-    logger.error('[/assistants] Error listing assistants', error);
+    logger.error('[/azureAgents] Error listing assistants', error);
     res.status(500).json({ message: 'Error listing assistants' });
   }
 };

@@ -53,7 +53,8 @@ async function uploadAzureAgentsFile({ req, file, client }) {
   const { height, width } = req.body;
   const isImage = height && width;
   const fileStream = fs.createReadStream(file.path); 
-  const uploadedFile = await client.files.upload( fileStream, isImage ? FilePurpose.Vision : FilePurpose.Assistants,{fileName:file.filename} );
+  const purpose = isImage ? FilePurpose.Vision : FilePurpose.Assistants;
+  const uploadedFile = await client.files.upload( fileStream, purpose,{fileName:file.filename} );
 
   logger.debug(
     `[uploadOpenAIFile] User ${req.user.id} successfully uploaded file to OpenAI`,

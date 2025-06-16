@@ -15,7 +15,7 @@ const {
   checkAzureVariables,
   checkWebSearchConfig,
 } = require('./start/checks');
-const { azureAssistantsDefaults, assistantsConfigSetup } = require('./start/assistants');
+const { azureAssistantsDefaults, assistantsConfigSetup, azureAgentsDefaults } = require('./start/assistants');
 const { initializeAzureBlobService } = require('./Files/Azure/initialize');
 const { initializeFirebase } = require('./Files/Firebase/initialize');
 const loadCustomConfig = require('./Config/loadCustomConfig');
@@ -144,6 +144,14 @@ const AppService = async (app) => {
     );
   }
 
+  if (endpoints?.[EModelEndpoint.azureAgents]) {
+    endpointLocals[EModelEndpoint.azureAgents] = azureAgentsDefaults(
+      config,
+      EModelEndpoint.azureAgents,
+      endpointLocals[EModelEndpoint.azureAgents]
+    );
+  }
+
   endpointLocals[EModelEndpoint.agents] = agentsConfigSetup(config, agentsDefaults);
 
   const endpointKeys = [
@@ -152,6 +160,7 @@ const AppService = async (app) => {
     EModelEndpoint.bedrock,
     EModelEndpoint.anthropic,
     EModelEndpoint.gptPlugins,
+    EModelEndpoint.azureAgents,
   ];
 
   endpointKeys.forEach((key) => {

@@ -14,6 +14,7 @@ const {
   AZURE_OPENAI_BASEURL,
   ASSISTANTS_BASE_URL,
   AZURE_ASSISTANTS_BASE_URL,
+  AZURE_AI_PROJECT_ENDPOINT,
 } = process.env ?? {};
 
 const useAzurePlugins = !!PLUGINS_USE_AZURE;
@@ -44,8 +45,8 @@ module.exports = {
       EModelEndpoint.azureAssistants,
     ),
     [EModelEndpoint.azureAgents]: generateConfig(
-      azureAssistantsApiKey,
-      AZURE_ASSISTANTS_BASE_URL,
+      null,
+      AZURE_AI_PROJECT_ENDPOINT,
       EModelEndpoint.azureAgents,
     ),
     [EModelEndpoint.bedrock]: generateConfig(

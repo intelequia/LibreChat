@@ -19,6 +19,7 @@ async function loadConfigModels(req) {
   const modelsConfig = {};
   const azureEndpoint = endpoints[EModelEndpoint.azureOpenAI];
   const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
+  const azureAgentsEndpoint = endpoints[EModelEndpoint.azureAgents];
 
   const { modelNames } = azureConfig ?? {};
 
@@ -35,11 +36,17 @@ async function loadConfigModels(req) {
     modelsConfig[EModelEndpoint.azureAssistants] = azureConfig.assistantModels.filter(
       (model) => defaultAssistantModels.includes(model),
     );
+  }
 
+  if (azureAgentsEndpoint) {
     const defaultAzureAgentModels = defaultModels[EModelEndpoint.azureAgents] || [];
-    modelsConfig[EModelEndpoint.azureAgents] = azureConfig.assistantModels.filter(
-      (model) => defaultAzureAgentModels.includes(model),
-    );
+    modelsConfig[EModelEndpoint.azureAgents] = azureAgentsEndpoint.groups.flatMap((group) => {
+      const modelsArray = Object.values(group.models);
+      const filteredDeploymentNames = modelsArray
+        .filter((model) => defaultAzureAgentModels.includes(model.deploymentName))
+        .map((model) => model.deploymentName);
+      return filteredDeploymentNames;
+    });
   }
 
   if (!Array.isArray(endpoints[EModelEndpoint.custom])) {

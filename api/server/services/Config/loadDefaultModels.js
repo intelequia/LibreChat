@@ -23,6 +23,7 @@ async function loadDefaultModels(req) {
       gptPlugins,
       assistants,
       azureAssistants,
+      azureAgents,
       google,
       bedrock,
     ] = await Promise.all([
@@ -74,7 +75,7 @@ async function loadDefaultModels(req) {
       [EModelEndpoint.azureOpenAI]: azureOpenAI,
       [EModelEndpoint.assistants]: assistants,
       [EModelEndpoint.azureAssistants]: azureAssistants,
-      [EModelEndpoint.azureAgents]: openAI,
+      [EModelEndpoint.azureAgents]: azureAgents,
       [EModelEndpoint.bedrock]: bedrock,
     };
   } catch (error) {

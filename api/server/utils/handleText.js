@@ -170,7 +170,7 @@ const isUserProvided = (value) => value === 'user_provided';
  * @returns {boolean | { userProvide: boolean, userProvideURL?: boolean }}
  */
 function generateConfig(key, baseURL, endpoint) {
-  if (!key) {
+  if (!key && endpoint != EModelEndpoint.azureAgents) {
     return false;
   }
 
@@ -183,7 +183,7 @@ function generateConfig(key, baseURL, endpoint) {
 
   const assistants = isAssistantsEndpoint(endpoint);
   const agents = isAgentsEndpoint(endpoint);
-  if (assistants) {
+  if (assistants ) {
     config.retrievalModels = defaultRetrievalModels;
     config.capabilities = [
       Capabilities.code_interpreter,
