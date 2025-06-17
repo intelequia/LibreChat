@@ -637,8 +637,9 @@ class BaseClient {
      * @Author Enrique M. Pedroza Castillo
      */
 
-    const User = require('~/models/User');
-    const { email } = await User.findOne({ _id: user }).lean();
+    const { findUser } = require('~/models');
+    const userId = user
+    const {email} = await findUser({ userId });
 
     /**
        * Custom event to track when user creates a completion query

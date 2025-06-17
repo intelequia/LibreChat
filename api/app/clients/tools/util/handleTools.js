@@ -373,25 +373,25 @@ Current Date & Time: ${replaceSpecialVars({ text: '{{iso_datetime}}' })}
     }
   }
 
-  let specs = null;
-  if (useSpecs === true && functions === true && remainingTools.length > 0) {
-    specs = await loadSpecs({
-      llm: model,
-      user,
-      message: options.message,
-      memory: options.memory,
-      signal: options.signal,
-      tools: remainingTools,
-      map: true,
-      verbose: false,
-    });
-  }
+  // let specs = null;
+  // if (useSpecs === true && functions === true && remainingTools.length > 0) {
+  //   specs = await loadSpecs({
+  //     llm: model,
+  //     user,
+  //     message: options.message,
+  //     memory: options.memory,
+  //     signal: options.signal,
+  //     tools: remainingTools,
+  //     map: true,
+  //     verbose: false,
+  //   });
+  // }
 
-  for (const tool of remainingTools) {
-    if (specs && specs[tool]) {
-      requestedTools[tool] = specs[tool];
-    }
-  }
+  // for (const tool of remainingTools) {
+  //   if (specs && specs[tool]) {
+  //     requestedTools[tool] = specs[tool];
+  //   }
+  // }
 
   if (returnMap) {
     return requestedTools;
