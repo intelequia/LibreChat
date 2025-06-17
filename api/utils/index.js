@@ -1,5 +1,4 @@
 const loadYaml = require('./loadYaml');
-const axiosHelpers = require('./axios');
 const tokenHelpers = require('./tokens');
 const deriveBaseURL = require('./deriveBaseURL');
 const extractBaseURL = require('./extractBaseURL');
@@ -10,7 +9,6 @@ module.exports = {
   loadYaml,
   deriveBaseURL,
   extractBaseURL,
-  ...axiosHelpers,
   ...tokenHelpers,
   findMessageContent,
   ...intelequia,

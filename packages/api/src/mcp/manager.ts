@@ -1,6 +1,6 @@
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
-import type { JsonSchemaType, MCPOptions } from 'librechat-data-provider';
+import type { JsonSchemaType, MCPOptions, TUser } from 'librechat-data-provider';
 import type { Logger } from 'winston';
 import type * as t from './types';
 import { formatToolContent } from './parsers';
@@ -9,7 +9,7 @@ import { CONSTANTS } from './enum';
 import { MCPToolCallResponse, ToolContentPart } from './types/mcp'; // Asegúrate de importar los tipos correctos
 
 export interface CallToolOptions extends RequestOptions {
-  userId?: string;
+  user?: TUser;
 }
 
 function transformResultToMCPToolCallResponse(result: any): MCPToolCallResponse {
@@ -39,7 +39,7 @@ export class MCPManager {
   private userLastActivity: Map<string, number> = new Map();
   private readonly USER_CONNECTION_IDLE_TIMEOUT = 15 * 60 * 1000; // 15 minutes (TODO: make configurable)
   private mcpConfigs: t.MCPServers = {};
-  private processMCPEnv?: (obj: MCPOptions, userId?: string) => MCPOptions; // Store the processing function
+  private processMCPEnv?: (obj: MCPOptions, user?: TUser) => MCPOptions; // Store the processing function
   /** Store MCP server instructions */
   private serverInstructions: Map<string, string> = new Map();
   private logger: Logger;
@@ -237,7 +237,12 @@ export class MCPManager {
   }
 
   /** Gets or creates a connection for a specific user */
-  public async getUserConnection(userId: string, serverName: string): Promise<MCPConnection> {
+  public async getUserConnection(serverName: string, user: TUser): Promise<MCPConnection> {
+    const userId = user.id;
+    if (!userId) {
+      throw new McpError(ErrorCode.InvalidRequest, `[MCP] User object missing id property`);
+    }
+
     const userServerMap = this.userConnections.get(userId);
     let connection = userServerMap?.get(serverName);
     const now = Date.now();
@@ -285,7 +290,7 @@ export class MCPManager {
     }
 
     if (this.processMCPEnv) {
-      config = { ...(this.processMCPEnv(config, userId) ?? {}) };
+      config = { ...(this.processMCPEnv(config, user) ?? {}) };
     }
 
     connection = new MCPConnection(serverName, config, this.logger, userId);
@@ -480,14 +485,15 @@ export class MCPManager {
     options?: CallToolOptions;
   }): Promise<t.FormattedToolResponse> {
     let connection: MCPConnection | undefined;
-    const { userId, ...callOptions } = options ?? {};
+    const { user, ...callOptions } = options ?? {};
+    const userId = user?.id;
     const logPrefix = userId ? `[MCP][User: ${userId}][${serverName}]` : `[MCP][${serverName}]`;
 
     try {
-      if (userId) {
+      if (userId && user) {
         this.updateUserLastActivity(userId);
         // Get or create user-specific connection
-        connection = await this.getUserConnection(userId, serverName);
+        connection = await this.getUserConnection(serverName, user);
       } else {
         // Use app-level connection
         connection = this.connections.get(serverName);
