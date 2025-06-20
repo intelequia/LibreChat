@@ -49,7 +49,6 @@ class Sharepoint extends Tool {
       return JSON.stringify(response.data);
     } catch (error) {
       console.error('Error en la llamada a Graph API:', error);
-      console.error('URL Requested: ',url)
       if(error.status == 403)
         return "You dont have permission"
       if(error.status == 401 && userAccessToken == undefined)
