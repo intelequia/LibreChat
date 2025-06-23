@@ -148,6 +148,11 @@
     "description": "Create consults to Sharepoint using Microsoft Graph API",
     "icon": "/assets/Plugin-Icons/MicrosoftSharepoint.jpg",
     "authConfig": [
+      {
+        "authField": "MS_SHAREPOINT_SITE_URL",
+        "label": "Sharepoint Site URL",
+        "description": "URL de la carpeta a la que se realizaran las busquedas. Ejemplo: https://[sharepoint_web]/sites/[directorio_de_busqueda]/."
+      }
     ]
   },
   {

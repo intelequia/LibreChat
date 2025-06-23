@@ -9,6 +9,7 @@ class Sharepoint extends Tool {
     this.name = 'sharepoint';
     this.description = 'Use the \'sharepoint\' tool to retrieve search results from Graph';
     this.userId = fields.userId;
+    this.sharepointSiteURL = fields['MS_SHAREPOINT_SITE_URL']
   }
 
 
@@ -21,7 +22,8 @@ class Sharepoint extends Tool {
 
   async createClient(userEmail, userQuery) {
     const cachedToken = global.myCache.get( userEmail + "-token" )
-
+    // "intelequia.sharepoint.com,76093170-463a-458b-b5f7-f4d4cf3a5381,1e7947c7-1755-49c2-9110-47ae348116f7"
+    const sharepointSitePath = `path:\"${this.sharepointSiteURL}\"`
     const requestData = {
       requests: [
         {
@@ -31,7 +33,7 @@ class Sharepoint extends Tool {
             "site"
           ],
           query: {
-            queryString: `${userQuery}`
+            queryString: `${userQuery} ${sharepointSitePath}`,
           },
           size: 10
         }
@@ -76,8 +78,9 @@ class Sharepoint extends Tool {
         toolName: "sharepoint",
         userEmail: userEmail,
         assistantId: data.assistant ?? "",
-        tokens:0
-            },
+        tokens:0,
+        siteURL: this.sharepointSiteURL
+      },
     });
     return search
   }
