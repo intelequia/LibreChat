@@ -28,6 +28,7 @@ const edit = require('./edit');
 const keys = require('./keys');
 const user = require('./user');
 const ask = require('./ask');
+const mcp = require('./mcp');
 
 module.exports = {
   ask,
@@ -60,4 +61,5 @@ module.exports = {
   azureAgents,
   categories,
   staticRoute,
+  mcp,
 };

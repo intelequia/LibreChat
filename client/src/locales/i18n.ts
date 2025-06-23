@@ -44,7 +44,6 @@ export const resources = {
   'zh-Hant': { translation: translationZh_Hant },
   da: { translation: translationDa },
   de: { translation: translationDe },
-  ca: { translation: translationCa },
   es: { translation: translationEs },
   et: { translation: translationEt },
   fa: { translation: translationFa },

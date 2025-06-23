@@ -8,7 +8,7 @@ import {
   useGetAssistantDocsQuery,
 } from '~/data-provider';
 import AssistantPanel from './AssistantPanel';
-import { useChatContext } from '~/Providers';
+import { AgentPanelProvider, useChatContext } from '~/Providers';
 import ActionsPanel from './ActionsPanel';
 import { Panel } from '~/common';
 
@@ -46,36 +46,42 @@ export default function PanelSwitch() {
 
   if (activePanel === Panel.actions || action) {
     return (
-      <ActionsPanel
-        index={index}
-        action={action}
-        actions={actions}
-        setAction={setAction}
-        activePanel={activePanel}
-        documentsMap={documentsMap}
-        setActivePanel={setActivePanel}
-        assistant_id={currentAssistantId}
-        setCurrentAssistantId={setCurrentAssistantId}
-        endpoint={conversation.endpoint as AssistantsEndpoint}
-        version={version}
-      />
+      <AgentPanelProvider>
+
+        <ActionsPanel
+          index={index}
+          action={action}
+          actions={actions}
+          setAction={setAction}
+          activePanel={activePanel}
+          documentsMap={documentsMap}
+          setActivePanel={setActivePanel}
+          assistant_id={currentAssistantId}
+          setCurrentAssistantId={setCurrentAssistantId}
+          endpoint={conversation.endpoint as AssistantsEndpoint}
+          version={version}
+        />
+      </AgentPanelProvider>
     );
   } else if (activePanel === Panel.builder) {
     return (
-      <AssistantPanel
-        index={index}
-        activePanel={activePanel}
-        action={action}
-        actions={actions}
-        setAction={setAction}
-        documentsMap={documentsMap}
-        setActivePanel={setActivePanel}
-        assistant_id={currentAssistantId}
-        setCurrentAssistantId={setCurrentAssistantId}
-        endpoint={conversation.endpoint as AssistantsEndpoint}
-        assistantsConfig={assistantsConfig}
-        version={version}
-      />
+      <AgentPanelProvider>
+      
+        <AssistantPanel
+          index={index}
+          activePanel={activePanel}
+          action={action}
+          actions={actions}
+          setAction={setAction}
+          documentsMap={documentsMap}
+          setActivePanel={setActivePanel}
+          assistant_id={currentAssistantId}
+          setCurrentAssistantId={setCurrentAssistantId}
+          endpoint={conversation.endpoint as AssistantsEndpoint}
+          assistantsConfig={assistantsConfig}
+          version={version}
+        />
+      </AgentPanelProvider>
     );
   }
 }
