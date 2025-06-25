@@ -450,7 +450,7 @@ async function runAssistant({
     };
   });
 
-  let outputs = await processRequiredActions(azureAgentClient, actions);
+  let outputs = await processRequiredActions(azureAgentClient, actions, run.assistantId);
   
   // Transform property names in each tool output
   if (outputs && outputs.tool_outputs && Array.isArray(outputs.tool_outputs)) {

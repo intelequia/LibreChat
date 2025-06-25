@@ -32,13 +32,8 @@ const { getUserPluginAuthValue } = require('~/server/services/PluginService');
 const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { getCachedTools } = require('~/server/services/Config');
 const { createMCPTool } = require('~/server/services/MCP');
-const  {
-  VerifyAzureAIFunctionsTool,
-  VerifyIntelequiaToolInstance,
-  AzureAIFunctions,
-} = require('~/utils');
 
-const {BingSearch, MicrosoftGraph, Dataverse, Sharepoint} = require('~/utils'); 
+const {BingSearch, MicrosoftGraph, Dataverse, Sharepoint,AzureAIFunctions} = require('~/utils'); 
 
 /**
  * Validates the availability and authentication of tools for a user based on environment variables or user-specific plugin authentication values.

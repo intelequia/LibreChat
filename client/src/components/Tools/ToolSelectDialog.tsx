@@ -11,7 +11,7 @@ import type {
   AgentToolType,
   TError,
 } from 'librechat-data-provider';
-import type { AgentForm, TPluginStoreDialogProps } from '~/common';
+import type { AgentForm, AssistantForm, TPluginStoreDialogProps } from '~/common';
 import { PluginPagination, PluginAuthForm } from '~/components/Plugins/Store';
 import { useAgentPanelContext } from '~/Providers/AgentPanelContext';
 import { useLocalize, usePluginDialogHelpers } from '~/hooks';
@@ -41,8 +41,13 @@ function ToolSelectDialog({
 //       }
 //     }
 //   }, [toolsQuery]);
+  const isAssistantEndpoint = endpoint == "azureAgents" || endpoint == "azureAssistants";
 
-  const { getValues, setValue } = useFormContext<AgentForm>();
+  const { getValues, setValue } = isAssistantEndpoint ?
+    useFormContext<AssistantForm>() :
+    useFormContext<AgentForm>();
+
+
   const { data: tools } = useAvailableToolsQuery(endpoint);
   let groupedTools = {};
   try {
@@ -92,9 +97,13 @@ function ToolSelectDialog({
   };
 
   const toolsFormKey = 'tools';
+  const toolsFormAssistantsKey = "functions";
+  const key = isAssistantEndpoint ? toolsFormAssistantsKey : toolsFormKey;
+
   const handleInstall = (pluginAction: TPluginAction) => {
     const addFunction = () => {
-      const installedToolIds: string[] = getValues(toolsFormKey) || [];
+
+      const installedToolIds: string[] = getValues( key) || [];
       // Add the parent
       installedToolIds.push(pluginAction.pluginKey);
 
@@ -107,7 +116,7 @@ function ToolSelectDialog({
           }
         }
       }
-      setValue(toolsFormKey, Array.from(new Set(installedToolIds))); // no duplicates just in case
+      setValue(key, Array.from(new Set(installedToolIds))); // no duplicates just in case
     };
 
     if (!pluginAction.auth) {
@@ -137,8 +146,8 @@ function ToolSelectDialog({
         onError: (error: unknown) => handleInstallError(error as TError),
         onSuccess: () => {
           const remainingToolIds =
-            getValues(toolsFormKey)?.filter((toolId) => !toolIdsToRemove.includes(toolId)) || [];
-          setValue(toolsFormKey, remainingToolIds);
+            getValues(key)?.filter((toolId) => !toolIdsToRemove.includes(toolId)) || [];
+          setValue(key, remainingToolIds);
         },
       },
     );
@@ -292,7 +301,7 @@ function ToolSelectDialog({
                       <ToolItem
                         key={index}
                         tool={tool}
-                        isInstalled={getValues(toolsFormKey)?.includes(tool.tool_id) || false}
+                        isInstalled={getValues(key)?.includes(tool.tool_id) || false}
                         onAddTool={() => onAddTool(tool.tool_id)}
                         onRemoveTool={() => onRemoveTool(tool.tool_id)}
                       />

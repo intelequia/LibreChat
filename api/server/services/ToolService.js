@@ -39,6 +39,7 @@ const { isActionDomainAllowed } = require('~/server/services/domains');
 const { recordUsage } = require('~/server/services/Threads');
 const { loadTools } = require('~/app/clients/tools/util');
 const { redactMessage } = require('~/config/parsers');
+const { SaveFunctionsInCache, isToolEnabled, GetToolSpecification } = require('~/utils');
 
 /**
  * @param {string} toolName
@@ -84,13 +85,58 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
   const tools = [];
   /* Structured Tools Directory */
   const files = fs.readdirSync(directory);
+  const intelequiaToolDirectory =path.resolve(__dirname, '..', '..','utils','intelequia','pluginsAndTools','implementations',)
+  const intelequiaFiles = fs.readdirSync(intelequiaToolDirectory);
 
   if (included.size > 0 && adminFilter.length > 0) {
     logger.warn(
       'Both `includedTools` and `filteredTools` are defined; `filteredTools` will be ignored.',
     );
   }
+  for (const file of intelequiaFiles) {
+    const filePath = path.join(intelequiaToolDirectory, file);
+    if (!file.endsWith('.js') || (filter.has(file) && included.size === 0)) {
+      continue;
+    }
 
+    let ToolClass = null;
+    try {
+      ToolClass = require(filePath);
+    } catch (error) {
+      logger.error(`[loadAndFormatTools] Error loading tool from ${filePath}:`, error);
+      continue;
+    }
+
+    if (!ToolClass || !(ToolClass.prototype instanceof Tool)) {
+      continue;
+    }
+
+    let toolInstance = null;
+    try {
+      toolInstance = new ToolClass({ override: true });
+    } catch (error) {
+      logger.error(
+        `[loadAndFormatTools] Error initializing \`${file}\` tool; if it requires authentication, is the \`override\` field configured?`,
+        error,
+      );
+      continue;
+    }
+
+    if (!toolInstance) {
+      continue;
+    }
+
+    if (filter.has(toolInstance.name) && included.size === 0) {
+      continue;
+    }
+
+    if (included.size > 0 && !included.has(file) && !included.has(toolInstance.name)) {
+      continue;
+    }
+
+    const formattedTool = formatToOpenAIAssistantTool(toolInstance);
+    tools.push(formattedTool);
+  }
   for (const file of files) {
     const filePath = path.join(directory, file);
     if (!file.endsWith('.js') || (filter.has(file) && included.size === 0)) {
@@ -219,9 +265,10 @@ const processVisionRequest = async (client, currentAction) => {
  * Processes return required actions from run.
  * @param {OpenAIClient | StreamRunManager} client - OpenAI (legacy) or StreamRunManager Client.
  * @param {RequiredAction[]} requiredActions - The required actions to submit outputs for.
+ * @param {string} assistantId - The assistant ID to process the actions for.
  * @returns {Promise<ToolOutputs>} The outputs of the tools.
  */
-async function processRequiredActions(client, requiredActions) {
+async function processRequiredActions(client, requiredActions, assistantId) {
   logger.debug(
     `[required actions] user: ${client.req.user.id} | thread_id: ${requiredActions[0].thread_id} | run_id: ${requiredActions[0].run_id}`,
     requiredActions,
@@ -476,6 +523,17 @@ async function processRequiredActions(client, requiredActions) {
         output: `Error processing tool ${currentAction.tool}: ${redactMessage(error.message, 256)}`,
       };
     };
+    if(tool.mcp){
+      currentAction.toolInput = currentAction.toolInput.toolInput
+    }
+
+    /**
+     * This IF statement adds new parameters to the tool if its specified as an Intelequia's tool.
+     */
+    if (await isToolEnabled(tool.name)) {
+      currentAction.toolInput.assistant = assistantId;
+      currentAction.toolInput.userEmail = client.req.user.email
+    }
 
     try {
       const promise = tool

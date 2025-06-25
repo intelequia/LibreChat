@@ -7,7 +7,8 @@ const { manifestToolMap } = require('~/app/clients/tools');
 const { getOpenAIClient, fetchAssistants } = require('./helpers');
 const { logger } = require('~/config');
 const { uploadImageBuffer, filterFile } = require('~/server/services/Files/process');
-const { SaveFunctionsInCache } = require('~/utils');
+const { SaveFunctionsInCache, isToolEnabled, GetToolSpecification } = require('~/utils');
+const { getCachedTools } = require('~/server/services/Config');
 
 /**
  * Create an assistant.
@@ -30,21 +31,20 @@ const createAzureAgent = async (req, res) => {
     delete assistantData.conversation_starters;
     delete assistantData.append_current_datetime;
 
+    const toolDefinitions = await getCachedTools({ includeGlobal: true });
+
     assistantData.tools = tools
       .map((tool) => {
         if (typeof tool !== 'string') {
           return tool;
         }
 
-        const toolDefinitions = req.app.locals.availableTools;
         const toolDef = toolDefinitions[tool];
         if (!toolDef && manifestToolMap[tool] && manifestToolMap[tool].toolkit === true) {
-          return (
-            Object.entries(toolDefinitions)
-              .filter(([key]) => key.startsWith(`${tool}_`))
-              // eslint-disable-next-line no-unused-vars
-              .map(([_, val]) => val)
-          );
+          return Object.entries(toolDefinitions)
+            .filter(([key]) => key.startsWith(`${tool}_`))
+
+            .map(([_, val]) => val);
         }
 
         return toolDef;
@@ -130,16 +130,18 @@ const updateAzureAgent = async ({ req, azureAgentClient, assistant_id, updateDat
 
   let hasFileSearch = false;
   for (const tool of updateData.tools ?? []) {
-    const toolDefinitions = req.app.locals.availableTools;
+    const toolDefinitions = await getCachedTools({ includeGlobal: true });
     let actualTool = typeof tool === 'string' ? toolDefinitions[tool] : tool;
 
     if (!actualTool && manifestToolMap[tool] && manifestToolMap[tool].toolkit === true) {
       actualTool = Object.entries(toolDefinitions)
         .filter(([key]) => key.startsWith(`${tool}_`))
-        // eslint-disable-next-line no-unused-vars
         .map(([_, val]) => val);
     } else if (!actualTool) {
       continue;
+    }
+    if (await isToolEnabled(tool)){
+      actualTool = await GetToolSpecification(tool);
     }
 
     if (Array.isArray(actualTool)) {
