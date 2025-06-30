@@ -98,7 +98,6 @@ async function updateUserInfoInCache(jwt, user) {
 
   global.myCache.set(user._id.toString(), userGroupsInToken, process.env.USER_GROUPS_CACHE_TTL)
 
-  userGroupsInToken = undefined
   const role = userGroupsInToken ?
     (userGroupsInToken.includes(adminGroup) ? 'ADMIN' : 'USER') :
     'USER';
