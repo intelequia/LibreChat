@@ -10,6 +10,9 @@ const {
   retrievalMimeTypes,
   AssistantStreamEvents,
 } = require('librechat-data-provider');
+
+const { sendEvent } = require('@librechat/api');
+
 const {
   initAzureAgentThread,
   recordUsage,
@@ -24,7 +27,7 @@ const { createErrorHandler } = require('~/server/controllers/assistants/errors')
 const validateAuthor = require('~/server/middleware/azureAgents/validateAuthor');
 const { createAzureAgentRun, StreamRunManager } = require('~/server/services/Runs');
 const { addTitle } = require('~/server/services/Endpoints/azureAgents');
-const { sendMessage, sleep, countTokens } = require('~/server/utils');
+const { sleep, countTokens } = require('~/server/utils');
 const { createRunBody } = require('~/server/services/createRunBody');
 const { getTransactions } = require('~/models/Transaction');
 const { checkBalance } = require('~/models/balanceMethods');
@@ -357,7 +360,7 @@ const chatV2 = async (req, res) => {
           assistantId: body.assistant_id,
         },
       });
-      sendMessage(res, {
+      sendEvent(res, {
         sync: true,
         conversationId,
         // messages: previousMessages,
@@ -417,13 +420,13 @@ const chatV2 = async (req, res) => {
     };
 
     await processRun();
-    logger.debug('[/assistants/chat/] response', {
+    logger.debug('[/azureAgents/chat/] response', {
       run: response.run,
       steps: response.steps,
     });
 
     if (response.run.status === RunStatus.CANCELLED) {
-      logger.debug('[/assistants/chat/] Run cancelled, handled by `abortRun`');
+      logger.debug('[/azureAgents/chat/] Run cancelled, handled by `abortRun`');
       return res.end();
     }
 
@@ -446,7 +449,7 @@ const chatV2 = async (req, res) => {
       endpoint,
     };
 
-    sendMessage(res, {
+    sendEvent(res, {
       final: true,
       conversation,
       requestMessage: {

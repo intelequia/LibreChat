@@ -11,11 +11,13 @@ const {
 } = require('librechat-data-provider');
 const { retrieveAndProcessFile } = require('~/server/services/Files/process');
 const { processRequiredActions } = require('~/server/services/ToolService');
-const { createOnProgress, sendMessage, sleep } = require('~/server/utils');
+const { createOnProgress, sleep } = require('~/server/utils');
 const { RunManager, waitForAzureAgentRun } = require('~/server/services/Runs');
 const { processMessages } = require('~/server/services/Threads');
 const { TextStream } = require('~/app/clients');
 const { logger } = require('~/config');
+const { sendEvent } = require('@librechat/api');
+
 const { intelequiaTools } = require ("~/utils")
 /**
  * Sorts, processes, and flattens messages to a single string.
@@ -64,7 +66,7 @@ async function createOnTextProgress({
     };
 
     logger.debug('Content data:', contentData);
-    sendMessage(azureAgentClient.res, contentData);
+    sendEvent(azureAgentClient.res, contentData);
   };
 }
 
