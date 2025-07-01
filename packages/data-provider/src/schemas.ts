@@ -3,7 +3,6 @@ import { Tools } from './types/assistants';
 import type { TMessageContentParts, FunctionTool, FunctionToolCall } from './types/assistants';
 import { TFeedback, feedbackSchema } from './feedback';
 import type { SearchResultData } from './types/web';
-import type { TEphemeralAgent } from './types';
 import type { TFile } from './types/files';
 
 export const isUUID = z.string().uuid();
@@ -97,22 +96,6 @@ export const isAgentsEndpoint = (_endpoint?: EModelEndpoint.agents | null | stri
     return false;
   }
   return endpoint === EModelEndpoint.agents;
-};
-
-export const isEphemeralAgent = (
-  endpoint?: EModelEndpoint.agents | null | string,
-  ephemeralAgent?: TEphemeralAgent | null,
-) => {
-  if (!ephemeralAgent) {
-    return false;
-  }
-  if (isAgentsEndpoint(endpoint)) {
-    return false;
-  }
-  const hasMCPSelected = (ephemeralAgent?.mcp?.length ?? 0) > 0;
-  const hasCodeSelected = (ephemeralAgent?.execute_code ?? false) === true;
-  const hasSearchSelected = (ephemeralAgent?.web_search ?? false) === true;
-  return hasMCPSelected || hasCodeSelected || hasSearchSelected;
 };
 
 export const isParamEndpoint = (
@@ -280,6 +263,18 @@ export const googleSettings = {
     step: 1 as const,
     default: 40 as const,
   },
+  thinking: {
+    default: true as const,
+  },
+  thinkingBudget: {
+    min: -1 as const,
+    max: 32768 as const,
+    step: 1 as const,
+    /** `-1` = Dynamic Thinking, meaning the model will adjust
+     * the budget based on the complexity of the request.
+     */
+    default: -1 as const,
+  },
 };
 
 const ANTHROPIC_MAX_OUTPUT = 128000 as const;
@@ -425,7 +420,7 @@ export type TPluginAuthConfig = z.infer<typeof tPluginAuthConfigSchema>;
 export const tPluginSchema = z.object({
   name: z.string(),
   pluginKey: z.string(),
-  description: z.string(),
+  description: z.string().optional(),
   icon: z.string().optional(),
   authConfig: z.array(tPluginAuthConfigSchema).optional(),
   authenticated: z.boolean().optional(),
@@ -810,6 +805,8 @@ export const googleBaseSchema = tConversationSchema.pick({
   artifacts: true,
   topP: true,
   topK: true,
+  thinking: true,
+  thinkingBudget: true,
   iconURL: true,
   greeting: true,
   spec: true,
@@ -835,6 +832,12 @@ export const googleGenConfigSchema = z
     presencePenalty: coerceNumber.optional(),
     frequencyPenalty: coerceNumber.optional(),
     stopSequences: z.array(z.string()).optional(),
+    thinkingConfig: z
+      .object({
+        includeThoughts: z.boolean().optional(),
+        thinkingBudget: coerceNumber.optional(),
+      })
+      .optional(),
   })
   .strip()
   .optional();
