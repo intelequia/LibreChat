@@ -10,11 +10,9 @@ import useLocalize from '~/hooks/useLocalize';
 import TitleButton from './UI/TitleButton';
 
 const EndpointsMenu: FC = () => {
-
   const { data: endpoints = [] } = useGetEndpointsQuery({
     select: mapEndpoints,
   });
-
   const localize = useLocalize();
   const agentsMap = useAgentsMapContext();
   const assistantMap = useAssistantsMapContext();

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { Tools } from './types/assistants';
 import type { TMessageContentParts, FunctionTool, FunctionToolCall } from './types/assistants';
-import type { TEphemeralAgent } from './types';
+import { TFeedback, feedbackSchema } from './feedback';
+import type { SearchResultData } from './types/web';
 import type { TFile } from './types/files';
 
 export const isUUID = z.string().uuid();
@@ -21,6 +22,7 @@ export enum EModelEndpoint {
   anthropic = 'anthropic',
   assistants = 'assistants',
   azureAssistants = 'azureAssistants',
+  azureAgents = 'azureAgents',
   agents = 'agents',
   custom = 'custom',
   bedrock = 'bedrock',
@@ -69,14 +71,21 @@ export const getSettingsKeys = (endpoint: EModelEndpoint | string, model: string
   return [combinedKey, endpointKey];
 };
 
-export type AssistantsEndpoint = EModelEndpoint.assistants | EModelEndpoint.azureAssistants;
+export type AssistantsEndpoint = EModelEndpoint.assistants | EModelEndpoint.azureAssistants | EModelEndpoint.azureAgents;
 
 export const isAssistantsEndpoint = (_endpoint?: AssistantsEndpoint | null | string): boolean => {
   const endpoint = _endpoint ?? '';
   if (!endpoint) {
     return false;
   }
-  return endpoint.toLowerCase().endsWith(EModelEndpoint.assistants);
+  const normalized = String(endpoint).toLowerCase();
+
+  const validEndpoints = [
+    EModelEndpoint.assistants.toLowerCase(),
+    EModelEndpoint.azureAssistants.toLowerCase(),
+    EModelEndpoint.azureAgents.toLowerCase()
+  ];
+  return validEndpoints.includes(normalized);
 };
 
 export type AgentProvider = Exclude<keyof typeof EModelEndpoint, EModelEndpoint.agents> | string;
@@ -87,21 +96,6 @@ export const isAgentsEndpoint = (_endpoint?: EModelEndpoint.agents | null | stri
     return false;
   }
   return endpoint === EModelEndpoint.agents;
-};
-
-export const isEphemeralAgent = (
-  endpoint?: EModelEndpoint.agents | null | string,
-  ephemeralAgent?: TEphemeralAgent | null,
-) => {
-  if (!ephemeralAgent) {
-    return false;
-  }
-  if (isAgentsEndpoint(endpoint)) {
-    return false;
-  }
-  const hasMCPSelected = (ephemeralAgent?.mcp?.length ?? 0) > 0;
-  const hasCodeSelected = (ephemeralAgent?.execute_code ?? false) === true;
-  return hasMCPSelected || hasCodeSelected;
 };
 
 export const isParamEndpoint = (
@@ -177,6 +171,7 @@ export const defaultAgentFormValues = {
   recursion_limit: undefined,
   [Tools.execute_code]: false,
   [Tools.file_search]: false,
+  [Tools.web_search]: false,
 };
 
 export const ImageVisionTool: FunctionTool = {
@@ -267,6 +262,18 @@ export const googleSettings = {
     max: 40 as const,
     step: 1 as const,
     default: 40 as const,
+  },
+  thinking: {
+    default: true as const,
+  },
+  thinkingBudget: {
+    min: -1 as const,
+    max: 32768 as const,
+    step: 1 as const,
+    /** `-1` = Dynamic Thinking, meaning the model will adjust
+     * the budget based on the complexity of the request.
+     */
+    default: -1 as const,
   },
 };
 
@@ -413,10 +420,11 @@ export type TPluginAuthConfig = z.infer<typeof tPluginAuthConfigSchema>;
 export const tPluginSchema = z.object({
   name: z.string(),
   pluginKey: z.string(),
-  description: z.string(),
+  description: z.string().optional(),
   icon: z.string().optional(),
   authConfig: z.array(tPluginAuthConfigSchema).optional(),
   authenticated: z.boolean().optional(),
+  chatMenu: z.boolean().optional(),
   isButton: z.boolean().optional(),
   toolkit: z.boolean().optional(),
 });
@@ -514,9 +522,24 @@ export const tMessageSchema = z.object({
   thread_id: z.string().optional(),
   /* frontend components */
   iconURL: z.string().nullable().optional(),
+  feedback: feedbackSchema.optional(),
 });
 
-export type TAttachmentMetadata = { messageId: string; toolCallId: string };
+export type MemoryArtifact = {
+  key: string;
+  value?: string;
+  tokenCount?: number;
+  type: 'update' | 'delete';
+};
+
+export type TAttachmentMetadata = {
+  type?: Tools;
+  messageId: string;
+  toolCallId: string;
+  [Tools.web_search]?: SearchResultData;
+  [Tools.memory]?: MemoryArtifact;
+};
+
 export type TAttachment =
   | (TFile & TAttachmentMetadata)
   | (Pick<TFile, 'filename' | 'filepath' | 'conversationId'> & {
@@ -533,6 +556,7 @@ export type TMessage = z.input<typeof tMessageSchema> & {
   siblingIndex?: number;
   attachments?: TAttachment[];
   clientTimestamp?: string;
+  feedback?: TFeedback;
 };
 
 export const coerceNumber = z.union([z.number(), z.string()]).transform((val) => {
@@ -744,6 +768,7 @@ export type TSetOption = (
 
 export type TConversation = z.infer<typeof tConversationSchema> & {
   presetOverride?: Partial<TPreset>;
+  disableParams?: boolean;
 };
 
 export const tSharedLinkSchema = z.object({
@@ -780,6 +805,8 @@ export const googleBaseSchema = tConversationSchema.pick({
   artifacts: true,
   topP: true,
   topK: true,
+  thinking: true,
+  thinkingBudget: true,
   iconURL: true,
   greeting: true,
   spec: true,
@@ -805,6 +832,12 @@ export const googleGenConfigSchema = z
     presencePenalty: coerceNumber.optional(),
     frequencyPenalty: coerceNumber.optional(),
     stopSequences: z.array(z.string()).optional(),
+    thinkingConfig: z
+      .object({
+        includeThoughts: z.boolean().optional(),
+        thinkingBudget: coerceNumber.optional(),
+      })
+      .optional(),
   })
   .strip()
   .optional();

@@ -1,5 +1,6 @@
+const { isUserProvided } = require('@librechat/api');
 const { EModelEndpoint } = require('librechat-data-provider');
-const { isUserProvided, generateConfig } = require('~/server/utils');
+const { generateConfig } = require('~/server/utils/handleText');
 
 const {
   OPENAI_API_KEY: openAIApiKey,
@@ -14,6 +15,7 @@ const {
   AZURE_OPENAI_BASEURL,
   ASSISTANTS_BASE_URL,
   AZURE_ASSISTANTS_BASE_URL,
+  AZURE_AI_PROJECT_ENDPOINT,
 } = process.env ?? {};
 
 const useAzurePlugins = !!PLUGINS_USE_AZURE;
@@ -42,6 +44,11 @@ module.exports = {
       azureAssistantsApiKey,
       AZURE_ASSISTANTS_BASE_URL,
       EModelEndpoint.azureAssistants,
+    ),
+    [EModelEndpoint.azureAgents]: generateConfig(
+      null,
+      AZURE_AI_PROJECT_ENDPOINT,
+      EModelEndpoint.azureAgents,
     ),
     [EModelEndpoint.bedrock]: generateConfig(
       process.env.BEDROCK_AWS_SECRET_ACCESS_KEY ?? process.env.BEDROCK_AWS_DEFAULT_REGION,

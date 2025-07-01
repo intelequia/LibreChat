@@ -9,7 +9,6 @@ import { useGetEndpointsQuery } from '~/data-provider';
 import NavToggle from '~/components/Nav/NavToggle';
 import { cn, getEndpointField } from '~/utils';
 import { useChatContext } from '~/Providers';
-
 import Nav from './Nav';
 
 const defaultMinSize = 20;
@@ -79,7 +78,7 @@ const SidePanel = ({
     setFullCollapse(true);
     localStorage.setItem('fullPanelCollapse', 'true');
     panelRef.current?.collapse();
-  }, []);
+  }, [panelRef, setMinSize, setIsCollapsed, setFullCollapse, setCollapsedSize]);
 
   const [showBookmarks, setShowBookmarks] = useState(false);
 
@@ -115,7 +114,17 @@ const SidePanel = ({
     } else {
       panelRef.current?.expand();
     }
-  }, [isCollapsed, newUser, setNewUser, navCollapsedSize]);
+  }, [
+    newUser,
+    panelRef,
+    setNewUser,
+    setMinSize,
+    isCollapsed,
+    setIsCollapsed,
+    setFullCollapse,
+    setCollapsedSize,
+    navCollapsedSize,
+  ]);
 
   return (
     <>
@@ -145,7 +154,7 @@ const SidePanel = ({
       <ResizablePanel
         tagName="nav"
         id="controls-nav"
-        order={hasArtifacts != null ? 3 : 2}
+        order={hasArtifacts ? 3 : 2}
         aria-label={localize('com_ui_controls')}
         role="navigation"
         collapsedSize={collapsedSize}

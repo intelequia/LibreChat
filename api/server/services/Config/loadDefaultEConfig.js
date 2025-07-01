@@ -18,6 +18,7 @@ async function loadDefaultEndpointsConfig(req) {
     [EModelEndpoint.agents]: config[EModelEndpoint.agents],
     [EModelEndpoint.assistants]: assistants,
     [EModelEndpoint.azureAssistants]: azureAssistants,
+    [EModelEndpoint.azureAgents]: config[EModelEndpoint.azureAgents],
     [EModelEndpoint.azureOpenAI]: azureOpenAI,
     [EModelEndpoint.google]: google,
     [EModelEndpoint.chatGPTBrowser]: chatGPTBrowser,

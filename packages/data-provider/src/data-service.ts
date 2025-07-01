@@ -2,6 +2,7 @@ import type { AxiosResponse } from 'axios';
 import type * as t from './types';
 import * as endpoints from './api-endpoints';
 import * as a from './types/assistants';
+import * as ag from './types/agents';
 import * as m from './types/mutations';
 import * as q from './types/queries';
 import * as f from './types/files';
@@ -9,14 +10,6 @@ import * as config from './config';
 import request from './request';
 import * as s from './schemas';
 import * as r from './roles';
-
-export function abortRequestWithMessage(
-  endpoint: string,
-  abortKey: string,
-  message: string,
-): Promise<void> {
-  return request.post(endpoints.abortRequest(endpoint), { arg: { abortKey, message } });
-}
 
 export function revokeUserKey(name: string): Promise<unknown> {
   return request.delete(endpoints.revokeUserKey(name));
@@ -93,7 +86,7 @@ export function getUser(): Promise<t.TUser> {
   return request.get(endpoints.user());
 }
 
-export function getUserBalance(): Promise<string> {
+export function getUserBalance(): Promise<t.TBalanceResponse> {
   return request.get(endpoints.balance());
 }
 
@@ -150,7 +143,11 @@ export const updateUserPlugins = (payload: t.TUpdateUserPlugins) => {
 
 /* Config */
 
-export const getStartupConfig = (): Promise<config.TStartupConfig> => {
+export const getStartupConfig = (): Promise<
+  config.TStartupConfig & {
+    mcpCustomUserVars?: Record<string, { title: string; description: string }>;
+  }
+> => {
   return request.get(endpoints.config());
 };
 
@@ -175,6 +172,12 @@ export const createAssistant = ({
   return request.post(endpoints.assistants({ version }), data);
 };
 
+export const createAzureAgent = ({
+  ...data
+}: a.AssistantCreateParams): Promise<a.Assistant> => {
+  return request.post(endpoints.azureAgents({}), data);
+};
+
 export const getAssistantById = ({
   endpoint,
   assistant_id,
@@ -190,6 +193,21 @@ export const getAssistantById = ({
       endpoint,
       version,
     }),
+  );
+};
+
+export const updateAzureAgent = ({
+  assistant_id,
+  data,
+}: {
+  assistant_id: string;
+  data: a.AssistantUpdateParams;
+}): Promise<a.Assistant> => {
+  return request.patch(
+    endpoints.azureAgents({
+      path: assistant_id,
+    }),
+    data,
   );
 };
 
@@ -226,6 +244,19 @@ export const deleteAssistant = ({
   );
 };
 
+export const deleteAzureAgent = ({
+  assistant_id,
+  model,
+  endpoint,
+}: m.DeleteAssistantBody ): Promise<void> => {
+  return request.delete(
+    endpoints.azureAgents({
+      path: assistant_id,
+      options: { model, endpoint },
+    }),
+  );
+};
+
 export const listAssistants = (
   params: a.AssistantListParams,
   version: number | string,
@@ -233,6 +264,16 @@ export const listAssistants = (
   return request.get(
     endpoints.assistants({
       version,
+      options: params,
+    }),
+  );
+};
+
+export const listAzureAgents = (
+  params: a.AssistantListParams,
+): Promise<a.AssistantListResponse> => {
+  return request.get(
+    endpoints.azureAgents({
       options: params,
     }),
   );
@@ -351,7 +392,7 @@ export const updateAction = (data: m.UpdateActionVariables): Promise<m.UpdateAct
   );
 };
 
-export function getActions(): Promise<a.Action[]> {
+export function getActions(): Promise<ag.Action[]> {
   return request.get(
     endpoints.agents({
       path: 'actions',
@@ -407,7 +448,7 @@ export const updateAgent = ({
 
 export const duplicateAgent = ({
   agent_id,
-}: m.DuplicateAgentBody): Promise<{ agent: a.Agent; actions: a.Action[] }> => {
+}: m.DuplicateAgentBody): Promise<{ agent: a.Agent; actions: ag.Action[] }> => {
   return request.post(
     endpoints.agents({
       path: `${agent_id}/duplicate`,
@@ -430,6 +471,14 @@ export const listAgents = (params: a.AgentListParams): Promise<a.AgentListRespon
     }),
   );
 };
+
+export const revertAgentVersion = ({
+  agent_id,
+  version_index,
+}: {
+  agent_id: string;
+  version_index: number;
+}): Promise<a.Agent> => request.post(endpoints.revertAgentVersion(agent_id), { version_index });
 
 /* Tools */
 
@@ -477,6 +526,17 @@ export const importConversationsFile = (data: FormData): Promise<t.TImportRespon
 
 export const uploadAvatar = (data: FormData): Promise<f.AvatarUploadResponse> => {
   return request.postMultiPart(endpoints.avatar(), data);
+};
+
+export const uploadAzureAgentsAvatar = (data: m.AssistantAvatarVariables): Promise<a.Assistant> => {
+  return request.postMultiPart(
+    endpoints.azureAgents({
+      isAvatar: true,
+      path: `${data.assistant_id}/avatar`,
+      options: { model: data.model, endpoint: data.endpoint },
+    }),
+    data.formData,
+  );
 };
 
 export const uploadAssistantAvatar = (data: m.AssistantAvatarVariables): Promise<a.Assistant> => {
@@ -710,6 +770,12 @@ export function updateAgentPermissions(
   return request.put(endpoints.updateAgentPermissions(variables.roleName), variables.updates);
 }
 
+export function updateMemoryPermissions(
+  variables: m.UpdateMemoryPermVars,
+): Promise<m.UpdatePermResponse> {
+  return request.put(endpoints.updateMemoryPermissions(variables.roleName), variables.updates);
+}
+
 /* Tags */
 export function getConversationTags(): Promise<t.TConversationTagsResponse> {
   return request.get(endpoints.conversationTags());
@@ -757,6 +823,15 @@ export function getBanner(): Promise<t.TBannerResponse> {
   return request.get(endpoints.banner());
 }
 
+export function updateFeedback(
+  conversationId: string,
+  messageId: string,
+  payload: t.TUpdateFeedbackRequest,
+): Promise<t.TUpdateFeedbackResponse> {
+  return request.put(endpoints.feedback(conversationId, messageId), payload);
+}
+
+// 2FA
 export function enableTwoFactor(): Promise<t.TEnable2FAResponse> {
   return request.get(endpoints.enableTwoFactor());
 }
@@ -782,3 +857,33 @@ export function verifyTwoFactorTemp(
 ): Promise<t.TVerify2FATempResponse> {
   return request.post(endpoints.verifyTwoFactorTemp(), payload);
 }
+
+/* Memories */
+export const getMemories = (): Promise<q.MemoriesResponse> => {
+  return request.get(endpoints.memories());
+};
+
+export const deleteMemory = (key: string): Promise<void> => {
+  return request.delete(endpoints.memory(key));
+};
+
+export const updateMemory = (
+  key: string,
+  value: string,
+  originalKey?: string,
+): Promise<q.TUserMemory> => {
+  return request.patch(endpoints.memory(originalKey || key), { key, value });
+};
+
+export const updateMemoryPreferences = (preferences: {
+  memories: boolean;
+}): Promise<{ updated: boolean; preferences: { memories: boolean } }> => {
+  return request.patch(endpoints.memoryPreferences(), preferences);
+};
+
+export const createMemory = (data: {
+  key: string;
+  value: string;
+}): Promise<{ created: boolean; memory: q.TUserMemory }> => {
+  return request.post(endpoints.memories(), data);
+};

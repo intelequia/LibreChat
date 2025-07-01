@@ -68,6 +68,11 @@ export const useEndpoints = ({
     [endpoint, assistantsMap],
   );
 
+  const azureAgents: Assistant[] = useMemo(
+    () => Object.values(assistantsMap?.[EModelEndpoint.azureAgents] ?? {}),
+    [endpoint, assistantsMap],
+  );
+
   const filteredEndpoints = useMemo(() => {
     if (!interfaceConfig.modelSelect) {
       return [];
@@ -100,11 +105,10 @@ export const useEndpoints = ({
       const Icon = icons[iconKey];
       const endpointIconURL = getEndpointField(endpointsConfig, ep, 'iconURL');
       const hasModels =
+        (ep === EModelEndpoint.azureAgents && azureAgents?.length > 0) ||
         (ep === EModelEndpoint.agents && agents?.length > 0) ||
         (ep === EModelEndpoint.assistants && assistants?.length > 0) ||
-        (ep !== EModelEndpoint.assistants &&
-          ep !== EModelEndpoint.agents &&
-          (modelsQuery.data?.[ep]?.length ?? 0) > 0);
+        (ep !== EModelEndpoint.assistants && ep !== EModelEndpoint.agents && (modelsQuery.data?.[ep]?.length ?? 0) > 0);
 
       // Base result object with formatted default icon
       const result: Endpoint = {
@@ -113,11 +117,11 @@ export const useEndpoints = ({
         hasModels,
         icon: Icon
           ? React.createElement(Icon, {
-            size: 20,
-            className: 'text-text-primary shrink-0 icon-md',
-            iconURL: endpointIconURL,
-            endpoint: ep,
-          })
+              size: 20,
+              className: 'text-text-primary shrink-0 icon-md',
+              iconURL: endpointIconURL,
+              endpoint: ep,
+            })
           : null,
       };
 
@@ -171,6 +175,25 @@ export const useEndpoints = ({
           {},
         );
         result.modelIcons = azureAssistants.reduce(
+          (acc: Record<string, string | undefined>, assistant: Assistant) => {
+            acc[assistant.id] = assistant.metadata?.avatar;
+            return acc;
+          },
+          {},
+        );
+      } else if (ep === EModelEndpoint.azureAgents && azureAgents.length > 0) {
+        result.models = azureAgents.map((assistant: { id: string }) => ({
+          name: assistant.id,
+          isGlobal: false,
+        }));
+        result.assistantNames = azureAgents.reduce(
+          (acc: Record<string, string>, assistant: Assistant) => {
+            acc[assistant.id] = assistant.name || '';
+            return acc;
+          },
+          {},
+        );
+        result.modelIcons = azureAgents.reduce(
           (acc: Record<string, string | undefined>, assistant: Assistant) => {
             acc[assistant.id] = assistant.metadata?.avatar;
             return acc;

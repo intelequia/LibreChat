@@ -58,9 +58,6 @@ class Sharepoint extends Tool {
     }
   }
 
-
-
-
   async _call(data) {
     var userEmail = data.userEmail;
     if (typeof data == "string"){

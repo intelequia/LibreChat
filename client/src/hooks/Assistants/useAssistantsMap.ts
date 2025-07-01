@@ -21,8 +21,17 @@ export default function useAssistantsMap({
     },
   );
 
+  const { data:azureAgents ={} } = useListAssistantsQuery(
+    EModelEndpoint.azureAgents,
+    undefined,
+    {
+      select: (res) => mapAssistants(res.data),
+      enabled: isAuthenticated,
+    },
+  );
   return {
     [EModelEndpoint.assistants]: assistants,
     [EModelEndpoint.azureAssistants]: azureAssistants,
+    [EModelEndpoint.azureAgents]: azureAgents,
   };
 }

@@ -70,8 +70,6 @@ export const revokeUserKey = (name: string) => `${keysEndpoint}/${name}`;
 
 export const revokeAllUserKeys = () => `${keysEndpoint}?all=true`;
 
-export const abortRequest = (endpoint: string) => `/api/ask/${endpoint}/abort`;
-
 export const conversationsRoot = '/api/convos';
 
 export const conversations = (params: q.ConversationListParams) => {
@@ -138,6 +136,38 @@ export const config = () => '/api/config';
 
 export const prompts = () => '/api/prompts';
 
+export const azureAgents = ({
+  path = '',
+  options,
+  endpoint,
+  isAvatar,
+}: {
+  path?: string;
+  options?: object;
+  endpoint?: AssistantsEndpoint;
+  isAvatar?: boolean;
+}) => {
+  let url = isAvatar === true ? `${images()}/azureAgents` : `/api/azureAgents`;
+
+  if (path && path !== '') {
+    url += `/${path}`;
+  }
+
+  if (endpoint) {
+    options = {
+      ...(options ?? {}),
+      endpoint,
+    };
+  }
+
+  if (options && Object.keys(options).length > 0) {
+    const queryParams = new URLSearchParams(options as Record<string, string>).toString();
+    url += `?${queryParams}`;
+  }
+
+  return url;
+};
+
 export const assistants = ({
   path = '',
   options,
@@ -186,6 +216,8 @@ export const agents = ({ path = '', options }: { path?: string; options?: object
 
   return url;
 };
+
+export const revertAgentVersion = (agent_id: string) => `${agents({ path: `${agent_id}/revert` })}`;
 
 export const files = () => '/api/files';
 
@@ -252,6 +284,7 @@ export const getAllPromptGroups = () => `${prompts()}/all`;
 export const roles = () => '/api/roles';
 export const getRole = (roleName: string) => `${roles()}/${roleName.toLowerCase()}`;
 export const updatePromptPermissions = (roleName: string) => `${getRole(roleName)}/prompts`;
+export const updateMemoryPermissions = (roleName: string) => `${getRole(roleName)}/memories`;
 export const updateAgentPermissions = (roleName: string) => `${getRole(roleName)}/agents`;
 
 /* Conversation Tags */
@@ -270,6 +303,10 @@ export const userTerms = () => '/api/user/terms';
 export const acceptUserTerms = () => '/api/user/terms/accept';
 export const banner = () => '/api/banner';
 
+// Message Feedback
+export const feedback = (conversationId: string, messageId: string) =>
+  `/api/messages/${conversationId}/${messageId}/feedback`;
+
 // Two-Factor Endpoints
 export const enableTwoFactor = () => '/api/auth/2fa/enable';
 export const verifyTwoFactor = () => '/api/auth/2fa/verify';
@@ -277,3 +314,8 @@ export const confirmTwoFactor = () => '/api/auth/2fa/confirm';
 export const disableTwoFactor = () => '/api/auth/2fa/disable';
 export const regenerateBackupCodes = () => '/api/auth/2fa/backup/regenerate';
 export const verifyTwoFactorTemp = () => '/api/auth/2fa/verify-temp';
+
+/* Memories */
+export const memories = () => '/api/memories';
+export const memory = (key: string) => `${memories()}/${encodeURIComponent(key)}`;
+export const memoryPreferences = () => `${memories()}/preferences`;

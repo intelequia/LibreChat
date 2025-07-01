@@ -34,7 +34,7 @@ const { LB_QueueAsyncCall } = require('~/server/utils/queue');
 const { getStrategyFunctions } = require('./strategies');
 const { determineFileType } = require('~/server/utils');
 const { logger } = require('~/config');
-const User = require('~/models/User');
+const { findUser } = require('~/models');
 const { handleKnowledge } = require('~/utils');
 
 /**
@@ -57,7 +57,9 @@ const processFiles = async (files, fileIds) => {
   }
 
   if (!fileIds) {
-    return await Promise.all(promises);
+    const results = await Promise.all(promises);
+    // Filter out null results from failed updateFileUsage calls
+    return results.filter((result) => result != null);
   }
 
   for (let file_id of fileIds) {
@@ -69,7 +71,9 @@ const processFiles = async (files, fileIds) => {
   }
 
   // TODO: calculate token cost when image is first uploaded
-  return await Promise.all(promises);
+  const results = await Promise.all(promises);
+  // Filter out null results from failed updateFileUsage calls
+  return results.filter((result) => result != null);
 };
 
 /**
@@ -139,11 +143,13 @@ const processDeleteRequest = async ({ req, files }) => {
   /** @type {Record<string, OpenAI | undefined>} */
   const client = { [FileSources.openai]: undefined, [FileSources.azure]: undefined };
   const initializeClients = async () => {
-    const openAIClient = await getOpenAIClient({
-      req,
-      overrideEndpoint: EModelEndpoint.assistants,
-    });
-    client[FileSources.openai] = openAIClient.openai;
+    if (req.app.locals[EModelEndpoint.assistants]) {
+      const openAIClient = await getOpenAIClient({
+        req,
+        overrideEndpoint: EModelEndpoint.assistants,
+      });
+      client[FileSources.openai] = openAIClient.openai;
+    }
 
     if (!req.app.locals[EModelEndpoint.azureOpenAI]?.assistants) {
       return;
@@ -373,6 +379,111 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
 };
 
 
+/**
+ * Applies the current strategy for file uploads.
+ * Saves file metadata to the database with an expiry TTL.
+ * Files must be deleted from the server filesystem manually.
+ *
+ * @param {Object} params - The parameters object.
+ * @param {ServerRequest} params.req - The Express request object.
+ * @param {Express.Response} params.res - The Express response object.
+ * @param {FileMetadata} params.metadata - Additional metadata for the file.
+ * @returns {Promise<void>}
+ */
+const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
+  const isAssistantUpload = isAssistantsEndpoint(metadata.endpoint);
+  const source = FileSources.azure;
+  const {handleFileUploadAzureAgent} = getStrategyFunctions(source);
+  // const { handleFileUpload } = getStrategyFunctions(source);
+  const { file_id, temp_file_id } = metadata;
+
+  /** @type {OpenAI | undefined} */
+  let client;
+  if (checkOpenAIStorage(source)) {
+    (client = await getOpenAIClient({ req }));
+  }
+
+  const { file } = req;
+  const {
+    id,
+    bytes,
+    filename,
+    filepath: _filepath,
+    embedded,
+    height,
+    width,
+  } = await handleFileUploadAzureAgent({
+    req,
+    file,
+    file_id,
+    client,
+  });
+  if(metadata.knowledge == 'true'){
+    await handleKnowledge ({ fileId:id, assistantId:metadata.assistant_id }, client)
+  }
+  else if ( isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
+    await client.beta.assistants.files.create(metadata.assistant_id, {
+      file_id: id,
+    });
+  } else if (isAssistantUpload && !metadata.message_file) {
+    await addResourceFileId({
+      req,
+      client,
+      file_id: id,
+      assistant_id: metadata.assistant_id,
+      tool_resource: metadata.tool_resource,
+    });
+  }
+
+  let filepath = isAssistantUpload ? `${client.baseURL}/files/${id}` : _filepath;
+  if (isAssistantUpload && file.mimetype.startsWith('image')) {
+    const result = await processImageFile({
+      req,
+      file,
+      metadata: { file_id: v4() },
+      returnFile: true,
+    });
+    filepath = result.filepath;
+  }
+
+  const result = await createFile(
+    {
+      user: req.user.id,
+      file_id: id ?? file_id,
+      temp_file_id,
+      bytes,
+      filepath,
+      filename: filename ?? file.originalname,
+      context: isAssistantUpload ? FileContext.assistants : FileContext.message_attachment,
+      model: isAssistantUpload ? req.body.model : undefined,
+      type: file.mimetype,
+      embedded,
+      source,
+      height,
+      width,
+    },
+    true,
+  );
+  const userId = result.user.toString();
+  const { email } = await findUser({ userId });
+  
+  /**
+   * Custom event to track when a user uploads files 
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  global.appInsights.trackEvent({
+    name: 'AzureUploadFile',
+    properties: {
+      userId: userId,
+      userEmail: email,
+      fileName: file.filename,
+      fileSize: file.size,
+      fileExtension: file.mimetype.split('/')[1],
+    },
+  });
+  res.status(200).json({ message: 'File uploaded and processed successfully', ...result });
+};
 
 /**
  * Applies the current strategy for file uploads.
@@ -388,7 +499,7 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
 const processFileUpload = async ({ req, res, metadata }) => {
   const isAssistantUpload = isAssistantsEndpoint(metadata.endpoint);
   const assistantSource =
-    metadata.endpoint === EModelEndpoint.azureAssistants ? FileSources.azure : FileSources.openai;
+    metadata.endpoint === EModelEndpoint.azureAssistants || EModelEndpoint.azureAgents? FileSources.azure : FileSources.openai;
   const source = isAssistantUpload ? assistantSource : FileSources.vectordb;
   const { handleFileUpload } = getStrategyFunctions(source);
   const { file_id, temp_file_id } = metadata;
@@ -461,7 +572,8 @@ const processFileUpload = async ({ req, res, metadata }) => {
     true,
   );
   const userId = result.user.toString();
-  const { email } = await User.findOne({ userId }).lean();
+  const { email } = await findUser({ userId });
+  
   /**
    * Custom event to track when a user uploads files 
    * @Organization Intelequia
@@ -543,7 +655,7 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
       throw new Error('OCR capability is not enabled for Agents');
     }
 
-    const { handleFileUpload: uploadMistralOCR } = getStrategyFunctions(
+    const { handleFileUpload: uploadOCR } = getStrategyFunctions(
       req.app.locals?.ocr?.strategy ?? FileSources.mistral_ocr,
     );
     const { file_id, temp_file_id } = metadata;
@@ -555,7 +667,7 @@ const processAgentFileUpload = async ({ req, res, metadata }) => {
       images,
       filename,
       filepath: ocrFileURL,
-    } = await uploadMistralOCR({ req, file, file_id, entity_id: agent_id, basePath });
+    } = await uploadOCR({ req, file, loadAuthValues });
 
     const fileInfo = removeNullishValues({
       text,
@@ -716,7 +828,7 @@ const processOpenAIFile = async ({
 const processOpenAIImageOutput = async ({ req, buffer, file_id, filename, fileExt }) => {
   const currentDate = new Date();
   const formattedDate = currentDate.toISOString();
-  const _file = await convertImage(req, buffer, 'high', `${file_id}${fileExt}`);
+  const _file = await convertImage(req, buffer, undefined, `${file_id}${fileExt}`);
   const file = {
     ..._file,
     usage: 1,
@@ -861,8 +973,9 @@ function base64ToBuffer(base64String) {
 
 async function saveBase64Image(
   url,
-  { req, file_id: _file_id, filename: _filename, endpoint, context, resolution = 'high' },
+  { req, file_id: _file_id, filename: _filename, endpoint, context, resolution },
 ) {
+  const effectiveResolution = resolution ?? req.app.locals.fileConfig?.imageGeneration ?? 'high';
   const file_id = _file_id ?? v4();
   let filename = `${file_id}-${_filename}`;
   const { buffer: inputBuffer, type } = base64ToBuffer(url);
@@ -875,7 +988,7 @@ async function saveBase64Image(
     }
   }
 
-  const image = await resizeImageBuffer(inputBuffer, resolution, endpoint);
+  const image = await resizeImageBuffer(inputBuffer, effectiveResolution, endpoint);
   const source = req.app.locals.fileStrategy;
   const { saveBuffer } = getStrategyFunctions(source);
   const filepath = await saveBuffer({
@@ -978,6 +1091,7 @@ module.exports = {
   processImageFile,
   uploadImageBuffer,
   processFileUpload,
+  azureAgentsProcessFileUpload,
   processDeleteRequest,
   processAgentFileUpload,
   retrieveAndProcessFile,

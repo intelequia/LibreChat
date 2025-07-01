@@ -1,7 +1,7 @@
 const fetch = require('node-fetch');
 const { Client } = require('@microsoft/microsoft-graph-client');
 const { ClientSecretCredential } = require('@azure/identity');
-const User = require('~/models/User');
+const { updateUser } = require('~/models');
 const { logger } = require('~/config');
 const jwtDecode = require('jsonwebtoken/decode');
 
@@ -94,14 +94,15 @@ async function updateUserInfoInCache(jwt, user) {
 
   const adminGroup = global.myCache.get("assistantAdminRole");
 
-  let userGroupsInToken = userIdToken["groups"]
+  let userGroupsInToken = userIdToken.groups
 
   global.myCache.set(user._id.toString(), userGroupsInToken, process.env.USER_GROUPS_CACHE_TTL)
 
   const role = userGroupsInToken ?
     (userGroupsInToken.includes(adminGroup) ? 'ADMIN' : 'USER') :
     'USER';
-  await User.updateOne({ email: user.email }, { $set: { role } });
+  const userId = user._id.toString();
+  await updateUser(userId , { role });
 }
 
 async function saveGraphToken(token, user) {

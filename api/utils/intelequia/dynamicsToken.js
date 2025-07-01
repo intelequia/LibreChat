@@ -32,9 +32,7 @@ async function getDynamicsTokenFromRefresh(refresh_token){
 async function updateDynamicsInCache(jwt,user) {
 
   const token = await getDynamicsTokenFromRefresh(jwt);
-
-  await global.myCache.set(user.email.toString() + '-dynamics', token, process.env.USER_GROUPS_CACHE_TTL);  
-  
+  await global.myCache.set(user.email + '-dynamics', token, process.env.USER_GROUPS_CACHE_TTL);  
 }
 
 module.exports =  {getDynamicsTokenFromRefresh, updateDynamicsInCache};

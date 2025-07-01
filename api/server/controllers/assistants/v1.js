@@ -1,4 +1,5 @@
 const fs = require('fs').promises;
+const { logger } = require('@librechat/data-schemas');
 const { FileContext } = require('librechat-data-provider');
 const { uploadImageBuffer, filterFile } = require('~/server/services/Files/process');
 const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
@@ -6,9 +7,9 @@ const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { deleteAssistantActions } = require('~/server/services/ActionService');
 const { updateAssistantDoc, getAssistants } = require('~/models/Assistant');
 const { getOpenAIClient, fetchAssistants } = require('./helpers');
+const { getCachedTools } = require('~/server/services/Config');
 const { manifestToolMap } = require('~/app/clients/tools');
 const { deleteFileByFilter } = require('~/models/File');
-const { logger } = require('~/config');
 const { IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification, isToolEnabled, GetToolSpecification } = require('~/utils');
 
 /**
@@ -45,21 +46,20 @@ const createAssistant = async (req, res) => {
     delete assistantData.conversation_starters;
     delete assistantData.append_current_datetime;
 
+    const toolDefinitions = await getCachedTools({ includeGlobal: true });
+
     assistantData.tools = tools
       .map((tool) => {
         if (typeof tool !== 'string') {
           return tool;
         }
 
-        const toolDefinitions = req.app.locals.availableTools;
         const toolDef = toolDefinitions[tool];
         if (!toolDef && manifestToolMap[tool] && manifestToolMap[tool].toolkit === true) {
-          return (
-            Object.entries(toolDefinitions)
-              .filter(([key]) => key.startsWith(`${tool}_`))
-              // eslint-disable-next-line no-unused-vars
-              .map(([_, val]) => val)
-          );
+          return Object.entries(toolDefinitions)
+            .filter(([key]) => key.startsWith(`${tool}_`))
+
+            .map(([_, val]) => val);
         }
 
         return toolDef;
@@ -163,22 +163,31 @@ const patchAssistant = async (req, res) => {
       append_current_datetime,
       ...updateData
     } = req.body;
-    updateData.tools = (await Promise.all(
-      (updateData.tools ?? [])
-        .map(async (tool) => {
-          if (typeof tool !== 'string') {
-            if (tool.type === 'retrieval' && _e === 'azureAssistants') { tool.type = 'file_search'; }
-            return tool;
-          }
 
-          /**
-           * Verifies if Tool is within Functions specifications
-           * @Organization Intelequia
-           * @Author Enrique M. Pedroza Castillo
-           */
-          if (await IsToolAFunction(tool)) {
-            return await GetFunctionSpecification(tool)
-          }
+    const toolDefinitions = await getCachedTools({ includeGlobal: true });
+
+    updateData.tools = (updateData.tools ?? [])
+      .map(async (tool) => {
+        if (typeof tool !== 'string') {
+          if (tool.type === 'retrieval' && _e === 'azureAssistants') { tool.type = 'file_search'; }
+          return tool;
+        }
+        
+        /**
+         * Verifies if Tool is within Functions specifications
+         * @Organization Intelequia
+         * @Author Enrique M. Pedroza Castillo
+         */
+        if (await IsToolAFunction(tool)) {
+          return await GetFunctionSpecification(tool)
+        }
+
+        if (!toolDefinitions[tool] && manifestToolMap[tool] && manifestToolMap[tool].toolkit === true) {
+          return Object.entries(toolDefinitions)
+            .filter(([key]) => key.startsWith(`${tool}_`))
+
+            .map(([_, val]) => val);
+        }
 
           /**
            * Verifies if Tool is within Intelequia's Tool List
@@ -201,7 +210,7 @@ const patchAssistant = async (req, res) => {
           }
 
           return toolDef;
-        })))
+        })
       .filter((tool) => tool)
       .flat();
 

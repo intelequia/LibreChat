@@ -41,6 +41,7 @@ const endpointSchemas: Record<EndpointSchemaKey, EndpointSchema> = {
   [EModelEndpoint.gptPlugins]: gptPluginsSchema,
   [EModelEndpoint.assistants]: assistantSchema,
   [EModelEndpoint.azureAssistants]: assistantSchema,
+  [EModelEndpoint.azureAgents]: assistantSchema,
   [EModelEndpoint.agents]: compactAgentsSchema,
   [EModelEndpoint.bedrock]: bedrockInputSchema,
 };
@@ -57,6 +58,7 @@ export function getEnabledEndpoints() {
     EModelEndpoint.assistants,
     EModelEndpoint.azureAssistants,
     EModelEndpoint.azureOpenAI,
+    EModelEndpoint.azureAgents,
     EModelEndpoint.google,
     EModelEndpoint.chatGPTBrowser,
     EModelEndpoint.gptPlugins,
@@ -120,19 +122,6 @@ export function errorsToString(errors: ZodIssue[]) {
       return `${field}: ${message}`;
     })
     .join(' ');
-}
-
-/** Resolves header values to env variables if detected */
-export function resolveHeaders(headers: Record<string, string> | undefined) {
-  const resolvedHeaders = { ...(headers ?? {}) };
-
-  if (headers && typeof headers === 'object' && !Array.isArray(headers)) {
-    Object.keys(headers).forEach((key) => {
-      resolvedHeaders[key] = extractEnvVariable(headers[key]);
-    });
-  }
-
-  return resolvedHeaders;
 }
 
 export function getFirstDefinedValue(possibleValues: string[]) {
@@ -225,12 +214,14 @@ const extractOmniVersion = (modelStr: string): string => {
 export const getResponseSender = (endpointOption: t.TEndpointOption): string => {
   const {
     model: _m,
-    endpoint,
+    endpoint: _e,
     endpointType,
     modelDisplayLabel: _mdl,
     chatGptLabel: _cgl,
     modelLabel: _ml,
   } = endpointOption;
+
+  const endpoint = _e as EModelEndpoint;
 
   const model = _m ?? '';
   const modelDisplayLabel = _mdl ?? '';
@@ -273,15 +264,11 @@ export const getResponseSender = (endpointOption: t.TEndpointOption): string => 
   if (endpoint === EModelEndpoint.google) {
     if (modelLabel) {
       return modelLabel;
-    } else if (model && (model.includes('gemini') || model.includes('learnlm'))) {
-      return 'Gemini';
     } else if (model?.toLowerCase().includes('gemma') === true) {
       return 'Gemma';
-    } else if (model && model.includes('code')) {
-      return 'Codey';
     }
 
-    return 'PaLM2';
+    return 'Gemini';
   }
 
   if (endpoint === EModelEndpoint.custom || endpointType === EModelEndpoint.custom) {
@@ -323,6 +310,7 @@ const compactEndpointSchemas: Record<EndpointSchemaKey, CompactEndpointSchema> =
   [EModelEndpoint.custom]: openAISchema,
   [EModelEndpoint.assistants]: compactAssistantSchema,
   [EModelEndpoint.azureAssistants]: compactAssistantSchema,
+  [EModelEndpoint.azureAgents]: compactAssistantSchema,
   [EModelEndpoint.agents]: compactAgentsSchema,
   [EModelEndpoint.google]: compactGoogleSchema,
   [EModelEndpoint.bedrock]: bedrockInputSchema,

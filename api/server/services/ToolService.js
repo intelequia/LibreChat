@@ -1,10 +1,13 @@
 const fs = require('fs');
 const path = require('path');
+const { sleep } = require('@librechat/agents');
+const { logger } = require('@librechat/data-schemas');
 const { zodToJsonSchema } = require('zod-to-json-schema');
-const { tool: toolFn, Tool, DynamicStructuredTool } = require('@langchain/core/tools');
 const { Calculator } = require('@langchain/community/tools/calculator');
+const { tool: toolFn, Tool, DynamicStructuredTool } = require('@langchain/core/tools');
 const {
   Tools,
+  Constants,
   ErrorTypes,
   ContentTypes,
   imageGenTools,
@@ -14,6 +17,7 @@ const {
   ImageVisionTool,
   openapiToFunction,
   AgentCapabilities,
+  defaultAgentCapabilities,
   validateAndParseOpenAPISpec,
 } = require('librechat-data-provider');
 const {
@@ -29,13 +33,13 @@ const {
   toolkits,
 } = require('~/app/clients/tools');
 const { processFileURL, uploadImageBuffer } = require('~/server/services/Files/process');
+const { getEndpointsConfig, getCachedTools } = require('~/server/services/Config');
+const { createOnSearchResults } = require('~/server/services/Tools/search');
 const { isActionDomainAllowed } = require('~/server/services/domains');
-const { getEndpointsConfig } = require('~/server/services/Config');
 const { recordUsage } = require('~/server/services/Threads');
 const { loadTools } = require('~/app/clients/tools/util');
 const { redactMessage } = require('~/config/parsers');
-const { sleep } = require('~/server/utils');
-const { logger } = require('~/config');
+const { SaveFunctionsInCache, isToolEnabled, GetToolSpecification } = require('~/utils');
 
 /**
  * @param {string} toolName
@@ -81,13 +85,58 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
   const tools = [];
   /* Structured Tools Directory */
   const files = fs.readdirSync(directory);
+  const intelequiaToolDirectory =path.resolve(__dirname, '..', '..','utils','intelequia','pluginsAndTools','implementations',)
+  const intelequiaFiles = fs.readdirSync(intelequiaToolDirectory);
 
   if (included.size > 0 && adminFilter.length > 0) {
     logger.warn(
       'Both `includedTools` and `filteredTools` are defined; `filteredTools` will be ignored.',
     );
   }
+  for (const file of intelequiaFiles) {
+    const filePath = path.join(intelequiaToolDirectory, file);
+    if (!file.endsWith('.js') || (filter.has(file) && included.size === 0)) {
+      continue;
+    }
 
+    let ToolClass = null;
+    try {
+      ToolClass = require(filePath);
+    } catch (error) {
+      logger.error(`[loadAndFormatTools] Error loading tool from ${filePath}:`, error);
+      continue;
+    }
+
+    if (!ToolClass || !(ToolClass.prototype instanceof Tool)) {
+      continue;
+    }
+
+    let toolInstance = null;
+    try {
+      toolInstance = new ToolClass({ override: true });
+    } catch (error) {
+      logger.error(
+        `[loadAndFormatTools] Error initializing \`${file}\` tool; if it requires authentication, is the \`override\` field configured?`,
+        error,
+      );
+      continue;
+    }
+
+    if (!toolInstance) {
+      continue;
+    }
+
+    if (filter.has(toolInstance.name) && included.size === 0) {
+      continue;
+    }
+
+    if (included.size > 0 && !included.has(file) && !included.has(toolInstance.name)) {
+      continue;
+    }
+
+    const formattedTool = formatToOpenAIAssistantTool(toolInstance);
+    tools.push(formattedTool);
+  }
   for (const file of files) {
     const filePath = path.join(directory, file);
     if (!file.endsWith('.js') || (filter.has(file) && included.size === 0)) {
@@ -216,14 +265,15 @@ const processVisionRequest = async (client, currentAction) => {
  * Processes return required actions from run.
  * @param {OpenAIClient | StreamRunManager} client - OpenAI (legacy) or StreamRunManager Client.
  * @param {RequiredAction[]} requiredActions - The required actions to submit outputs for.
+ * @param {string} assistantId - The assistant ID to process the actions for.
  * @returns {Promise<ToolOutputs>} The outputs of the tools.
  */
-async function processRequiredActions(client, requiredActions) {
+async function processRequiredActions(client, requiredActions, assistantId) {
   logger.debug(
     `[required actions] user: ${client.req.user.id} | thread_id: ${requiredActions[0].thread_id} | run_id: ${requiredActions[0].run_id}`,
     requiredActions,
   );
-  const toolDefinitions = client.req.app.locals.availableTools;
+  const toolDefinitions = await getCachedTools({ includeGlobal: true });
   const seenToolkits = new Set();
   const tools = requiredActions
     .map((action) => {
@@ -473,6 +523,17 @@ async function processRequiredActions(client, requiredActions) {
         output: `Error processing tool ${currentAction.tool}: ${redactMessage(error.message, 256)}`,
       };
     };
+    if(tool.mcp){
+      currentAction.toolInput = currentAction.toolInput.toolInput
+    }
+
+    /**
+     * This IF statement adds new parameters to the tool if its specified as an Intelequia's tool.
+     */
+    if (await isToolEnabled(tool.name)) {
+      currentAction.toolInput.assistant = assistantId;
+      currentAction.toolInput.userEmail = client.req.user.email
+    }
 
     try {
       const promise = tool
@@ -503,18 +564,38 @@ async function processRequiredActions(client, requiredActions) {
 async function loadAgentTools({ req, res, agent, tool_resources, openAIApiKey }) {
   if (!agent.tools || agent.tools.length === 0) {
     return {};
+  } else if (agent.tools && agent.tools.length === 1 && agent.tools[0] === AgentCapabilities.ocr) {
+    return {};
   }
 
   const endpointsConfig = await getEndpointsConfig(req);
-  const enabledCapabilities = new Set(endpointsConfig?.[EModelEndpoint.agents]?.capabilities ?? []);
-  const checkCapability = (capability) => enabledCapabilities.has(capability);
+  let enabledCapabilities = new Set(endpointsConfig?.[EModelEndpoint.agents]?.capabilities ?? []);
+  /** Edge case: use defined/fallback capabilities when the "agents" endpoint is not enabled */
+  if (enabledCapabilities.size === 0 && agent.id === Constants.EPHEMERAL_AGENT_ID) {
+    enabledCapabilities = new Set(
+      req.app?.locals?.[EModelEndpoint.agents]?.capabilities ?? defaultAgentCapabilities,
+    );
+  }
+  const checkCapability = (capability) => {
+    const enabled = enabledCapabilities.has(capability);
+    if (!enabled) {
+      logger.warn(
+        `Capability "${capability}" disabled${capability === AgentCapabilities.tools ? '.' : ' despite configured tool.'} User: ${req.user.id} | Agent: ${agent.id}`,
+      );
+    }
+    return enabled;
+  };
   const areToolsEnabled = checkCapability(AgentCapabilities.tools);
 
+  let includesWebSearch = false;
   const _agentTools = agent.tools?.filter((tool) => {
     if (tool === Tools.file_search) {
       return checkCapability(AgentCapabilities.file_search);
     } else if (tool === Tools.execute_code) {
       return checkCapability(AgentCapabilities.execute_code);
+    } else if (tool === Tools.web_search) {
+      includesWebSearch = checkCapability(AgentCapabilities.web_search);
+      return includesWebSearch;
     } else if (!areToolsEnabled && !tool.includes(actionDelimiter)) {
       return false;
     }
@@ -524,7 +605,11 @@ async function loadAgentTools({ req, res, agent, tool_resources, openAIApiKey })
   if (!_agentTools || _agentTools.length === 0) {
     return {};
   }
-
+  /** @type {ReturnType<createOnSearchResults>} */
+  let webSearchCallbacks;
+  if (includesWebSearch) {
+    webSearchCallbacks = createOnSearchResults(res);
+  }
   const { loadedTools, toolContextMap } = await loadTools({
     agent,
     functions: true,
@@ -532,12 +617,14 @@ async function loadAgentTools({ req, res, agent, tool_resources, openAIApiKey })
     tools: _agentTools,
     options: {
       req,
+      res,
       openAIApiKey,
       tool_resources,
       processFileURL,
       uploadImageBuffer,
       returnMetadata: true,
       fileStrategy: req.app.locals.fileStrategy,
+      [Tools.web_search]: webSearchCallbacks,
     },
   });
 

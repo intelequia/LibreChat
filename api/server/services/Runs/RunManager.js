@@ -66,6 +66,29 @@ function getDetailsSignature(details) {
   return 'unknown-type';
 }
 
+
+/**
+ * Generates a signature based on the specifics of the step details.
+ * This function supports 'message_creation' and 'tool_calls' types, and returns a default signature
+ * for any other type or in case the details are undefined.
+ *
+ * @param {MessageCreationStepDetails | ToolCallsStepDetails | undefined} details - The detailed content of the step, which can be undefined.
+ * @returns {string} A signature string derived from the content of step details.
+ */
+function getAzureAgentDetailsSignature(details) {
+  if (!details) {
+    return 'undefined-details';
+  }
+
+  if (details.type === 'message_creation') {
+    return `${details.type}-${details.messageCreation.messageId}`;
+  } else if (details.type === 'tool_calls') {
+    const toolCallsSignature = details.toolCalls.map(getToolCallSignature).join('|');
+    return `${details.type}-${toolCallsSignature}`;
+  }
+  return 'unknown-type';
+}
+
 /**
  * Manages the retrieval and processing of run steps based on run status.
  */
@@ -154,7 +177,79 @@ class RunManager {
       this.stepsByStatus[runStatus].push(currentStepPromise);
     }
   }
+  /**
+   * Fetches run steps once and filters out already seen steps.
+   * @param {Object} params - The parameters for fetching run steps.
+   * @param {AIProjectsClient} params.azureAgentClient - The OpenAI client instance.
+   * @param {string} params.thread_id - The ID of the thread associated with the run.
+   * @param {string} params.run_id - The ID of the run to retrieve steps for.
+   * @param {string} params.runStatus - The status of the run.
+   * @param {boolean} [params.final] - The end of the run polling loop, due to `requires_action`, `cancelling`, `cancelled`, `failed`, `completed`, or `expired` statuses.
+   */
+  async fetchAzureAgentRunSteps({ azureAgentClient, thread_id, run_id, runStatus, final = false }) {
+    try{
+      let _steps = []
+      for await (const step of azureAgentClient.runSteps.list(thread_id, run_id)){
+        _steps.push(step);
+      }
 
+      const steps = _steps.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+      for (const [i, step] of steps.entries()) {
+        const detailsSignature = getAzureAgentDetailsSignature(step.stepDetails);
+        const stepKey = `${step.id}-${step.status}-${detailsSignature}`;
+        if (!final && this.seenSteps.has(stepKey)) {
+          continue;
+        }
+        const isLast = i === steps.length - 1;
+        this.seenSteps.add(stepKey);
+        this.stepsByStatus[runStatus] = this.stepsByStatus[runStatus] || [];
+  
+        const currentStepPromise = (async () => {
+          await (this.lastStepPromiseByStatus[runStatus] || Promise.resolve());
+          return this.handleStep({ step, runStatus, final, isLast });
+        })();
+
+        
+        if (final && isLast) {
+          return await currentStepPromise;
+        }
+
+        if (step.type === 'tool_calls') {
+          await currentStepPromise;
+        }
+        /**
+         * Custom event to track when assistant tool_calls query has ended
+         * @Organization Intelequia
+         * @Author Pablo Suarez Romero
+         */
+        const detailsArray = detailsSignature.split('-');
+        if(detailsArray.length > 4 && runStatus === 'completed'){
+          global.appInsights.trackEvent({
+            name: 'ToolCall',
+            properties: {
+              toolName: detailsArray[2] ?? "",
+              userEmail: azureAgentClient.req.user.email ,
+              promptTokens: detailsArray[3] ?? "",
+              completionTokens: detailsArray[4] ?? "",
+              thread_id: thread_id,
+              run_id: run_id,
+            },
+          });
+        }
+      
+        if (step.type === 'message_creation' && step.status === 'completed') {
+          await currentStepPromise;
+        } 
+
+        this.lastStepPromiseByStatus[runStatus] = currentStepPromise;
+        this.stepsByStatus[runStatus].push(currentStepPromise);
+      }
+    }catch (error) {
+      logger.error(`[RunManager] Error fetching Azure agent run steps: ${error.message}`)
+      return;
+    }
+  }
   /**
    * Handles a run step based on its status.
    * @param {Object} params - The parameters for handling a run step.

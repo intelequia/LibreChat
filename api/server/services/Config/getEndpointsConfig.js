@@ -59,6 +59,19 @@ async function getEndpointsConfig(req) {
       capabilities,
     };
   }
+  if( mergedConfig[EModelEndpoint.azureAgents] && 
+      req.app.locals?.[EModelEndpoint.azureAgents]
+    ){
+      const { disableBuilder, retrievalModels, capabilities, version, ..._rest } =
+        req.app.locals[EModelEndpoint.azureAgents];
+
+      mergedConfig[EModelEndpoint.azureAgents] = {
+        ...mergedConfig[EModelEndpoint.azureAgents],
+        version,
+        disableBuilder,
+        capabilities,
+      };
+  }
 
   if (mergedConfig[EModelEndpoint.bedrock] && req.app.locals?.[EModelEndpoint.bedrock]) {
     const { availableRegions } = req.app.locals[EModelEndpoint.bedrock];

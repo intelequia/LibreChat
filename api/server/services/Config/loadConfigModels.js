@@ -1,4 +1,4 @@
-const { EModelEndpoint, extractEnvVariable } = require('librechat-data-provider');
+const { EModelEndpoint, extractEnvVariable, defaultModels } = require('librechat-data-provider');
 const { isUserProvided, normalizeEndpointName } = require('~/server/utils');
 const { fetchModels } = require('~/server/services/ModelService');
 const { getCustomConfig } = require('./getCustomConfig');
@@ -19,6 +19,8 @@ async function loadConfigModels(req) {
   const modelsConfig = {};
   const azureEndpoint = endpoints[EModelEndpoint.azureOpenAI];
   const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
+  const azureAgentsEndpoint = endpoints[EModelEndpoint.azureAgents];
+
   const { modelNames } = azureConfig ?? {};
 
   if (modelNames && azureEndpoint) {
@@ -30,7 +32,21 @@ async function loadConfigModels(req) {
   }
 
   if (azureEndpoint?.assistants && azureConfig.assistantModels) {
-    modelsConfig[EModelEndpoint.azureAssistants] = azureConfig.assistantModels;
+    const defaultAssistantModels = defaultModels[EModelEndpoint.azureAssistants] || [];
+    modelsConfig[EModelEndpoint.azureAssistants] = azureConfig.assistantModels.filter(
+      (model) => defaultAssistantModels.includes(model),
+    );
+  }
+
+  if (azureAgentsEndpoint) {
+    const defaultAzureAgentModels = defaultModels[EModelEndpoint.azureAgents] || [];
+    modelsConfig[EModelEndpoint.azureAgents] = azureAgentsEndpoint.groups.flatMap((group) => {
+      const modelsArray = Object.values(group.models);
+      const filteredDeploymentNames = modelsArray
+        .filter((model) => defaultAzureAgentModels.includes(model.deploymentName))
+        .map((model) => model.deploymentName);
+      return filteredDeploymentNames;
+    });
   }
 
   if (!Array.isArray(endpoints[EModelEndpoint.custom])) {
