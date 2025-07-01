@@ -412,9 +412,11 @@ async function setupOpenId() {
            * @Organization Intelequia
            * @Author Enrique M. Pedroza Castillo
            */
-          if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
-            await updateUserInfoInCache(tokenset.id_token,user);
-          
+          if( process.env.ENABLE_PERMISSION_MANAGE == "true" ){
+            var userRole = await updateUserInfoInCache(tokenset.id_token,user);
+            user.role=userRole
+            console.log("done")
+          }
           /**
            * Saves Graph Token
            * @Organization Intelequia

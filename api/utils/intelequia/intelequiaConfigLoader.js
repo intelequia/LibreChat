@@ -1,7 +1,7 @@
 const fetch = require('node-fetch');
 const { Client } = require('@microsoft/microsoft-graph-client');
 const { ClientSecretCredential } = require('@azure/identity');
-const { updateUser } = require('~/models');
+const { updateUser, findUser } = require('~/models');
 const { logger } = require('~/config');
 const jwtDecode = require('jsonwebtoken/decode');
 
@@ -103,6 +103,7 @@ async function updateUserInfoInCache(jwt, user) {
     'USER';
   const userId = user._id.toString();
   await updateUser(userId , { role });
+  return role;
 }
 
 async function saveGraphToken(token, user) {
