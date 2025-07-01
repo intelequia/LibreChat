@@ -18,7 +18,6 @@ const { RunManager, waitForRun } = require('~/server/services/Runs');
 const { processMessages } = require('~/server/services/Threads');
 const { createOnProgress } = require('~/server/utils');
 const { TextStream } = require('~/app/clients');
-const { logger } = require('~/config');
 const { intelequiaTools } = require ("~/utils")
 
 /**
