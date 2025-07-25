@@ -44,6 +44,10 @@ export enum PermissionTypes {
    * Type for using the "Web Search" feature
    */
   WEB_SEARCH = 'WEB_SEARCH',
+  /**
+   * Type for using the "File Search" feature
+   */
+  FILE_SEARCH = 'FILE_SEARCH',
 }
 
 /**
@@ -119,6 +123,11 @@ export const webSearchPermissionsSchema = z.object({
 });
 export type TWebSearchPermissions = z.infer<typeof webSearchPermissionsSchema>;
 
+export const fileSearchPermissionsSchema = z.object({
+  [Permissions.USE]: z.boolean().default(true),
+});
+export type TFileSearchPermissions = z.infer<typeof fileSearchPermissionsSchema>;
+
 // Define a single permissions schema that holds all permission types.
 export const permissionsSchema = z.object({
   [PermissionTypes.PROMPTS]: promptPermissionsSchema,
@@ -137,4 +146,5 @@ export const permissionsSchema = z.object({
     [Permissions.USE]: z.boolean().default(false),  
   }),
   [PermissionTypes.WEB_SEARCH]: webSearchPermissionsSchema,
+  [PermissionTypes.FILE_SEARCH]: fileSearchPermissionsSchema,
 });

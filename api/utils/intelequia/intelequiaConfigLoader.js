@@ -1,7 +1,7 @@
 const fetch = require('node-fetch');
 const { Client } = require('@microsoft/microsoft-graph-client');
 const { ClientSecretCredential } = require('@azure/identity');
-const { updateUser, findUser } = require('~/models');
+// const { findUser, createUser, updateUser } = require('~/models');
 const { logger } = require('~/config');
 const jwtDecode = require('jsonwebtoken/decode');
 
@@ -89,7 +89,7 @@ async function loadPermissionConfigFiles(url) {
  * @Organization Intelequia
  * @Author Pablo Suárez Romero
  */
-async function updateUserInfoInCache(jwt, user) {
+async function updateUserInfoInCache(jwt, user, updateUser) {
   let userIdToken = jwtDecode(jwt)
 
   const adminGroup = global.myCache.get("assistantAdminRole");

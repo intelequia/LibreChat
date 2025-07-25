@@ -37,6 +37,9 @@ export interface IRole extends Document {
     };
     [PermissionTypes.ASSISTANT_CREATOR]?: {
       [Permissions.USE]?: boolean;
+    }
+    [PermissionTypes.FILE_SEARCH]?: {
+      [Permissions.USE]?: boolean;
     };
   };
 }

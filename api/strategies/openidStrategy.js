@@ -50,7 +50,7 @@ async function customFetch(url, options) {
       logger.info(`[openidStrategy] proxy agent configured: ${process.env.PROXY}`);
       fetchOptions = {
         ...options,
-        dispatcher: new HttpsProxyAgent(process.env.PROXY),
+        dispatcher: new undici.ProxyAgent(process.env.PROXY),
       };
     }
 
@@ -413,7 +413,7 @@ async function setupOpenId() {
            * @Author Enrique M. Pedroza Castillo
            */
           if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
-            user.role = await updateUserInfoInCache(tokenset.id_token,user);
+            user.role = await updateUserInfoInCache(tokenset.id_token, user, (userId, update) => updateUser(userId, update));
           
           /**
            * Saves Graph Token

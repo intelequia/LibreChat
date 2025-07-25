@@ -273,7 +273,7 @@ async function processRequiredActions(client, requiredActions, assistantId) {
     `[required actions] user: ${client.req.user.id} | thread_id: ${requiredActions[0].thread_id} | run_id: ${requiredActions[0].run_id}`,
     requiredActions,
   );
-  const toolDefinitions = await getCachedTools({ includeGlobal: true });
+  const toolDefinitions = await getCachedTools({ userId: client.req.user.id, includeGlobal: true });
   const seenToolkits = new Set();
   const tools = requiredActions
     .map((action) => {

@@ -151,6 +151,7 @@ async function getSessionInfo(fileIdentifier, apiKey) {
  * @param {Object} options
  * @param {ServerRequest} options.req
  * @param {Agent['tool_resources']} options.tool_resources
+ * @param {string} [options.agentId] - The agent ID for file access control
  * @param {string} apiKey
  * @returns {Promise<{
  * files: Array<{ id: string; session_id: string; name: string }>,
@@ -158,11 +159,18 @@ async function getSessionInfo(fileIdentifier, apiKey) {
  * }>}
  */
 const primeFiles = async (options, apiKey) => {
-  const { tool_resources } = options;
+  const { tool_resources, req, agentId } = options;
   const file_ids = tool_resources?.[EToolResources.execute_code]?.file_ids ?? [];
   const agentResourceIds = new Set(file_ids);
   const resourceFiles = tool_resources?.[EToolResources.execute_code]?.files ?? [];
-  const dbFiles = ((await getFiles({ file_id: { $in: file_ids } })) ?? []).concat(resourceFiles);
+  const dbFiles = (
+    (await getFiles(
+      { file_id: { $in: file_ids } },
+      null,
+      { text: 0 },
+      { userId: req?.user?.id, agentId },
+    )) ?? []
+  ).concat(resourceFiles);
 
   const files = [];
   const sessions = new Map();
