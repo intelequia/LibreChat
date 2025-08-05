@@ -647,6 +647,7 @@ export enum ScraperTypes {
 export enum RerankerTypes {
   JINA = 'jina',
   COHERE = 'cohere',
+  CUSTOMLOCAL = 'customLocal',
 }
 
 export enum SafeSearchTypes {
@@ -662,6 +663,7 @@ export const webSearchSchema = z.object({
   firecrawlApiKey: z.string().optional().default('${FIRECRAWL_API_KEY}'),
   firecrawlApiUrl: z.string().optional().default('${FIRECRAWL_API_URL}'),
   jinaApiKey: z.string().optional().default('${JINA_API_KEY}'),
+  customRerankerUrl: z.string().optional().default('${CUSTOM_RERANKER_URL}'),
   cohereApiKey: z.string().optional().default('${COHERE_API_KEY}'),
   searchProvider: z.nativeEnum(SearchProviders).optional(),
   scraperType: z.nativeEnum(ScraperTypes).optional(),
