@@ -465,7 +465,7 @@ const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
     true,
   );
   const userId = result.user.toString();
-  const { email } = await findUser({ userId });
+  const { email } = await findUser({ _id:userId });
   
   /**
    * Custom event to track when a user uploads files 
@@ -572,7 +572,7 @@ const processFileUpload = async ({ req, res, metadata }) => {
     true,
   );
   const userId = result.user.toString();
-  const { email } = await findUser({ userId });
+  const { email } = await findUser({ _id:userId });
   
   /**
    * Custom event to track when a user uploads files 

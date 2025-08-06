@@ -282,7 +282,7 @@ function createInProgressHandler(openai, thread_id, messages) {
 
       openai.seenCompletedMessages.add(message_id);
 
-      const message = await openai.beta.threads.messages.retrieve(thread_id, message_id);
+      const message = await openai.beta.threads.messages.retrieve(message_id, {thread_id} );
       if (!message?.content?.length) {
         return;
       }
@@ -463,9 +463,21 @@ async function runAssistant({
     };
   });
 
-  const outputs = await processRequiredActions(openai, actions);
-
-  const toolRun = await openai.beta.threads.runs.submitToolOutputs(run.thread_id, run.id, outputs);
+  var tool_outputs = await processRequiredActions(openai, actions);
+  
+  /**
+   *  TO-DO: revert this change 
+   *  @Author Enrique Pedroza Castillo
+   *  @Organization Intelequia
+   */
+  tool_outputs=tool_outputs.tool_outputs;
+  const toolRun = await openai.beta.threads.runs.submitToolOutputs(
+    run.id, 
+    {
+      thread_id:run.thread_id, 
+      tool_outputs
+    }
+  );
 
   // Recursive call with accumulated steps and messages
   return await runAssistant({

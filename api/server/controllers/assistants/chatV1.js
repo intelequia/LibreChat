@@ -201,7 +201,7 @@ const chatV1 = async (req, res) => {
         return res.end();
       }
       await cache.delete(cacheKey);
-      const cancelledRun = await openai.beta.threads.runs.cancel(thread_id, run_id);
+      const cancelledRun = await openai.beta.threads.runs.cancel( run_id, {thread_id});
       logger.debug('[/assistants/chat/] Cancelled run:', cancelledRun);
     } catch (error) {
       logger.error('[/assistants/chat/] Error cancelling run', error);
@@ -211,7 +211,7 @@ const chatV1 = async (req, res) => {
 
     let run;
     try {
-      run = await openai.beta.threads.runs.retrieve(thread_id, run_id);
+      run = await openai.beta.threads.runs.retrieve(run_id, {thread_id});
       await recordUsage({
         ...run.usage,
         model: run.model,

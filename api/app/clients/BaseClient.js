@@ -655,13 +655,13 @@ class BaseClient {
 
     const { findUser } = require('~/models');
     const userId = user
-    const {email} = await findUser({ userId });
+    const {email} = await findUser({ _id: userId });
 
     /**
-       * Custom event to track when user creates a completion query
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
+     * Custom event to track when user creates a completion query
+     * @Organization Intelequia
+     * @Author Enrique M. Pedroza Castillo
+     */
     global.appInsights.trackEvent({
       name: this.options.endpoint == "azureOpenAI"?'AzureQuery':'AgentQuery',
       properties: {
