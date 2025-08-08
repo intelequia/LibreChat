@@ -1,9 +1,9 @@
-import { TranslationKeys, useLocalize } from '~/hooks';
+import { ThemeSelector } from '@librechat/client';
 import { TStartupConfig } from 'librechat-data-provider';
 import { ErrorMessage } from '~/components/Auth/ErrorMessage';
+import { TranslationKeys, useLocalize } from '~/hooks';
 import SocialLoginRender from './SocialLoginRender';
 import { BlinkAnimation } from './BlinkAnimation';
-import { ThemeSelector } from '~/components';
 import { Banner } from '../Banners';
 import Footer from './Footer';
 
@@ -24,7 +24,7 @@ function AuthLayout({
   pathname: string;
   error: TranslationKeys | null;
 }) {
-  const localize = useLocalize(); 
+  const localize = useLocalize();
 
   const hasStartupConfigError = startupConfigError !== null && startupConfigError !== undefined;
   const DisplayError = () => {

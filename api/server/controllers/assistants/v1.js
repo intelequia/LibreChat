@@ -267,7 +267,7 @@ const deleteAssistant = async (req, res) => {
     });
 
     const assistant_id = req.params.id;
-    const deletionStatus = await openai.beta.assistants.del(assistant_id);
+    const deletionStatus = await openai.beta.assistants.delete(assistant_id);
     if (deletionStatus?.deleted) {
       await deleteAssistantActions({ req, assistant_id });
     }
@@ -443,7 +443,7 @@ const uploadAssistantAvatar = async (req, res) => {
     try {
       await fs.unlink(req.file.path);
       logger.debug('[/:agent_id/avatar] Temp. image upload file deleted');
-    } catch (error) {
+    } catch {
       logger.debug('[/:agent_id/avatar] Temp. image upload file already deleted');
     }
   }

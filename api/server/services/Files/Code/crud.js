@@ -54,14 +54,11 @@ async function getCodeOutputDownloadStream(fileIdentifier, apiKey) {
  */
 async function uploadCodeEnvFile({ req, stream, filename, apiKey, entity_id = '' }) {
   try {
-
     const form = new FormData();
-
-    if (entity_id.length > 0) 
+    if (entity_id.length > 0) {
       form.append('entity_id', entity_id);
-
+    }
     form.append('file', stream, filename);
-    form.append('path',"uploads")
 
     const baseURL = getCodeBaseURL();
     /** @type {import('axios').AxiosRequestConfig} */
@@ -85,7 +82,7 @@ async function uploadCodeEnvFile({ req, stream, filename, apiKey, entity_id = ''
       throw new Error(`Error uploading file: ${result.message}`);
     }
 
-    const fileIdentifier = result.file_id;
+    const fileIdentifier = `${result.session_id}/${result.files[0].fileId}`;
     if (entity_id.length === 0) {
       return fileIdentifier;
     }

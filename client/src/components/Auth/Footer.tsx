@@ -1,6 +1,6 @@
 import { useLocalize } from '~/hooks';
 import { TStartupConfig } from 'librechat-data-provider';
-import { ThemeContext } from '~/hooks';
+import { ThemeContext } from '@librechat/client';
 import { useContext } from 'react';
 
 function Footer({ startupConfig }: { startupConfig: TStartupConfig | null | undefined }) {

@@ -1,23 +1,6 @@
 const { Balance } = require('~/db/models');
 
 async function balanceController(req, res) {
-
-  // Intelequia Code
-  // const isBalanceEnabled = process.env.CHECK_BALANCE;
-
-  // if (!isBalanceEnabled) {
-  //   return res.status(200).send('' + balance);
-  // }      
-
-  
-  // const balanceRecord = await Balance.findOne({ user: req.user.id }, 'tokenCredits').lean();
-  
-  // const balance = balanceRecord?.tokenCredits ?? 0;
-  
-  // console.info("Balance del usuario:", balance);
-  
-  // return res.status(200).send('' + balance);
-
   const balanceData = await Balance.findOne(
     { user: req.user.id },
     '-_id tokenCredits autoRefillEnabled refillIntervalValue refillIntervalUnit lastRefill refillAmount',

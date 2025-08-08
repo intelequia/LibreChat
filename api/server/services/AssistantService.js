@@ -282,7 +282,7 @@ function createInProgressHandler(openai, thread_id, messages) {
 
       openai.seenCompletedMessages.add(message_id);
 
-      const message = await openai.beta.threads.messages.retrieve(message_id, {thread_id} );
+      const message = await openai.beta.threads.messages.retrieve(message_id, { thread_id });
       if (!message?.content?.length) {
         return;
       }
@@ -401,10 +401,6 @@ async function runAssistant({
   /** @type {TCustomConfig.endpoints.assistants} */
   const assistantsEndpointConfig = openai.req.app.locals?.[endpoint] ?? {};
   let { pollIntervalMs, timeoutMs } = assistantsEndpointConfig;
-
-
-  if (endpoint == EModelEndpoint.azureAssistants)
-    pollIntervalMs = 5000
   
   const run = await waitForRun({
     openai,

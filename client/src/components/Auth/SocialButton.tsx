@@ -1,14 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 
-const SocialButton = ({ id, enabled, serverDomain, oauthPath, Icon, label, autoRedirect }) => {
-  const [isHovered, setIsHovered] = useState(false);
-  const [isPressed, setIsPressed] = useState(false);
-  const [activeButton, setActiveButton] = useState(null);
-
-  if (autoRedirect && typeof window !== 'undefined') {
-        window.location.href = `${serverDomain}/oauth/${oauthPath}`;
-  }
-
+const SocialButton = ({ id, enabled, serverDomain, oauthPath, Icon, label }) => {
   if (!enabled) {
     return null;
   }

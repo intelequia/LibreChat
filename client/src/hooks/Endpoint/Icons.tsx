@@ -1,6 +1,5 @@
-import { EModelEndpoint } from 'librechat-data-provider';
-import type { IconMapProps, AgentIconMapProps, IconsRecord } from '~/common';
 import { Feather } from 'lucide-react';
+import { EModelEndpoint } from 'librechat-data-provider';
 import {
   MinimalPlugin,
   GPTIcon,
@@ -12,7 +11,8 @@ import {
   LightningIcon,
   BedrockIcon,
   Sparkles,
-} from '~/components/svg';
+} from '@librechat/client';
+import type { IconMapProps, AgentIconMapProps, IconsRecord } from '~/common';
 import UnknownIcon from './UnknownIcon';
 import { cn } from '~/utils';
 
@@ -70,7 +70,6 @@ export const icons: IconsRecord = {
   [EModelEndpoint.custom]: CustomMinimalIcon,
   [EModelEndpoint.assistants]: AssistantAvatar,
   [EModelEndpoint.azureAssistants]: AssistantAvatar,
-  [EModelEndpoint.azureAgents]:AssistantAvatar,
   [EModelEndpoint.agents]: AgentAvatar,
   [EModelEndpoint.bedrock]: Bedrock,
   unknown: UnknownIcon,

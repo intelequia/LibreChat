@@ -226,9 +226,8 @@ async function waitForRun({
   const runIdLog = `run_id: ${run_id}`;
   const runInfo = `user: ${openai.req.user.id} | thread_id: ${thread_id} | ${runIdLog}`;
   const raceTimeoutMs = 3000;
-  let maxRetries = 10;
+  let maxRetries = 5;
   while (timeElapsed < timeout) {
-    console.log(`[Time]: Time Elapsed ${timeElapsed}, TimeOut ${timeout}, Poll Interval Ms ${pollIntervalMs}`)
     i++;
     logger.debug(`[heartbeat ${i}] ${runIdLog} | Retrieving run status...`);
     let updatedRun;
@@ -244,7 +243,6 @@ async function waitForRun({
             attempt + 1
           } of ${maxRetries})...`,
         );
-        console.log("[UPDATED RUN STATUS:]: ",updatedRun.status)
         const endTime = Date.now();
         logger.debug(
           `[heartbeat ${i}] ${runIdLog} | Elapsed run retrieval time: ${endTime - startTime}`,
@@ -284,7 +282,6 @@ async function waitForRun({
       logger.warn(`[waitForRun] ${runStatus} | RUN CANCELLED`);
       throw new Error('Run cancelled');
     }
-    console.log("[RUN STATUS:]: ",run.status)
     if (![RunStatus.IN_PROGRESS, RunStatus.QUEUED].includes(run.status)) {
       logger.debug(`[FINAL] ${runInfo} | status: ${run.status}`);
       await runManager.fetchRunSteps({
@@ -329,7 +326,7 @@ async function waitForRun({
  * @return {Promise<RunStep[]>} A promise that resolves to an array of RunStep objects.
  */
 async function _retrieveRunSteps({ openai, thread_id, run_id }) {
-  const runSteps = await openai.beta.threads.runs.steps.list(run_id, {thread_id});
+  const runSteps = await openai.beta.threads.runs.steps.list(run_id, { thread_id });
   return runSteps;
 }
 

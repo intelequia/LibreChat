@@ -384,23 +384,7 @@ const handleAbortError = async (res, req, error, data) => {
       return respondWithError(partialText);
     }
   } else {
-    if(error.code === "content_filter"){
-
-      const responseMessage = error.error.message + "\nReasons: \n"
-      const contentFilterResult = error?.error?.innererror?.content_filter_result;
-      const reasons = [];
-      for (const [key, value] of Object.entries(contentFilterResult)) {
-        // Check if the content is filtered
-        if (value.filtered) {
-          // Add the reason to the list
-          reasons.push(`Content about "${key}" has been filtered with severity "${value.severity}".`);
-        }
-      }
-      const reasonsMessage = reasons.join('\n');
-      return respondWithError(responseMessage + reasonsMessage)
-    }
-    else
-      return respondWithError();
+    return respondWithError();
   }
 };
 

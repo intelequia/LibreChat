@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Search, X } from 'lucide-react';
 import { useFormContext } from 'react-hook-form';
 import { Constants, isAgentsEndpoint } from 'librechat-data-provider';

@@ -1,6 +1,6 @@
 {
   "name": "@librechat/backend",
-  "version": "v0.7.9",
+  "version": "v0.8.0-rc1",
   "description": "",
   "scripts": {
     "start": "echo 'please run this from the root directory'",
@@ -98,7 +98,7 @@
     "node-fetch": "^2.7.0",
     "nodemailer": "^6.9.15",
     "ollama": "^0.5.0",
-    "openai": "^5.10.2",
+    "openai": "^5.10.1",
     "openai-chat-tokens": "^0.2.8",
     "openid-client": "^6.5.0",
     "passport": "^0.6.0",

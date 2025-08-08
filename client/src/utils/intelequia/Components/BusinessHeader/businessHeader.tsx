@@ -1,6 +1,6 @@
 import React, { FC, useContext, useEffect, useState } from 'react';
 import './businessHeaderStyles.css';
-import { ThemeContext } from '~/hooks';
+import { ThemeContext } from '@librechat/client';
 
 interface StartupConfig {
   businessChatTitle?: string;

@@ -198,20 +198,6 @@ const chatV2 = async (req, res) => {
       clientTimestamp,
     });
 
-    if (promptPrefix) {
-      body.additional_instructions = promptPrefix;
-    }
-
-    if (typeof endpointOption.artifactsPrompt === 'string' && endpointOption.artifactsPrompt) {
-      body.additional_instructions = `${body.additional_instructions ?? ''}\n${
-        endpointOption.artifactsPrompt
-      }`.trim();
-    }
-
-    if (instructions) {
-      body.instructions = instructions;
-    }
-
     const getRequestFileIds = async () => {
       let thread_file_ids = [];
       if (convoId) {
@@ -481,7 +467,7 @@ const chatV2 = async (req, res) => {
 
     if (!response.run.usage) {
       await sleep(3000);
-      completedRun = await openai.beta.threads.runs.retrieve(thread_id, response.run.id);
+      completedRun = await openai.beta.threads.runs.retrieve(response.run.id, { thread_id });
       if (completedRun.usage) {
         await recordUsage({
           ...completedRun.usage,

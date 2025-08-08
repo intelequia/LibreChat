@@ -1,10 +1,11 @@
 const express = require('express');
+const { isEnabled } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { CacheKeys, defaultSocialLogins, Constants } = require('librechat-data-provider');
 const { getCustomConfig } = require('~/server/services/Config/getCustomConfig');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getProjectByName } = require('~/models/Project');
-const { isEnabled } = require('~/server/utils');
+const { getMCPManager } = require('~/config');
 const { getLogStores } = require('~/cache');
 
 const router = express.Router();
@@ -23,11 +24,11 @@ const publicSharedLinksEnabled =
 router.get('/', async function (req, res) {
   const cache = getLogStores(CacheKeys.CONFIG_STORE);
 
-  // const cachedStartupConfig = await cache.get(CacheKeys.STARTUP_CONFIG);
-  // if (cachedStartupConfig && !haveToUpdateData) {
-  //   res.send(cachedStartupConfig);
-  //   return;
-  // }
+  const cachedStartupConfig = await cache.get(CacheKeys.STARTUP_CONFIG);
+  if (cachedStartupConfig) {
+    res.send(cachedStartupConfig);
+    return;
+  }
 
   const isBirthday = () => {
     const today = new Date();
@@ -102,11 +103,16 @@ router.get('/', async function (req, res) {
     payload.mcpServers = {};
     const config = await getCustomConfig();
     if (config?.mcpServers != null) {
+      const mcpManager = getMCPManager();
+      const oauthServers = mcpManager.getOAuthServers();
+
       for (const serverName in config.mcpServers) {
         const serverConfig = config.mcpServers[serverName];
         payload.mcpServers[serverName] = {
           customUserVars: serverConfig?.customUserVars || {},
           chatMenu: serverConfig?.chatMenu,
+          isOAuth: oauthServers.has(serverName),
+          startup: serverConfig?.startup,
         };
       }
     }
@@ -139,7 +145,11 @@ router.get('/', async function (req, res) {
     if (typeof process.env.CUSTOM_FOOTER === 'string') {
       payload.customFooter = process.env.CUSTOM_FOOTER;
     }
-  
+    /**
+     * Look and feel env settings
+     * @Author Enrique Pedroza
+     * @Organization Intelequia
+     */
     payload.businessChatTitle = process.env.BUSINESS_CHAT_TITLE || 'Intelewriter';
     payload.businessChatTitleLight = process.env.BUSINESS_CHAT_TITLE_COLOR_LIGHT || "black";
     payload.businessChatTitleDark = process.env.BUSINESS_CHAT_TITLE_COLOR_DARK || "white";

@@ -1,4 +1,4 @@
-const { EModelEndpoint, extractEnvVariable, defaultModels } = require('librechat-data-provider');
+const { EModelEndpoint, extractEnvVariable } = require('librechat-data-provider');
 const { isUserProvided, normalizeEndpointName } = require('~/server/utils');
 const { fetchModels } = require('~/server/services/ModelService');
 const { getCustomConfig } = require('./getCustomConfig');

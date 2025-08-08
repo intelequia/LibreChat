@@ -85,6 +85,12 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
   const tools = [];
   /* Structured Tools Directory */
   const files = fs.readdirSync(directory);
+  /**
+   * This appends intelequia tools directory 
+   * @Author Enrique Pedroza 
+   * @Organization Intelequia
+   */
+
   const intelequiaToolDirectory =path.resolve(__dirname, '..', '..','utils','intelequia','pluginsAndTools','implementations',)
   const intelequiaFiles = fs.readdirSync(intelequiaToolDirectory);
 
@@ -93,6 +99,11 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
       'Both `includedTools` and `filteredTools` are defined; `filteredTools` will be ignored.',
     );
   }
+  /**
+   * Load intelequia tools files 
+   * @Author Enrique Pedroza 
+   * @Organization Intelequia
+   */
   for (const file of intelequiaFiles) {
     const filePath = path.join(intelequiaToolDirectory, file);
     if (!file.endsWith('.js') || (filter.has(file) && included.size === 0)) {
@@ -330,6 +341,12 @@ async function processRequiredActions(client, requiredActions, assistantId) {
     }
     let tool = ToolMap[currentAction.tool] ?? ActionToolMap[currentAction.tool];
 
+    /**
+     * Loads function list and adds logic apps implementation to tool list 
+     * @Author Enrique Pedroza 
+     * @Organization Intelequia
+     */
+
     const functionList = global.myCache.get('functions');
 
     if (functionList.some((f) => f.name == currentAction.tool)) {
@@ -529,7 +546,9 @@ async function processRequiredActions(client, requiredActions, assistantId) {
 
     /**
      * This IF statement adds new parameters to the tool if its specified as an Intelequia's tool.
+     * @Organization Intelequia
      */
+
     if (await isToolEnabled(tool.name)) {
       currentAction.toolInput.assistant = assistantId;
       currentAction.toolInput.userEmail = client.req.user.email

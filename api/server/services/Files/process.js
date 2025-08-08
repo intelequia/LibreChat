@@ -525,10 +525,8 @@ const processFileUpload = async ({ req, res, metadata }) => {
     file_id,
     openai,
   });
-  if(metadata.knowledge == 'true'){
-    await handleKnowledge ({ fileId:id, assistantId:metadata.assistant_id }, openai)
-  }
-  else if ( isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
+
+  if (isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
     await openai.beta.assistants.files.create(metadata.assistant_id, {
       file_id: id,
     });

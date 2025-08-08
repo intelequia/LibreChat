@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 } from 'uuid';
+import { useToastContext } from '@librechat/client';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   QueryKeys,
@@ -17,7 +18,6 @@ import { useGetFileConfig, useUploadFileMutation } from '~/data-provider';
 import useLocalize, { TranslationKeys } from '~/hooks/useLocalize';
 import { useDelayedUploadToast } from './useDelayedUploadToast';
 import { processFileForUpload } from '~/utils/heicConverter';
-import { useToastContext } from '~/Providers/ToastContext';
 import { useChatContext } from '~/Providers/ChatContext';
 import { logger, validateFiles } from '~/utils';
 import useClientResize from './useClientResize';
@@ -32,8 +32,6 @@ type UseFileHandling = {
 };
 
 const useFileHandling = (params?: UseFileHandling) => {
-  const isKnowledge = params?.isKnowledge ?? false;
-
   const localize = useLocalize();
   const queryClient = useQueryClient();
   const { showToast } = useToastContext();
@@ -222,7 +220,6 @@ const useFileHandling = (params?: UseFileHandling) => {
       formData.append('model', convoModel);
     }
 
-    formData.append('knowledge',isKnowledge?"true":"false")
     uploadFile.mutate(formData);
   };
 

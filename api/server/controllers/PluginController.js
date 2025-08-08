@@ -189,17 +189,6 @@ const getAvailableTools = async (req, res) => {
 
     const toolDefinitions = (await getCachedTools({ includeGlobal: true })) || {};
 
-    // /**
-    //  * Added intelequia's tools in agents tool store
-    //  * @Organization Intelequia
-    //  * @Author Enrique M. Pedroza Castillo
-    //  */
-    // const intelequiaDefinitions = authenticatedPlugins.filter(tool => intelequiaTools.includes(tool.pluginKey))
-    // const allTools = {...toolDefinitions, ...intelequiaDefinitions}
-
-    // await cache.set(CacheKeys.TOOLS, allTools);
-    // res.status(200).json(allTools);
-
     const toolsOutput = [];
     for (const plugin of authenticatedPlugins) {
       const isToolDefined = toolDefinitions[plugin.pluginKey] !== undefined;

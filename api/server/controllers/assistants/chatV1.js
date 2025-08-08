@@ -201,7 +201,7 @@ const chatV1 = async (req, res) => {
         return res.end();
       }
       await cache.delete(cacheKey);
-      const cancelledRun = await openai.beta.threads.runs.cancel( run_id, {thread_id});
+      const cancelledRun = await openai.beta.threads.runs.cancel(run_id, { thread_id });
       logger.debug('[/assistants/chat/] Cancelled run:', cancelledRun);
     } catch (error) {
       logger.error('[/assistants/chat/] Error cancelling run', error);
@@ -211,7 +211,7 @@ const chatV1 = async (req, res) => {
 
     let run;
     try {
-      run = await openai.beta.threads.runs.retrieve(run_id, {thread_id});
+      run = await openai.beta.threads.runs.retrieve(run_id, { thread_id });
       await recordUsage({
         ...run.usage,
         model: run.model,
@@ -519,7 +519,6 @@ const chatV1 = async (req, res) => {
       };
 
       previousMessages.push(requestMessage);
-      // Enrique: Hasta aca bien , crea el threat con los files ids 
       /* asynchronous */
       userMessagePromise = saveUserMessage(req, { ...requestMessage, model });
 
@@ -710,7 +709,7 @@ const chatV1 = async (req, res) => {
 
     if (!response.run.usage) {
       await sleep(3000);
-      completedRun = await openai.beta.threads.runs.retrieve(thread_id, response.run.id);
+      completedRun = await openai.beta.threads.runs.retrieve(response.run.id, { thread_id });
       if (completedRun.usage) {
         await recordUsage({
           ...completedRun.usage,

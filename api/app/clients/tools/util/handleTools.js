@@ -347,51 +347,7 @@ Current Date & Time: ${replaceSpecialVars({ text: '{{iso_datetime}}' })}
       requestedTools[tool] = toolInstance;
       continue;
     }
-
-    // /**
-    //  * Check if the tool is defined in the functions and load it as a "azure-ai-functions"
-    //  * @Organization Intelequia
-    //  * @Author Enrique M. Pedroza Castillo
-    //  */
-
-    // if(process.env.ENABLE_PERMISSION_MANAGE == "true" && tool != "image_vision" && !tool.startsWith("mcp") ){
-    //   const {status,value} = await VerifyAzureAIFunctionsTool(tool, user, toolOptions,loadToolWithAuth,toolAuthFields,toolConstructors);
-    //   if(status){
-    //     requestedTools[tool] = value;
-    //     continue;
-    //   }
-    //   else {
-    //     const {status, value} = await VerifyIntelequiaToolInstance(tool, user, toolOptions,loadToolWithAuth,toolAuthFields,toolConstructors);
-    //     if(status){
-    //       requestedTools[tool] = value;
-    //       continue;
-    //     }
-    //   }
-    // }
-    // if (functions === true) {
-    //   remainingTools.push(tool);
-    // }
   }
-
-  // let specs = null;
-  // if (useSpecs === true && functions === true && remainingTools.length > 0) {
-  //   specs = await loadSpecs({
-  //     llm: model,
-  //     user,
-  //     message: options.message,
-  //     memory: options.memory,
-  //     signal: options.signal,
-  //     tools: remainingTools,
-  //     map: true,
-  //     verbose: false,
-  //   });
-  // }
-
-  // for (const tool of remainingTools) {
-  //   if (specs && specs[tool]) {
-  //     requestedTools[tool] = specs[tool];
-  //   }
-  // }
 
   if (returnMap) {
     return requestedTools;
