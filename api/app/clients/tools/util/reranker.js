@@ -11,6 +11,7 @@ async function applyReranking(query, documents, rerankerType, options) {
 
   switch (rerankerType) {
     case RerankerTypes.CUSTOMLOCAL:
+    case RerankerTypes.COHERE:      
       return customReranker(query, documents);
     // case RerankerTypes.COHERE:
     //   // return cohereReranker(query, documents, options);

@@ -3,6 +3,7 @@ const { logger } = require('@librechat/data-schemas');
 async function customReranker(query, documents) {
   console.log('documents in custom reranker: ', documents);
   const url = process.env.CUSTOM_RERANKER_URL;
+  const apikey = process.env.CUSTOM_RERANKER_API_KEY;
   if (!url) {
     throw new Error('Custom reranker URL not set');
   }
@@ -16,15 +17,18 @@ async function customReranker(query, documents) {
     return [];
   }
 
+  let body = {
+      model: 'rerank-v3.5',
+      query,
+      documents: documents.map(doc => doc.snippet || doc.title || doc.pageContent || doc.text || doc.content || ''),
+    };
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apikey}`,
     },
-    body: JSON.stringify({
-      query,
-      documents: documents.map(doc => doc.pageContent),
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {

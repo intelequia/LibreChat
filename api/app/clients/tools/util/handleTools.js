@@ -3,7 +3,7 @@ const { SerpAPI } = require('@langchain/community/tools/serpapi');
 const { Calculator } = require('@langchain/community/tools/calculator');
 const { mcpToolPattern, loadWebSearchAuth } = require('@librechat/api');
 const { EnvVar, createCodeExecutionTool, createSearchTool } = require('@librechat/agents');
-const { Tools, EToolResources, replaceSpecialVars } = require('librechat-data-provider');
+const { Tools, EToolResources, replaceSpecialVars, dataService } = require('librechat-data-provider');
 const {
   availableTools,
   manifestToolMap,
@@ -316,13 +316,14 @@ Current Date & Time: ${replaceSpecialVars({ text: '{{iso_datetime}}' })}
           ...result.authResult,
           onSearchResults: async (results, runnableConfig) => {
             logger.info('[onSearchResults] scraper results:', results);
-            const { query } = runnableConfig.configurable;
+            const { query } = runnableConfig.toolCall.args; // runnableConfig.configurable;
+            results.documents = results.data?.organic || [];
             if (!results.documents) {
               logger.warn('[onSearchResults] results.documents is missing. Creating empty array.');
               results.documents = [];
             }
             const rerankedDocs = await applyReranking(query, results.documents, result.authResult.rerankerType, result.authResult);
-            results.documents = rerankedDocs;
+            results.data.organic = rerankedDocs;
             if (onSearchResults) {
               onSearchResults(results, runnableConfig);
             }
