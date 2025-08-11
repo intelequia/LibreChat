@@ -121,6 +121,7 @@ export enum ImageDetail {
 
 export enum ReasoningEffort {
   none = '',
+  minimal = 'minimal',
   low = 'low',
   medium = 'medium',
   high = 'high',
@@ -131,6 +132,13 @@ export enum ReasoningSummary {
   auto = 'auto',
   concise = 'concise',
   detailed = 'detailed',
+}
+
+export enum Verbosity {
+  none = '',
+  low = 'low',
+  medium = 'medium',
+  high = 'high',
 }
 
 export const imageDetailNumeric = {
@@ -148,6 +156,7 @@ export const imageDetailValue = {
 export const eImageDetailSchema = z.nativeEnum(ImageDetail);
 export const eReasoningEffortSchema = z.nativeEnum(ReasoningEffort);
 export const eReasoningSummarySchema = z.nativeEnum(ReasoningSummary);
+export const eVerbositySchema = z.nativeEnum(Verbosity);
 
 export const defaultAssistantFormValues = {
   assistant: '',
@@ -216,13 +225,13 @@ export const openAISettings = {
     default: 1 as const,
   },
   presence_penalty: {
-    min: 0 as const,
+    min: -2 as const,
     max: 2 as const,
     step: 0.01 as const,
     default: 0 as const,
   },
   frequency_penalty: {
-    min: 0 as const,
+    min: -2 as const,
     max: 2 as const,
     step: 0.01 as const,
     default: 0 as const,
@@ -382,13 +391,13 @@ export const agentsSettings = {
     default: 1 as const,
   },
   presence_penalty: {
-    min: 0 as const,
+    min: -2 as const,
     max: 2 as const,
     step: 0.01 as const,
     default: 0 as const,
   },
   frequency_penalty: {
-    min: 0 as const,
+    min: -2 as const,
     max: 2 as const,
     step: 0.01 as const,
     default: 0 as const,
@@ -643,6 +652,8 @@ export const tConversationSchema = z.object({
   /* OpenAI: Reasoning models only */
   reasoning_effort: eReasoningEffortSchema.optional().nullable(),
   reasoning_summary: eReasoningSummarySchema.optional().nullable(),
+  /* OpenAI: Verbosity control */
+  verbosity: eVerbositySchema.optional().nullable(),
   /* OpenAI: use Responses API */
   useResponsesApi: z.boolean().optional(),
   /* OpenAI Responses API / Anthropic API / Google API */
@@ -749,6 +760,8 @@ export const tQueryParamsSchema = tConversationSchema
     reasoning_effort: true,
     /** @endpoints openAI, custom, azureOpenAI */
     reasoning_summary: true,
+    /** @endpoints openAI, custom, azureOpenAI */
+    verbosity: true,
     /** @endpoints openAI, custom, azureOpenAI */
     useResponsesApi: true,
     /** @endpoints openAI, anthropic, google */
@@ -1085,6 +1098,7 @@ export const openAIBaseSchema = tConversationSchema.pick({
   max_tokens: true,
   reasoning_effort: true,
   reasoning_summary: true,
+  verbosity: true,
   useResponsesApi: true,
   web_search: true,
   disableStreaming: true,
