@@ -412,9 +412,20 @@ const chatV2 = async (req, res) => {
       response = await runAssistant({ azureAgentClient, thread_id, run_id });
 
       if (response.text =='' && response.messages.length == 0){
-        const listMessages = await azureAgentClient.agents.listMessages(thread_id);
-        response.messages.push(listMessages.data[0]);
-        response.text = listMessages.data[0].content[0].text.value;
+        const listMessages = await azureAgentClient.messages.list(thread_id);
+        const messages = [];
+
+        for await (const message of listMessages) {
+          messages.push(message);
+        }
+        
+        if (messages.length > 0) {
+          response.messages.push(messages[0]);
+          response.text = messages[0].content[0].text.value;
+        }
+
+        // response.messages.push(listMessages.data[0]);
+        // response.text = listMessages.data[0].content[0].text.value;
       }
       return;
     };
