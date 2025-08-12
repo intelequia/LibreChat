@@ -9,7 +9,7 @@ const { hashToken, logger } = require('@librechat/data-schemas');
 const { Strategy: OpenIDStrategy } = require('openid-client/passport');
 const { isEnabled, safeStringify, logHeaders } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
-const {updateUserInfoInCache, updateDynamicsInCache, saveGraphToken} = require('~/utils');
+const {updateUserGroupsAndRole, updateDynamicsInCache, saveGraphToken} = require('~/utils');
 const { findUser, createUser, updateUser } = require('~/models');
 const { getBalanceConfig } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
@@ -421,7 +421,7 @@ async function setupOpenId() {
            * @Author Enrique M. Pedroza Castillo
            */
           if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
-            user.role = await updateUserInfoInCache(tokenset.id_token, user, (userId, update) => updateUser(userId, update));
+            user.role = await updateUserGroupsAndRole(tokenset.id_token, user, (userId, update) => updateUser(userId, update));
           
           /**
            * Saves Graph Token

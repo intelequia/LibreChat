@@ -14,7 +14,7 @@ const {
   initializeClient: initAzureAgentClient,
 } = require('~/server/services/Endpoints/azureAgents');
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
-const {verifyAssistantPermissions} = require('~/utils');
+const {checkGroupPermissions} = require('~/utils');
 const { getEndpointsConfig } = require('~/server/services/Config');
 
 /**
@@ -81,14 +81,15 @@ const listAllAzureAgents = async ({ req, res, version, query }) => {
   let afterToken = query.after;
   let hasMore = true;
 
-  if (global.myCache.get("permissions")) {
+  let permissionsNodeName = "azureAgentPermissions";
+  if (global.myCache.get(permissionsNodeName)) {
     let agents = [];
 
     for await (const agent of azureAgentClient.listAgents()){
       agents.push(agent);
     }
 
-    const allowedAzureAgents = await verifyAssistantPermissions(req.user._id.toString(), agents);
+    const allowedAzureAgents = await checkGroupPermissions(req.user._id.toString(), agents, permissionsNodeName);
 
     allowedAzureAgents.forEach((azureAgent) => allAzureAgents.push(azureAgent));
   } else {
@@ -124,85 +125,6 @@ const listAllAzureAgents = async ({ req, res, version, query }) => {
     },
   };
 };
-
-
-/**
- * Fetches all assistants based on provided query params, until `has_more` is `false`.
- *
- * @async
- * @param {object} params - The parameters object.
- * @param {object} params.req - The request object, used for initializing the client.
- * @param {object} params.res - The response object, used for initializing the client.
- * @param {string} params.version - The API version to use.
- * @param {Omit<AssistantListParams, 'endpoint'>} params.query - The query parameters to list assistants (e.g., limit, order).
- * @returns {Promise<Array<Assistant>>} A promise that resolves to the response from the `openai.beta.assistants.list` method call.
- */
-const listAllAssistants = async ({ req, res, version, query }) => {
-  /** @type {{ openai: OpenAIClient }} */
-  const { openai } = await getOpenAIClient({ req, res, version });
-  const allAssistants = [];
-
-  let first_id;
-  let last_id;
-  let afterToken = query.after;
-  let hasMore = true;
-
-  /**
-   * Verify if there are any function permission
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (global.myCache.get("permissions")) {
-    const response = await openai.beta.assistants.list({
-      ...query,
-      after: afterToken,
-    });
-
-    const { body } = response;
-
-    /**
-     * Get all assistats allowed by the user groups
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    const allowedAssistants = await verifyAssistantPermissions(req.user._id.toString(), body.data);
-
-    allowedAssistants.forEach((assistant) => allAssistants.push(assistant));
-  } else {
-    while (hasMore) {
-      const response = await openai.beta.assistants.list({
-        ...query,
-        after: afterToken,
-      });
-
-      const { body } = response;
-
-      allAssistants.push(...body.data);
-      hasMore = body.has_more;
-
-      if (!first_id) {
-        first_id = body.first_id;
-      }
-
-      if (hasMore) {
-        afterToken = body.last_id;
-      } else {
-        last_id = body.last_id;
-      }
-    }
-  }
-
-  return {
-    data: allAssistants,
-    body: {
-      data: allAssistants,
-      has_more: false,
-      first_id,
-      last_id,
-    },
-  };
-};
-
 
 
 /**
@@ -276,81 +198,6 @@ const listAgentsForAzure = async ({ req, res, version, azureConfig = {}, query }
 };
 
 
-
-
-
-
-
-
-
-/**
- * Asynchronously lists assistants for Azure configured groups.
- *
- * Iterates through Azure configured assistant groups, initializes the client with the current request and response objects,
- * lists assistants based on the provided query parameters, and merges their data alongside the model information into a single array.
- *
- * @async
- * @param {object} params - The parameters object.
- * @param {object} params.req - The request object, used for initializing the client and manipulating the request body.
- * @param {object} params.res - The response object, used for initializing the client.
- * @param {string} params.version - The API version to use.
- * @param {TAzureConfig} params.azureConfig - The Azure configuration object containing assistantGroups and groupMap.
- * @param {object} params.query - The query parameters to list assistants (e.g., limit, order).
- * @returns {Promise<AssistantListResponse>} A promise that resolves to an array of assistant data merged with their respective model information.
- */
-const listAssistantsForAzure = async ({ req, res, version, azureConfig = {}, query }) => {
-  /** @type {Array<[string, TAzureModelConfig]>} */
-  const groupModelTuples = [];
-  const promises = [];
-  /** @type {Array<TAzureGroup>} */
-  const groups = [];
-
-  const { groupMap, assistantGroups } = azureConfig;
-
-  for (const groupName of assistantGroups) {
-    const group = groupMap[groupName];
-    groups.push(group);
-
-    const currentModelTuples = Object.entries(group?.models);
-    groupModelTuples.push(currentModelTuples);
-
-    /* The specified model is only necessary to
-    fetch assistants for the shared instance */
-    req.body.model = currentModelTuples[0][0];
-    promises.push(listAllAssistants({ req, res, version, query }));
-  }
-
-  const resolvedQueries = await Promise.all(promises);
-  const data = resolvedQueries.flatMap((res, i) =>
-    res.data.map((assistant) => {
-      const deploymentName = assistant.model;
-      const currentGroup = groups[i];
-      const currentModelTuples = groupModelTuples[i];
-      const firstModel = currentModelTuples[0][0];
-
-      if (currentGroup.deploymentName === deploymentName) {
-        return { ...assistant, model: firstModel };
-      }
-
-      for (const [model, modelConfig] of currentModelTuples) {
-        if (modelConfig.deploymentName === deploymentName) {
-          return { ...assistant, model };
-        }
-      }
-
-      return { ...assistant, model: firstModel };
-    }),
-  );
-
-  return {
-    first_id: data[0]?.id,
-    last_id: data[data.length - 1]?.id,
-    object: 'list',
-    has_more: false,
-    data,
-  };
-};
-
 async function getOpenAIClient({ req, res, endpointOption, initAppClient, overrideEndpoint }) {
   let endpoint = overrideEndpoint ?? req.body.endpoint ?? req.query.endpoint;
   const version = await getCurrentVersion(req, endpoint);
@@ -358,14 +205,7 @@ async function getOpenAIClient({ req, res, endpointOption, initAppClient, overri
     throw new Error(`[${req.baseUrl}] Endpoint is required`);
   }
 
-  let result;
-  if (endpoint === EModelEndpoint.assistants) {
-    result = await initializeClient({ req, res, version, endpointOption, initAppClient });
-  } else if (endpoint === EModelEndpoint.azureAssistants) {
-    result = await initAzureClient({ req, res, version, endpointOption, initAppClient });
-  } else if(endpoint === EModelEndpoint.azureAgents){
-    result = await initAzureAgentClient({ req, res, version, endpointOption, initAppClient });
-  }
+  let result = await initAzureAgentClient({ req, res, version, endpointOption, initAppClient });
 
   return result;
 }
@@ -397,15 +237,8 @@ const fetchAssistants = async ({ req, res, overrideEndpoint }) => {
   /** @type {AssistantListResponse} */
   let body;
 
-  if (endpoint === EModelEndpoint.assistants) {
-    ({ body } = await listAllAssistants({ req, res, version, query }));
-  } else if (endpoint === EModelEndpoint.azureAssistants) {
-    const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
-    body = await listAssistantsForAzure({ req, res, version, azureConfig, query });
-  } else if (endpoint === EModelEndpoint.azureAgents){
-    const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
-    body = await listAgentsForAzure({ req, res, version, azureConfig, query });
-  }
+  const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
+  body = await listAgentsForAzure({ req, res, version, azureConfig, query });
 
   if (req.user.role === SystemRoles.ADMIN) {
     return body;

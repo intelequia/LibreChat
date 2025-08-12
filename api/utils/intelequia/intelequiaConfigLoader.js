@@ -4,6 +4,7 @@ const { ClientSecretCredential } = require('@azure/identity');
 // const { findUser, createUser, updateUser } = require('~/models');
 const { logger } = require('~/config');
 const jwtDecode = require('jsonwebtoken/decode');
+const { load } = require('mime');
 
 /**
  * Manage all permission operations, loads, saves parameters and configure users role
@@ -18,17 +19,25 @@ async function intelequiaConfigLoader() {
   if (url && url != "") {
     logger.info("[IntelequiaConfigLoader] Loading GraphClient and Permissions files ...")
     const result = await loadPermissionConfigFiles(url)
-    const { permissions, functions, assistantAdminRole } = result;
+    const { permissions, functions, assistantAdminRole, agentPermissions, azureAgentPermissions } = result;
 
     global.myCache.set("functions", functions);
     global.myCache.set("permissions", permissions);
     global.myCache.set("assistantAdminRole", assistantAdminRole);
+    global.myCache.set("agentPermissions", agentPermissions);
+    global.myCache.set("azureAgentPermissions", azureAgentPermissions);
 
+    return { 
+      loaded: true,
+    }
   }
   else {
     logger.error(
       `[validateTools] fetch remote configuration file: Error fetching remote functions at URL "${url}": ${response.statusText} (HTTP ${response.status})`,
     );
+    return { 
+      loaded: false,
+    }    
   }
 }
 
@@ -89,20 +98,16 @@ async function loadPermissionConfigFiles(url) {
  * @Organization Intelequia
  * @Author Pablo Suárez Romero
  */
-async function updateUserInfoInCache(jwt, user, updateUser) {
+async function updateUserGroupsAndRole(jwt, user, updateUser) {
   let userIdToken = jwtDecode(jwt)
 
   const adminGroup = global.myCache.get("assistantAdminRole");
 
   let userGroupsInToken = userIdToken.groups
-
-  global.myCache.set(user._id.toString(), userGroupsInToken, process.env.USER_GROUPS_CACHE_TTL)
-
   const role = userGroupsInToken ?
     (userGroupsInToken.includes(adminGroup) ? 'ADMIN' : 'USER') :
-    'USER';
-  const userId = user._id.toString();
-  await updateUser(userId , { role });
+    'USER';  
+  await updateUser(user._id.toString(), { groups: userGroupsInToken, role });
   return role;
 }
 
@@ -141,7 +146,7 @@ async function IsToolAFunction(ToolName) {
 
 module.exports = {
   intelequiaConfigLoader,
-  updateUserInfoInCache,
+  updateUserGroupsAndRole,
   IsToolAFunction,
   SaveFunctionsInCache,
   GetFunctionSpecification,

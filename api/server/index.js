@@ -138,7 +138,8 @@ const startServer = async () => {
   app.use('/api/memories', routes.memories);
   app.use('/api/tags', routes.tags);
   app.use('/api/mcp', routes.mcp);
-  
+  app.use('/intelequia/config', routes.intelequiaConfig);
+
   /**
    * Load permission configuration files from remote repository
    * @Organization Intelequia

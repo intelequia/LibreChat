@@ -15,6 +15,7 @@ const { getCachedTools } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
 const { getActions } = require('./Action');
 const { Agent } = require('~/db/models');
+const { checkGroupPermissions } = require('~/utils');
 
 /**
  * Create an agent with the provided data.
@@ -474,6 +475,18 @@ const getListAgents = async (searchParameter) => {
   let query = Object.assign({ author }, otherParams);
 
   const globalProject = await getProjectByName(GLOBAL_PROJECT_NAME, ['agentIds']);
+
+  /**
+   * Filter the agents by permissions
+   * @author David Rodriguez
+   * @orgainzation Intelequia  
+   * */ 
+  let permissionsNodeName = "agentPermissions";
+  let agentPermissions = global.myCache.get(permissionsNodeName);
+  if (agentPermissions) {  
+    globalProject.agentIds = await checkGroupPermissions(author, globalProject.agentIds, permissionsNodeName);
+  }
+
   if (globalProject && (globalProject.agentIds?.length ?? 0) > 0) {
     const globalQuery = { id: { $in: globalProject.agentIds }, ...otherParams };
     delete globalQuery.author;

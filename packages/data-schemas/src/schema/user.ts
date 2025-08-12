@@ -138,6 +138,10 @@ const userSchema = new Schema<IUser>(
       },
       default: {},
     },
+    groups: {
+      type: [String],
+      default: [],
+    },
   },
   { timestamps: true },
 );
