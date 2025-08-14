@@ -15,6 +15,7 @@ const { getCachedTools } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
 const { getActions } = require('./Action');
 const { Agent } = require('~/db/models');
+const { checkGroupPermissions } = require('~/utils');
 
 /**
  * Create an agent with the provided data.
@@ -61,7 +62,7 @@ const getAgent = async (searchParameter) => await Agent.findOne(searchParameter)
 const loadEphemeralAgent = async ({ req, agent_id, endpoint, model_parameters: _m }) => {
   const { model, ...model_parameters } = _m;
   /** @type {Record<string, FunctionTool>} */
-  const availableTools = await getCachedTools({ includeGlobal: true });
+  const availableTools = await getCachedTools({ userId: req.user.id, includeGlobal: true });
   /** @type {TEphemeralAgent | null} */
   const ephemeralAgent = req.body.ephemeralAgent;
   const mcpServers = new Set(ephemeralAgent?.mcp);
@@ -90,7 +91,7 @@ const loadEphemeralAgent = async ({ req, agent_id, endpoint, model_parameters: _
   }
 
   const instructions = req.body.promptPrefix;
-  return {
+  const result = {
     id: agent_id,
     instructions,
     provider: endpoint,
@@ -98,6 +99,11 @@ const loadEphemeralAgent = async ({ req, agent_id, endpoint, model_parameters: _
     model,
     tools,
   };
+
+  if (ephemeralAgent?.artifacts != null && ephemeralAgent.artifacts) {
+    result.artifacts = ephemeralAgent.artifacts;
+  }
+  return result;
 };
 
 /**
@@ -311,17 +317,10 @@ const updateAgent = async (searchParameter, updateData, options = {}) => {
     if (shouldCreateVersion) {
       const duplicateVersion = isDuplicateVersion(updateData, versionData, versions, actionsHash);
       if (duplicateVersion && !forceVersion) {
-        const error = new Error(
-          'Duplicate version: This would create a version identical to an existing one',
-        );
-        error.statusCode = 409;
-        error.details = {
-          duplicateVersion,
-          versionIndex: versions.findIndex(
-            (v) => JSON.stringify(duplicateVersion) === JSON.stringify(v),
-          ),
-        };
-        throw error;
+        // No changes detected, return the current agent without creating a new version
+        const agentObj = currentAgent.toObject();
+        agentObj.version = versions.length;
+        return agentObj;
       }
     }
 
@@ -476,6 +475,18 @@ const getListAgents = async (searchParameter) => {
   let query = Object.assign({ author }, otherParams);
 
   const globalProject = await getProjectByName(GLOBAL_PROJECT_NAME, ['agentIds']);
+
+  /**
+   * Filter the agents by permissions
+   * @author David Rodriguez
+   * @orgainzation Intelequia  
+   * */ 
+  let permissionsNodeName = "agentPermissions";
+  let agentPermissions = global.myCache.get(permissionsNodeName);
+  if (agentPermissions) {  
+    globalProject.agentIds = await checkGroupPermissions(author, globalProject.agentIds, permissionsNodeName);
+  }
+
   if (globalProject && (globalProject.agentIds?.length ?? 0) > 0) {
     const globalQuery = { id: { $in: globalProject.agentIds }, ...otherParams };
     delete globalQuery.author;

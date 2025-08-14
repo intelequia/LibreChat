@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { sleep } = require('@librechat/agents');
+const { getToolkitKey } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { zodToJsonSchema } = require('zod-to-json-schema');
 const { Calculator } = require('@langchain/community/tools/calculator');
@@ -11,7 +12,6 @@ const {
   ErrorTypes,
   ContentTypes,
   imageGenTools,
-  EToolResources,
   EModelEndpoint,
   actionDelimiter,
   ImageVisionTool,
@@ -42,30 +42,6 @@ const { redactMessage } = require('~/config/parsers');
 const { SaveFunctionsInCache, isToolEnabled, GetToolSpecification } = require('~/utils');
 
 /**
- * @param {string} toolName
- * @returns {string | undefined} toolKey
- */
-function getToolkitKey(toolName) {
-  /** @type {string|undefined} */
-  let toolkitKey;
-  for (const toolkit of toolkits) {
-    if (toolName.startsWith(EToolResources.image_edit)) {
-      const splitMatches = toolkit.pluginKey.split('_');
-      const suffix = splitMatches[splitMatches.length - 1];
-      if (toolName.endsWith(suffix)) {
-        toolkitKey = toolkit.pluginKey;
-        break;
-      }
-    }
-    if (toolName.startsWith(toolkit.pluginKey)) {
-      toolkitKey = toolkit.pluginKey;
-      break;
-    }
-  }
-  return toolkitKey;
-}
-
-/**
  * Loads and formats tools from the specified tool directory.
  *
  * The directory is scanned for JavaScript files, excluding any files in the filter set.
@@ -85,6 +61,12 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
   const tools = [];
   /* Structured Tools Directory */
   const files = fs.readdirSync(directory);
+  /**
+   * This appends intelequia tools directory 
+   * @Author Enrique Pedroza 
+   * @Organization Intelequia
+   */
+
   const intelequiaToolDirectory =path.resolve(__dirname, '..', '..','utils','intelequia','pluginsAndTools','implementations',)
   const intelequiaFiles = fs.readdirSync(intelequiaToolDirectory);
 
@@ -93,6 +75,11 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
       'Both `includedTools` and `filteredTools` are defined; `filteredTools` will be ignored.',
     );
   }
+  /**
+   * Load intelequia tools files 
+   * @Author Enrique Pedroza 
+   * @Organization Intelequia
+   */
   for (const file of intelequiaFiles) {
     const filePath = path.join(intelequiaToolDirectory, file);
     if (!file.endsWith('.js') || (filter.has(file) && included.size === 0)) {
@@ -191,7 +178,7 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
   for (const toolInstance of basicToolInstances) {
     const formattedTool = formatToOpenAIAssistantTool(toolInstance);
     let toolName = formattedTool[Tools.function].name;
-    toolName = getToolkitKey(toolName) ?? toolName;
+    toolName = getToolkitKey({ toolkits, toolName }) ?? toolName;
     if (filter.has(toolName) && included.size === 0) {
       continue;
     }
@@ -273,7 +260,7 @@ async function processRequiredActions(client, requiredActions, assistantId) {
     `[required actions] user: ${client.req.user.id} | thread_id: ${requiredActions[0].thread_id} | run_id: ${requiredActions[0].run_id}`,
     requiredActions,
   );
-  const toolDefinitions = await getCachedTools({ includeGlobal: true });
+  const toolDefinitions = await getCachedTools({ userId: client.req.user.id, includeGlobal: true });
   const seenToolkits = new Set();
   const tools = requiredActions
     .map((action) => {
@@ -329,6 +316,12 @@ async function processRequiredActions(client, requiredActions, assistantId) {
       continue;
     }
     let tool = ToolMap[currentAction.tool] ?? ActionToolMap[currentAction.tool];
+
+    /**
+     * Loads function list and adds logic apps implementation to tool list 
+     * @Author Enrique Pedroza 
+     * @Organization Intelequia
+     */
 
     const functionList = global.myCache.get('functions');
 
@@ -529,7 +522,9 @@ async function processRequiredActions(client, requiredActions, assistantId) {
 
     /**
      * This IF statement adds new parameters to the tool if its specified as an Intelequia's tool.
+     * @Organization Intelequia
      */
+
     if (await isToolEnabled(tool.name)) {
       currentAction.toolInput.assistant = assistantId;
       currentAction.toolInput.userEmail = client.req.user.email

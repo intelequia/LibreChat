@@ -107,7 +107,7 @@ const sendVerificationEmail = async (user) => {
     expiresIn: 900,
   });
 
-  logger.info(`[sendVerificationEmail] Verification link issued. [Email: ${user.email}] [link]`);
+  logger.info(`[sendVerificationEmail] Verification link issued. [Email: ${user.email}]`);
 };
 
 /**
@@ -290,7 +290,7 @@ const requestPasswordReset = async (req) => {
       template: 'requestPasswordReset.handlebars',
     });
     logger.info(
-      `[requestPasswordReset] Link emailed. [Email: ${email}] [ID: ${user._id}] [IP: ${req.ip}] `,
+      `[requestPasswordReset] Link emailed. [Email: ${email}] [ID: ${user._id}] [IP: ${req.ip}]`,
     );
   } else {
     logger.info(

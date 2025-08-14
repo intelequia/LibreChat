@@ -183,7 +183,7 @@ function generateConfig(key, baseURL, endpoint) {
 
   const assistants = isAssistantsEndpoint(endpoint);
   const agents = isAgentsEndpoint(endpoint);
-  if (assistants ) {
+  if (assistants) {
     config.retrievalModels = defaultRetrievalModels;
     config.capabilities = [
       Capabilities.code_interpreter,

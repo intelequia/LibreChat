@@ -38,16 +38,14 @@ async function loadModels(req) {
 }
 
 async function modelController(req, res) {
-  var modelConfig = await loadModels(req);
   /**
    * Sort Model list
    * @Author Enrique M Pedroza Castillo
    * @Organization Intelequia
    */
-  modelConfig = await parseModels (modelConfig) 
-  res.send(modelConfig);
   try {
-    const modelConfig = await loadModels(req);
+    var modelConfig = await loadModels(req);
+    modelConfig = await parseModels(modelConfig);
     res.send(modelConfig);
   } catch (error) {
     logger.error('Error fetching models:', error);

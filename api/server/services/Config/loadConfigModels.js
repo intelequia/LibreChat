@@ -1,3 +1,9 @@
+/**
+ * Added "defaultModels" to librechat-data-provider import 
+ * @author Enrique M. Pedroza Castillo
+ * @organization Intelequia
+ */
+
 const { EModelEndpoint, extractEnvVariable, defaultModels } = require('librechat-data-provider');
 const { isUserProvided, normalizeEndpointName } = require('~/server/utils');
 const { fetchModels } = require('~/server/services/ModelService');

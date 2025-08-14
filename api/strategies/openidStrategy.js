@@ -9,7 +9,7 @@ const { hashToken, logger } = require('@librechat/data-schemas');
 const { Strategy: OpenIDStrategy } = require('openid-client/passport');
 const { isEnabled, safeStringify, logHeaders } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
-const {updateUserInfoInCache, updateDynamicsInCache, saveGraphToken} = require('~/utils');
+const {updateUserGroupsAndRole, updateDynamicsInCache, saveGraphToken} = require('~/utils');
 const { findUser, createUser, updateUser } = require('~/models');
 const { getBalanceConfig } = require('~/server/services/Config');
 const getLogStores = require('~/cache/getLogStores');
@@ -50,7 +50,7 @@ async function customFetch(url, options) {
       logger.info(`[openidStrategy] proxy agent configured: ${process.env.PROXY}`);
       fetchOptions = {
         ...options,
-        dispatcher: new HttpsProxyAgent(process.env.PROXY),
+        dispatcher: new undici.ProxyAgent(process.env.PROXY),
       };
     }
 
@@ -105,6 +105,14 @@ class CustomOpenIDStrategy extends OpenIDStrategy {
     if (options?.state && !params.has('state')) {
       params.set('state', options.state);
     }
+
+    if (process.env.OPENID_AUDIENCE) {
+      params.set('audience', process.env.OPENID_AUDIENCE);
+      logger.debug(
+        `[openidStrategy] Adding audience to authorization request: ${process.env.OPENID_AUDIENCE}`,
+      );
+    }
+
     return params;
   }
 }
@@ -367,7 +375,7 @@ async function setupOpenId() {
             username = userinfo[process.env.OPENID_USERNAME_CLAIM];
           } else {
             username = convertToUsername(
-              userinfo.username || userinfo.given_name || userinfo.email,
+              userinfo.preferred_username || userinfo.username || userinfo.email,
             );
           }
 
@@ -413,7 +421,7 @@ async function setupOpenId() {
            * @Author Enrique M. Pedroza Castillo
            */
           if( process.env.ENABLE_PERMISSION_MANAGE == "true" )
-            await updateUserInfoInCache(tokenset.id_token,user);
+            user.role = await updateUserGroupsAndRole(tokenset.id_token, user, (userId, update) => updateUser(userId, update));
           
           /**
            * Saves Graph Token

@@ -43,6 +43,10 @@ export default function StartupLayout({ isAuthenticated }: { isAuthenticated?: b
   }, [isAuthenticated, navigate, data]);
 
   useEffect(() => {
+    document.title = startupConfig?.appTitle || 'Intelewriter';
+  }, [startupConfig?.appTitle]);
+
+  useEffect(() => {
     setError(null);
     setHeaderText(null);
   }, [location.pathname]);

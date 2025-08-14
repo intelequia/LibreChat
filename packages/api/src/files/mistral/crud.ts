@@ -21,6 +21,7 @@ import type {
   OCRImage,
 } from '~/types';
 import { logAxiosError, createAxiosInstance } from '~/utils/axios';
+import { loadServiceKey } from '~/utils/key';
 
 const axios = createAxiosInstance();
 const DEFAULT_MISTRAL_BASE_URL = 'https://api.mistral.ai/v1';
@@ -169,6 +170,35 @@ export async function performOCR({
       logger.error('Error performing OCR:', error.message);
       throw error;
     });
+}
+
+/**
+ * Deletes a file from Mistral API
+ * @param params Delete parameters
+ * @param params.fileId The file ID to delete
+ * @param params.apiKey Mistral API key
+ * @param params.baseURL Mistral API base URL
+ * @returns Promise that resolves when the file is deleted
+ */
+export async function deleteMistralFile({
+  fileId,
+  apiKey,
+  baseURL = DEFAULT_MISTRAL_BASE_URL,
+}: {
+  fileId: string;
+  apiKey: string;
+  baseURL?: string;
+}): Promise<void> {
+  try {
+    const result = await axios.delete(`${baseURL}/files/${fileId}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+    logger.debug(`Mistral file ${fileId} deleted successfully:`, result.data);
+  } catch (error) {
+    logger.error(`Error deleting Mistral file ${fileId}:`, error);
+  }
 }
 
 /**
@@ -334,8 +364,14 @@ function createOCRError(error: unknown, baseMessage: string): Error {
  *                       along with the `filename` and `bytes` properties.
  */
 export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRUploadResult> => {
+  let mistralFileId: string | undefined;
+  let apiKey: string | undefined;
+  let baseURL: string | undefined;
+
   try {
-    const { apiKey, baseURL } = await loadAuthConfig(context);
+    const authConfig = await loadAuthConfig(context);
+    apiKey = authConfig.apiKey;
+    baseURL = authConfig.baseURL;
     const model = getModelConfig(context.req.app.locals?.ocr);
 
     const mistralFile = await uploadDocumentToMistral({
@@ -345,6 +381,8 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
       baseURL,
     });
 
+    mistralFileId = mistralFile.id;
+
     const signedUrlResponse = await getSignedUrl({
       apiKey,
       baseURL,
@@ -353,11 +391,11 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
 
     const documentType = getDocumentType(context.file);
     const ocrResult = await performOCR({
-      apiKey,
-      baseURL,
-      model,
       url: signedUrlResponse.url,
       documentType,
+      baseURL,
+      apiKey,
+      model,
     });
 
     if (!ocrResult || !ocrResult.pages || ocrResult.pages.length === 0) {
@@ -367,6 +405,10 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
     }
     const { text, images } = processOCRResult(ocrResult);
 
+    if (mistralFileId && apiKey && baseURL) {
+      await deleteMistralFile({ fileId: mistralFileId, apiKey, baseURL });
+    }
+
     return {
       filename: context.file.originalname,
       bytes: text.length * 4,
@@ -375,6 +417,9 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
       images,
     };
   } catch (error) {
+    if (mistralFileId && apiKey && baseURL) {
+      await deleteMistralFile({ fileId: mistralFileId, apiKey, baseURL });
+    }
     throw createOCRError(error, 'Error uploading document to Mistral OCR API:');
   }
 };
@@ -441,29 +486,26 @@ async function loadGoogleAuthConfig(): Promise<{
 }> {
   /** Path from environment variable or default location */
   const serviceKeyPath =
-    process.env.GOOGLE_SERVICE_KEY_FILE_PATH ||
+    process.env.GOOGLE_SERVICE_KEY_FILE ||
     path.join(__dirname, '..', '..', '..', 'api', 'data', 'auth.json');
-  const absolutePath = path.isAbsolute(serviceKeyPath)
-    ? serviceKeyPath
-    : path.resolve(serviceKeyPath);
 
-  let serviceKey: GoogleServiceAccount;
-  try {
-    const authJsonContent = fs.readFileSync(absolutePath, 'utf8');
-    serviceKey = JSON.parse(authJsonContent) as GoogleServiceAccount;
-  } catch {
-    throw new Error(`Google service account not found at ${absolutePath}`);
+  const serviceKey = await loadServiceKey(serviceKeyPath);
+
+  if (!serviceKey) {
+    throw new Error(
+      `Google service account not found or could not be loaded from ${serviceKeyPath}`,
+    );
   }
 
   if (!serviceKey.client_email || !serviceKey.private_key || !serviceKey.project_id) {
     throw new Error('Invalid Google service account configuration');
   }
 
-  const jwt = await createJWT(serviceKey);
+  const jwt = await createJWT(serviceKey as GoogleServiceAccount);
   const accessToken = await exchangeJWTForAccessToken(jwt);
 
   return {
-    serviceAccount: serviceKey,
+    serviceAccount: serviceKey as GoogleServiceAccount,
     accessToken,
   };
 }

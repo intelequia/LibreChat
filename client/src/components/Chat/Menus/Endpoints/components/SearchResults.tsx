@@ -1,6 +1,6 @@
 import React, { Fragment } from 'react';
 import { EarthIcon } from 'lucide-react';
-import { EModelEndpoint, isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
+import { isAgentsEndpoint, isAssistantsEndpoint } from 'librechat-data-provider';
 import type { TModelSpec } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import { useModelSelectorContext } from '../ModelSelectorContext';
@@ -39,7 +39,6 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
       </div>
     );
   }
-  console.log("RESULTS ", results) 
   return (
     <>
       {results.map((item, i) => {

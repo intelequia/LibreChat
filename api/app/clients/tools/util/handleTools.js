@@ -1,14 +1,9 @@
-const { mcpToolPattern } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { SerpAPI } = require('@langchain/community/tools/serpapi');
 const { Calculator } = require('@langchain/community/tools/calculator');
+const { mcpToolPattern, loadWebSearchAuth } = require('@librechat/api');
 const { EnvVar, createCodeExecutionTool, createSearchTool } = require('@librechat/agents');
-const {
-  Tools,
-  EToolResources,
-  loadWebSearchAuth,
-  replaceSpecialVars,
-} = require('librechat-data-provider');
+const { Tools, EToolResources, replaceSpecialVars, dataService } = require('librechat-data-provider');
 const {
   availableTools,
   manifestToolMap,
@@ -32,6 +27,7 @@ const { getUserPluginAuthValue } = require('~/server/services/PluginService');
 const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { getCachedTools } = require('~/server/services/Config');
 const { createMCPTool } = require('~/server/services/MCP');
+const { applyReranking } = require('./reranker');
 
 const {BingSearch, MicrosoftGraph, Dataverse, Sharepoint,AzureAIFunctions} = require('~/utils'); 
 
@@ -243,7 +239,7 @@ const loadTools = async ({
 
   /** @type {Record<string, string>} */
   const toolContextMap = {};
-  const appTools = (await getCachedTools({ includeGlobal: true })) ?? {};
+  const cachedTools = (await getCachedTools({ userId: user, includeGlobal: true })) ?? {};
 
   for (const tool of tools) {
     if (tool === Tools.execute_code) {
@@ -256,7 +252,13 @@ const loadTools = async ({
           LIBRECHAT_CODE_API_KEY: "dfgsdfg",
         }
         const codeApiKey = authValues[EnvVar.CODE_API_KEY];
-        const { files, toolContext } = await primeCodeFiles(options, codeApiKey);
+        const { files, toolContext } = await primeCodeFiles(
+          {
+            ...options,
+            agentId: agent?.id,
+          },
+          codeApiKey,
+        );
         if (toolContext) {
           toolContextMap[tool] = toolContext;
         }
@@ -281,7 +283,10 @@ const loadTools = async ({
       continue;
     } else if (tool === Tools.file_search) {
       requestedTools[tool] = async () => {
-        const { files, toolContext } = await primeSearchFiles(options);
+        const { files, toolContext } = await primeSearchFiles({
+          ...options,
+          agentId: agent?.id,
+        });
         if (toolContext) {
           toolContextMap[tool] = toolContext;
         }
@@ -309,13 +314,26 @@ Current Date & Time: ${replaceSpecialVars({ text: '{{iso_datetime}}' })}
 `.trim();
         return createSearchTool({
           ...result.authResult,
-          onSearchResults,
+          onSearchResults: async (results, runnableConfig) => {
+            logger.info('[onSearchResults] scraper results:', results);
+            const { query } = runnableConfig.toolCall.args; // runnableConfig.configurable;
+            results.documents = results.data?.organic || [];
+            if (!results.documents) {
+              logger.warn('[onSearchResults] results.documents is missing. Creating empty array.');
+              results.documents = [];
+            }
+            const rerankedDocs = await applyReranking(query, results.documents, result.authResult.rerankerType, result.authResult);
+            results.data.organic = rerankedDocs;
+            if (onSearchResults) {
+              onSearchResults(results, runnableConfig);
+            }
+          },
           onGetHighlights,
           logger,
         });
       };
       continue;
-    } else if (tool && appTools[tool] && mcpToolPattern.test(tool)) {
+    } else if (tool && cachedTools && mcpToolPattern.test(tool)) {
       requestedTools[tool] = async () =>
         createMCPTool({
           req: options.req,
@@ -343,51 +361,7 @@ Current Date & Time: ${replaceSpecialVars({ text: '{{iso_datetime}}' })}
       requestedTools[tool] = toolInstance;
       continue;
     }
-
-    // /**
-    //  * Check if the tool is defined in the functions and load it as a "azure-ai-functions"
-    //  * @Organization Intelequia
-    //  * @Author Enrique M. Pedroza Castillo
-    //  */
-
-    // if(process.env.ENABLE_PERMISSION_MANAGE == "true" && tool != "image_vision" && !tool.startsWith("mcp") ){
-    //   const {status,value} = await VerifyAzureAIFunctionsTool(tool, user, toolOptions,loadToolWithAuth,toolAuthFields,toolConstructors);
-    //   if(status){
-    //     requestedTools[tool] = value;
-    //     continue;
-    //   }
-    //   else {
-    //     const {status, value} = await VerifyIntelequiaToolInstance(tool, user, toolOptions,loadToolWithAuth,toolAuthFields,toolConstructors);
-    //     if(status){
-    //       requestedTools[tool] = value;
-    //       continue;
-    //     }
-    //   }
-    // }
-    // if (functions === true) {
-    //   remainingTools.push(tool);
-    // }
   }
-
-  // let specs = null;
-  // if (useSpecs === true && functions === true && remainingTools.length > 0) {
-  //   specs = await loadSpecs({
-  //     llm: model,
-  //     user,
-  //     message: options.message,
-  //     memory: options.memory,
-  //     signal: options.signal,
-  //     tools: remainingTools,
-  //     map: true,
-  //     verbose: false,
-  //   });
-  // }
-
-  // for (const tool of remainingTools) {
-  //   if (specs && specs[tool]) {
-  //     requestedTools[tool] = specs[tool];
-  //   }
-  // }
 
   if (returnMap) {
     return requestedTools;

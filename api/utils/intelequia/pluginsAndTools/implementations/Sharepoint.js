@@ -61,8 +61,8 @@ class Sharepoint extends Tool {
   async _call(data) {
     var userEmail = data.userEmail;
     if (typeof data == "string"){
-      const User = require('~/models/User');
-      const { email } = await User.findOne({ _id: this.userId }).lean();
+      const { findUser } = require('~/models');
+      const { email } = await findUser({ _id: this.userId });
       userEmail = email;
     }
 

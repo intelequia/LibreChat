@@ -465,7 +465,7 @@ const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
     true,
   );
   const userId = result.user.toString();
-  const { email } = await findUser({ userId });
+  const { email } = await findUser({ _id:userId });
   
   /**
    * Custom event to track when a user uploads files 
@@ -525,10 +525,8 @@ const processFileUpload = async ({ req, res, metadata }) => {
     file_id,
     openai,
   });
-  if(metadata.knowledge == 'true'){
-    await handleKnowledge ({ fileId:id, assistantId:metadata.assistant_id }, openai)
-  }
-  else if ( isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
+
+  if (isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
     await openai.beta.assistants.files.create(metadata.assistant_id, {
       file_id: id,
     });
@@ -572,7 +570,7 @@ const processFileUpload = async ({ req, res, metadata }) => {
     true,
   );
   const userId = result.user.toString();
-  const { email } = await findUser({ userId });
+  const { email } = await findUser({ _id:userId });
   
   /**
    * Custom event to track when a user uploads files 
