@@ -150,13 +150,10 @@ const listAgentsForAzure = async ({ req, res, version, azureConfig = {}, query }
   const groupModelTuples = [];
   const promises = [];
   /** @type {Array<TAzureGroup>} */
-  const groups = [];
 
-  const { groupMap, assistantGroups } = azureConfig;
+  const { groups } = azureConfig;
 
-  for (const groupName of assistantGroups) {
-    const group = groupMap[groupName];
-    groups.push(group);
+  for (const group of groups) {
 
     const currentModelTuples = Object.entries(group?.models);
     groupModelTuples.push(currentModelTuples);
@@ -240,7 +237,7 @@ const fetchAssistants = async ({ req, res, overrideEndpoint }) => {
   /** @type {AssistantListResponse} */
   let body;
 
-  const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
+  const azureConfig = req.app.locals[EModelEndpoint.azureAgents];
   body = await listAgentsForAzure({ req, res, version, azureConfig, query });
 
   if (req.user.role === SystemRoles.ADMIN) {
