@@ -86,7 +86,7 @@ export default function useSSE(
 
   const { data: startupConfig } = useGetStartupConfig();
   const balanceQuery = useGetUserBalance({
-    enabled: !!isAuthenticated && startupConfig?.balance?.enabled,
+    enabled: !!isAuthenticated && startupConfig?.balance?.enabled === true,
   });
 
   useEffect(() => {

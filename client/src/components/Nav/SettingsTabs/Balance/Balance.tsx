@@ -10,7 +10,7 @@ function Balance() {
   const { data: startupConfig } = useGetStartupConfig();
 
   const balanceQuery = useGetUserBalance({
-    enabled: !!isAuthenticated && !!startupConfig?.balance?.enabled,
+    enabled: !!isAuthenticated && startupConfig?.balance?.enabled === true,
   });
   const balanceData = balanceQuery.data;
 

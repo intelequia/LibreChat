@@ -5,11 +5,9 @@ const {
   EModelEndpoint,
 } = require('librechat-data-provider');
 
-const { DefaultAzureCredential } = require('@azure/identity');
+const { ClientSecretCredential, DefaultAzureCredential } = require('@azure/identity');
 const { isUserProvided } = require('~/server/utils');
 const { truncateText, titleInstruction } = require('~/app/clients/prompts/index');
-
-
 
 
 class Files {
@@ -74,16 +72,30 @@ const initializeClient = async ({ req, res, initAppClient = false }) => {
       name: EModelEndpoint.azureAgents,
     });  
   }
-
-
-  const credentials =  new DefaultAzureCredential()
+  // Prefer explicit client credentials from environment; fallback to DefaultAzureCredential
+  const { AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET } = process.env;
+  let credentials;
+  try {
+    if (AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET) {
+      credentials = new ClientSecretCredential(
+        AZURE_TENANT_ID,
+        AZURE_CLIENT_ID,
+        AZURE_CLIENT_SECRET,
+      );
+    } else {
+      credentials = new DefaultAzureCredential();
+    }
+  } catch (e) {
+    console.log('Azure credential initialization failed:', e);
+    throw e;
+  }
 
 
   /** @type {TAzureConfig | undefined} */
   const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
 
   const client = new AgentsClient(AZURE_AI_PROJECT_ENDPOINT, credentials);
-
+  
   client.options = {}
 
   if(azureConfig && azureConfig.assistants){

@@ -72,56 +72,59 @@ const _listAssistants = async ({ req, res, version, query }) => {
  * @returns {Promise<Array<Assistant>>} A promise that resolves to the response from the `openai.beta.assistants.list` method call.
  */
 const listAllAzureAgents = async ({ req, res, version, query }) => {
-  /** @type {{ azureAgentClient: 'AIProjectsClient' }} */
-  const azureAgentClient = await getOpenAIClient({ req, res, version });
-  const allAzureAgents = [];
+  const client = await getOpenAIClient({ req, res, version });
 
-  let first_id;
-  let last_id;
-  let afterToken = query.after;
-  let hasMore = true;
+  const limit = Number(query?.limit) > 0 ? Number(query.limit) : undefined;
+  const after = query?.after; // continuation token
+  const permissionsNodeName = 'azureAgentPermissions';
 
-  let permissionsNodeName = "azureAgentPermissions";
-  if (global.myCache.get(permissionsNodeName)) {
-    let agents = [];
+  /** @type {any[]} */
+  let agents = [];
+  /** @type {string | undefined} */
+  let nextContinuationToken;
 
-    for await (const agent of azureAgentClient.listAgents()){
-      agents.push(agent);
-    }
-
-    const allowedAzureAgents = await checkGroupPermissions(req.user._id.toString(), agents, permissionsNodeName);
-
-    allowedAzureAgents.forEach((azureAgent) => allAzureAgents.push(azureAgent));
+  // If 'after' or 'limit' are provided, use byPage to fetch a single page
+  if (after || limit) {
+    const pageIter = client.listAgents().byPage({
+      maxPageSize: limit ?? 100,
+      continuationToken: after,
+    });
+    const { value: page = [] } = await pageIter.next();
+    agents = [...page];
+    // Azure SDK attaches continuationToken on the page array
+    nextContinuationToken = page && page.continuationToken ? page.continuationToken : undefined;
   } else {
-    while (hasMore) {
-      let agents = [];
-
-      for await (const agent of azureAgentClient.listAgents()){
-        agents.push(agent);
-      }
-
-      allAzureAgents.push(agents);
-      hasMore = body.has_more;
-
-      if (!first_id) {
-        first_id = body.first_id;
-      }
-
-      if (hasMore) {
-        afterToken = body.last_id;
-      } else {
-        last_id = body.last_id;
-      }
+    // Otherwise, iterate all agents
+    let count = 0;
+    for await (const agent of client.listAgents()) {
+      agents.push(agent);
+      if (limit && ++count >= limit) break;
     }
   }
 
+  // Optional permission filtering
+  if (global.myCache.get(permissionsNodeName)) {
+    agents = await checkGroupPermissions(
+      req.user._id.toString(),
+      agents,
+      permissionsNodeName,
+    );
+  }
+
+  // Compute metadata similar to OpenAI-style list responses
+  const first_id = agents[0]?.id;
+  const last_id = agents[agents.length - 1]?.id || nextContinuationToken;
+  const has_more = Boolean(nextContinuationToken);
+
   return {
-    data: allAzureAgents,
+    data: agents,
     body: {
-      data: allAzureAgents,
-      has_more: false,
+      data: agents,
+      has_more,
       first_id,
       last_id,
+      // Use last_id as the token to pass back in `after` for the next page
+      next_after: nextContinuationToken,
     },
   };
 };
@@ -147,13 +150,10 @@ const listAgentsForAzure = async ({ req, res, version, azureConfig = {}, query }
   const groupModelTuples = [];
   const promises = [];
   /** @type {Array<TAzureGroup>} */
-  const groups = [];
 
-  const { groupMap, assistantGroups } = azureConfig;
+  const { groups } = azureConfig;
 
-  for (const groupName of assistantGroups) {
-    const group = groupMap[groupName];
-    groups.push(group);
+  for (const group of groups) {
 
     const currentModelTuples = Object.entries(group?.models);
     groupModelTuples.push(currentModelTuples);
@@ -237,7 +237,7 @@ const fetchAssistants = async ({ req, res, overrideEndpoint }) => {
   /** @type {AssistantListResponse} */
   let body;
 
-  const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
+  const azureConfig = req.app.locals[EModelEndpoint.azureAgents];
   body = await listAgentsForAzure({ req, res, version, azureConfig, query });
 
   if (req.user.role === SystemRoles.ADMIN) {

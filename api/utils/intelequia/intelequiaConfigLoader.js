@@ -5,6 +5,10 @@ const { ClientSecretCredential } = require('@azure/identity');
 const { logger } = require('~/config');
 const jwtDecode = require('jsonwebtoken/decode');
 const { load } = require('mime');
+const path = require('path');
+const fs = require('fs');
+
+
 
 /**
  * Manage all permission operations, loads, saves parameters and configure users role
@@ -17,8 +21,8 @@ async function intelequiaConfigLoader() {
   const url = process.env.REMOTE_CONFIG_FILE_URL;
 
   if (url && url != "") {
-    logger.info("[IntelequiaConfigLoader] Loading GraphClient and Permissions files ...")
-    const result = await loadPermissionConfigFiles(url)
+    logger.info(`[IntelequiaConfigLoader] Loading GraphClient and Permissions files from ${url} ...`);
+    const result = await loadPermissionConfigFiles(url);
     const { permissions, functions, assistantAdminRole, agentPermissions, azureAgentPermissions } = result;
 
     global.myCache.set("functions", functions);
@@ -78,9 +82,18 @@ async function loadPermissionConfigFiles(url) {
 
   logger.info(`[validateTools] fetch remote configuration file: Fetching remote configuration file at URL "${url}"`);
   try {
-    const response = await fetch(url);
-    if (response.ok) {
-      return await response.json();
+    if (url.startsWith('http')) {
+      const response = await fetch(url);
+      if (response.ok) {
+        return await response.json();
+      }
+    }
+    else {
+      const filePath = path.join(__dirname, '../../..', url);
+      if (fs.existsSync(filePath)) {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      }
+      throw new Error(`[validateTools] fetch remote configuration file: File not found at "${filePath}"`);
     }
   } catch (e) {
     console.log(e)
