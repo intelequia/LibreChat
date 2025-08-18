@@ -1,3 +1,4 @@
+const accessPermissions = require('./accessPermissions');
 const assistants = require('./assistants');
 const azureAgents = require('./azureAgents');
 const categories = require('./categories');
@@ -30,6 +31,7 @@ const mcp = require('./mcp');
 const intelequiaConfig = require('./intelequia/config');
 
 module.exports = {
+  mcp,
   edit,
   auth,
   keys,
@@ -58,6 +60,6 @@ module.exports = {
   azureAgents,
   categories,
   staticRoute,
-  mcp,
   intelequiaConfig,
+  accessPermissions,
 };
