@@ -28,6 +28,7 @@ const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { getCachedTools } = require('~/server/services/Config');
 const { createMCPTool } = require('~/server/services/MCP');
 const { applyReranking } = require('./reranker');
+const { findUser } = require('~/models');
 
 const {BingSearch, MicrosoftGraph, Dataverse, Sharepoint,AzureAIFunctions} = require('~/utils'); 
 
@@ -268,8 +269,7 @@ const loadTools = async ({
          * @Author Enrique M. Pedroza Castillo
          */
 
-        const User = require('~/models/User');
-        const { email } = await User.findOne({ _id: user }).lean();
+        const { email } = await findUser({ _id: user });
 
         const CodeExecutionTool = createCodeExecutionTool({
           user_email:email,

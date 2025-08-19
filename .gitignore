@@ -141,3 +141,4 @@ helm/**/.values.yaml
 /.tabnine/
 /.codeium
 azureARCLogin.sh
+*.local.md

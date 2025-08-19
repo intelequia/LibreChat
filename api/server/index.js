@@ -23,14 +23,13 @@ const express = require('express');
 const passport = require('passport');
 const compression = require('compression');
 const cookieParser = require('cookie-parser');
-const { isEnabled } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const mongoSanitize = require('express-mongo-sanitize');
+const { isEnabled, ErrorController } = require('@librechat/api');
 const { connectDb, indexSync } = require('~/db');
-
 const validateImageRequest = require('./middleware/validateImageRequest');
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
-const errorController = require('./controllers/ErrorController');
+const { checkMigrations } = require('./services/start/migration');
 const initializeMCPs = require('./services/initializeMCPs');
 const configureSocialLogins = require('./socialLogins');
 const AppService = require('./services/AppService');
@@ -136,6 +135,8 @@ const startServer = async () => {
   app.use('/api/agents', routes.agents);
   app.use('/api/banner', routes.banner);
   app.use('/api/memories', routes.memories);
+  app.use('/api/permissions', routes.accessPermissions);
+
   app.use('/api/tags', routes.tags);
   app.use('/api/mcp', routes.mcp);
   app.use('/intelequia/config', routes.intelequiaConfig);
@@ -148,8 +149,7 @@ const startServer = async () => {
   if(process.env.ENABLE_PERMISSION_MANAGE == "true")
     await intelequiaConfigLoader();
 
-  // Add the error controller one more time after all routes
-  app.use(errorController);
+  app.use(ErrorController);
 
   app.use((req, res) => {
     res.set({
@@ -174,7 +174,7 @@ const startServer = async () => {
       logger.info(`Server listening at http://${host == '0.0.0.0' ? 'localhost' : host}:${port}`);
     }
 
-    initializeMCPs(app);
+    initializeMCPs(app).then(() => checkMigrations());
   });
 };
 

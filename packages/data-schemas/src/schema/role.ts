@@ -8,33 +8,33 @@ import type { IRole } from '~/types';
 const rolePermissionsSchema = new Schema(
   {
     [PermissionTypes.BOOKMARKS]: {
-      [Permissions.USE]: { type: Boolean, default: true },
+      [Permissions.USE]: { type: Boolean },
     },
     [PermissionTypes.PROMPTS]: {
-      [Permissions.SHARED_GLOBAL]: { type: Boolean, default: false },
-      [Permissions.USE]: { type: Boolean, default: true },
-      [Permissions.CREATE]: { type: Boolean, default: true },
+      [Permissions.SHARED_GLOBAL]: { type: Boolean },
+      [Permissions.USE]: { type: Boolean },
+      [Permissions.CREATE]: { type: Boolean },
     },
     [PermissionTypes.MEMORIES]: {
-      [Permissions.USE]: { type: Boolean, default: true },
-      [Permissions.CREATE]: { type: Boolean, default: true },
-      [Permissions.UPDATE]: { type: Boolean, default: true },
-      [Permissions.READ]: { type: Boolean, default: true },
-      [Permissions.OPT_OUT]: { type: Boolean, default: true },
+      [Permissions.USE]: { type: Boolean },
+      [Permissions.CREATE]: { type: Boolean },
+      [Permissions.UPDATE]: { type: Boolean },
+      [Permissions.READ]: { type: Boolean },
+      [Permissions.OPT_OUT]: { type: Boolean },
     },
     [PermissionTypes.AGENTS]: {
-      [Permissions.SHARED_GLOBAL]: { type: Boolean, default: false },
-      [Permissions.USE]: { type: Boolean, default: true },
-      [Permissions.CREATE]: { type: Boolean, default: true },
+      [Permissions.SHARED_GLOBAL]: { type: Boolean },
+      [Permissions.USE]: { type: Boolean },
+      [Permissions.CREATE]: { type: Boolean },
     },
     [PermissionTypes.MULTI_CONVO]: {
-      [Permissions.USE]: { type: Boolean, default: true },
+      [Permissions.USE]: { type: Boolean },
     },
     [PermissionTypes.TEMPORARY_CHAT]: {
-      [Permissions.USE]: { type: Boolean, default: true },
+      [Permissions.USE]: { type: Boolean },
     },
     [PermissionTypes.RUN_CODE]: {
-      [Permissions.USE]: { type: Boolean, default: true },
+      [Permissions.USE]: { type: Boolean },
     },
     /**
      * Add Assistant_Creator Permissions to the Admin Role
@@ -45,10 +45,21 @@ const rolePermissionsSchema = new Schema(
       [Permissions.USE]: {type: Boolean, default: true}  
     },
     [PermissionTypes.WEB_SEARCH]: {
-      [Permissions.USE]: { type: Boolean, default: true },
+      [Permissions.USE]: { type: Boolean },
+    },
+    [PermissionTypes.PEOPLE_PICKER]: {
+      [Permissions.VIEW_USERS]: { type: Boolean },
+      [Permissions.VIEW_GROUPS]: { type: Boolean },
+      [Permissions.VIEW_ROLES]: { type: Boolean },
+    },
+    [PermissionTypes.MARKETPLACE]: {
+      [Permissions.USE]: { type: Boolean },
     },
     [PermissionTypes.FILE_SEARCH]: {
-      [Permissions.USE]: { type: Boolean, default: true },
+      [Permissions.USE]: { type: Boolean },
+    },
+    [PermissionTypes.FILE_CITATIONS]: {
+      [Permissions.USE]: { type: Boolean },
     },
   },
   { _id: false },
