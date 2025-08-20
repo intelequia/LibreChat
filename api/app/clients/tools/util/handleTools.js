@@ -245,13 +245,10 @@ const loadTools = async ({
   for (const tool of tools) {
     if (tool === Tools.execute_code) {
       requestedTools[tool] = async () => {
-        // const authValues = await loadAuthValues({
-        //   userId: user,
-        //   authFields: [EnvVar.CODE_API_KEY],
-        // });
-        const authValues= {
-          LIBRECHAT_CODE_API_KEY: "dfgsdfg",
-        }
+        const authValues = await loadAuthValues({
+          userId: user,
+          authFields: [EnvVar.CODE_API_KEY],
+        });
         const codeApiKey = authValues[EnvVar.CODE_API_KEY];
         const { files, toolContext } = await primeCodeFiles(
           {
@@ -263,10 +260,11 @@ const loadTools = async ({
         if (toolContext) {
           toolContextMap[tool] = toolContext;
         }
+        
         /**
          * Retrievign needed data to track token ussage
-         * @organization Intelequia
          * @Author Enrique M. Pedroza Castillo
+         * @organization Intelequia
          */
 
         const { email } = await findUser({ _id: user });
