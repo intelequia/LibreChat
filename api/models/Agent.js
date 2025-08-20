@@ -629,17 +629,6 @@ const getListAgents = async (searchParameter) => {
 
   const globalProject = await getProjectByName(GLOBAL_PROJECT_NAME, ['agentIds']);
 
-  /**
-   * Filter the agents by permissions
-   * @author David Rodriguez
-   * @orgainzation Intelequia  
-   * */ 
-  let permissionsNodeName = "agentPermissions";
-  let agentPermissions = global.myCache.get(permissionsNodeName);
-  if (agentPermissions) {  
-    globalProject.agentIds = await checkGroupPermissions(author, globalProject.agentIds, permissionsNodeName);
-  }
-
   if (globalProject && (globalProject.agentIds?.length ?? 0) > 0) {
     const globalQuery = { id: { $in: globalProject.agentIds }, ...otherParams };
     delete globalQuery.author;

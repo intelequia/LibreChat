@@ -7,14 +7,6 @@ const {
 const {
   initializeClient: initAzureClient,
 } = require('~/server/services/Endpoints/azureAssistants');
-/**
- * imported Azure Agent Client
- * @author: Enrique M. Pedroza Castillo 
- * @organization: Intelequia
- */
-const {
-  initializeClient: initAzureAgentClient,
-} = require('~/server/services/Endpoints/azureAgents');
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
 const {checkGroupPermissions} = require('~/utils');
 const { getEndpointsConfig } = require('~/server/services/Config');
@@ -39,97 +31,6 @@ const getCurrentVersion = async (req, endpoint) => {
   }
   return version;
 };
-
-/**
- * Asynchronously lists assistants based on provided query parameters.
- *
- * Initializes the client with the current request and response objects and lists assistants
- * according to the query parameters. This function abstracts the logic for non-Azure paths.
- *
- * @deprecated
- * @async
- * @param {object} params - The parameters object.
- * @param {object} params.req - The request object, used for initializing the client.
- * @param {object} params.res - The response object, used for initializing the client.
- * @param {string} params.version - The API version to use.
- * @param {object} params.query - The query parameters to list assistants (e.g., limit, order).
- * @returns {Promise<object>} A promise that resolves to the response from the `openai.beta.assistants.list` method call.
- */
-const _listAssistants = async ({ req, res, version, query }) => {
-  const { openai } = await getOpenAIClient({ req, res, version });
-  return openai.beta.assistants.list(query);
-};
-
-
-
-/**
- * Fetches all assistants based on provided query params, until `has_more` is `false`.
- *
- * @async
- * @param {object} params - The parameters object.
- * @param {object} params.req - The request object, used for initializing the client.
- * @param {object} params.res - The response object, used for initializing the client.
- * @param {string} params.version - The API version to use.
- * @param {Omit<AssistantListParams, 'endpoint'>} params.query - The query parameters to list assistants (e.g., limit, order).
- * @returns {Promise<Array<Assistant>>} A promise that resolves to the response from the `openai.beta.assistants.list` method call.
- */
-const listAllAzureAgents = async ({ req, res, version, query }) => {
-  /** @type {{ azureAgentClient: 'AIProjectsClient' }} */
-  const azureAgentClient = await getOpenAIClient({ req, res, version });
-  const allAzureAgents = [];
-
-  let first_id;
-  let last_id;
-  let afterToken = query.after;
-  let hasMore = true;
-
-  let permissionsNodeName = "azureAgentPermissions";
-  if (global.myCache.get(permissionsNodeName)) {
-    const response = await azureAgentClient.agents.listAgents({
-      ...query,
-      after: afterToken,
-    });
-
-    const { data } = response;
-
-    const allowedAzureAgents = await checkGroupPermissions(req.user._id.toString(), data, permissionsNodeName);
-
-    allowedAzureAgents.forEach((azureAgent) => allAzureAgents.push(azureAgent));
-  } else {
-    while (hasMore) {
-      const response = await azureAgentClient.agents.listAgents({
-        ...query,
-        after: afterToken,
-      });
-
-      const { body } = response;
-
-      allAzureAgents.push(...data);
-      hasMore = body.has_more;
-
-      if (!first_id) {
-        first_id = body.first_id;
-      }
-
-      if (hasMore) {
-        afterToken = body.last_id;
-      } else {
-        last_id = body.last_id;
-      }
-    }
-  }
-
-  return {
-    data: allAzureAgents,
-    body: {
-      data: allAzureAgents,
-      has_more: false,
-      first_id,
-      last_id,
-    },
-  };
-};
-
 
 /**
  * Fetches all assistants based on provided query params, until `has_more` is `false`.
