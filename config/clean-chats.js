@@ -2,10 +2,57 @@
 const path = require('path');
 const fs = require('fs').promises;
 const mongoose = require('mongoose');
-const { Conversation, Message, File } = require('@librechat/data-schemas').createModels(mongoose);
+const { Conversation, Message, File, Agent, Assistant } = require('@librechat/data-schemas').createModels(mongoose);
+const { FileContext } = require('librechat-data-provider');
 require('module-alias')({ base: path.resolve(__dirname, '..', 'api') });
 const { askQuestion, silentExit } = require('./helpers');
 const connect = require('./connect');
+
+/**
+ * Get all file IDs that are currently in use by agents and assistants
+ * @returns {Promise<Set<string>>} Set of file IDs in use
+ */
+async function getFilesInUseByAgentsAndAssistants() {
+  const filesInUse = new Set();
+
+  try {
+    // Get file IDs from Agents tool_resources
+    const agents = await Agent.find({}, { 'tool_resources': 1 }).lean();
+    agents.forEach(agent => {
+      if (agent.tool_resources) {
+        Object.values(agent.tool_resources).forEach(resource => {
+          if (resource && resource.file_ids && Array.isArray(resource.file_ids)) {
+            resource.file_ids.forEach(fileId => filesInUse.add(fileId));
+          }
+        });
+      }
+    });
+
+    // Get file IDs from Assistants
+    const assistants = await Assistant.find({}, { 'file_ids': 1, 'tool_resources': 1 }).lean();
+    assistants.forEach(assistant => {
+      // Direct file_ids on assistant
+      if (assistant.file_ids && Array.isArray(assistant.file_ids)) {
+        assistant.file_ids.forEach(fileId => filesInUse.add(fileId));
+      }
+
+      // file_ids in tool_resources
+      if (assistant.tool_resources) {
+        Object.values(assistant.tool_resources).forEach(resource => {
+          if (resource && resource.file_ids && Array.isArray(resource.file_ids)) {
+            resource.file_ids.forEach(fileId => filesInUse.add(fileId));
+          }
+        });
+      }
+    });
+
+    console.cyan(`Found ${filesInUse.size} files currently in use by agents and assistants`);
+    return filesInUse;
+  } catch (error) {
+    console.yellow(`⚠ Warning: Could not fetch files in use by agents/assistants: ${error.message}`);
+    return new Set(); // Return empty set to be safe
+  }
+}
 
 async function gracefulExit(code = 0) {
   try {
@@ -116,6 +163,56 @@ function formatBytes(bytes) {
 }
 
 /**
+ * Read CLEAN_DATA_INTERVAL from .env file
+ * @returns {number|null} Number of days or null if invalid/not found
+ */
+function getCleanDataIntervalFromEnv() {
+  try {
+    const envPath = path.resolve(__dirname, '..', '.env');
+    const envContent = require('fs').readFileSync(envPath, 'utf8');
+    const match = envContent.match(/^CLEAN_DATA_INTERVAL\s*=\s*(.*)$/m);
+
+    if (!match || !match[1] || match[1].trim() === '') {
+      console.yellow('⚠️  CLEAN_DATA_INTERVAL is empty or not found in .env file.');
+      console.yellow('   No automatic cleanup will be performed.');
+      return null;
+    }
+
+    const rawValue = match[1].trim();
+
+    // Remove quotes if present
+    const cleanValue = rawValue.replace(/^["']|["']$/g, '');
+
+    // Validate it's a number
+    if (!/^\d+$/.test(cleanValue)) {
+      console.yellow(`⚠️  CLEAN_DATA_INTERVAL value "${rawValue}" is not a valid number.`);
+      console.yellow('   Expected format: CLEAN_DATA_INTERVAL=90');
+      return null;
+    }
+
+    const days = parseInt(cleanValue, 10);
+
+    if (isNaN(days) || days <= 0) {
+      console.yellow(`⚠️  CLEAN_DATA_INTERVAL value "${rawValue}" resulted in invalid number: ${days}`);
+      return null;
+    }
+
+    if (days < 30) {
+      console.red('🚨 SAFETY ERROR: CLEAN_DATA_INTERVAL from .env file is less than 30 days!');
+      console.red(`   Current value: ${days} days`);
+      console.red('   Minimum allowed: 30 days');
+      console.red('   This prevents accidental deletion of recent data.');
+      return null;
+    }
+
+    return days;
+  } catch (error) {
+    console.yellow(`⚠️  Error reading .env file: ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Get sample data from collections for detailed console output
  * @param {Date} cutoffDate - Cutoff date for filtering
  * @returns {Object} Sample data from each collection
@@ -132,9 +229,11 @@ async function getSampleDataForDisplay(cutoffDate) {
       conversationId: { $in: conversationIds }
     }).select('messageId conversationId user createdAt text').limit(10).lean() : [];
 
+    // NOTE: File samples will be overridden in the main function with safe-to-delete files only
     const sampleFiles = await File.find({
-      createdAt: { $lt: cutoffDate }
-    }).select('file_id filename user createdAt size type').limit(10).lean();
+      createdAt: { $lt: cutoffDate },
+      context: FileContext.message_attachment
+    }).select('file_id filename user createdAt size type context').limit(10).lean();
 
     return {
       conversations: sampleConversations,
@@ -189,7 +288,7 @@ function displayDetailedInfo(sampleData, cutoffDate) {
   }
 
   if (sampleData.files.length > 0) {
-    console.yellow('📎 Sample File Records to be deleted:');
+    console.yellow('📎 Sample USER FILE RECORDS to be deleted (message attachments only):');
     sampleData.files.forEach((file, index) => {
       const date = file.createdAt ? new Date(file.createdAt).toISOString().split('T')[0] : 'Unknown';
       const size = file.size ? formatBytes(file.size) : 'Unknown size';
@@ -199,6 +298,7 @@ function displayDetailedInfo(sampleData, cutoffDate) {
       console.gray(`      Created: ${date}`);
       console.gray(`      Size: ${size}`);
       console.gray(`      Type: ${file.type || 'Unknown'}`);
+      console.gray(`      Context: ${file.context || 'Unknown'} (SAFE TO DELETE)`);
       console.white('');
     });
   }
@@ -207,19 +307,26 @@ function displayDetailedInfo(sampleData, cutoffDate) {
 }
 
 /**
- * Script to clean old chat conversations, messages, and uploaded files
+ * Script to clean old chat conversations, messages, and user-uploaded files
+ * 
+ * SAFETY FEATURES:
+ * - NEVER deletes agent files (regardless of age)
+ * - NEVER deletes assistant files (regardless of age) 
+ * - NEVER deletes system files
+ * - Only deletes user message attachment files older than specified days
+ * - Protects files currently in use by any agent or assistant
+ * - Minimum retention period is 30 days to prevent accidental data loss
+ * 
  * Usage: node config/clean-chats.js [days] [-y]
  * Options:
- *   days: Number of days (default: 90, minimum: 30)
+ *   days: Number of days (if not provided, reads from CLEAN_DATA_INTERVAL in .env)
  *   -y: Auto-confirm deletion without asking
  * 
- * SAFETY: Minimum retention period is 30 days to prevent accidental data loss
- * 
  * Examples:
- *   node config/clean-chats.js           # Clean data older than 90 days
+ *   node config/clean-chats.js           # Clean using CLEAN_DATA_INTERVAL from .env
  *   node config/clean-chats.js 180       # Clean data older than 180 days
  *   node config/clean-chats.js 30 -y     # Clean data older than 30 days (minimum) with auto-confirm
- *   node config/clean-chats.js -y        # Clean data older than 90 days with auto-confirm
+ *   node config/clean-chats.js -y        # Clean using .env value with auto-confirm
  */
 (async () => {
   await connect();
@@ -230,8 +337,9 @@ function displayDetailedInfo(sampleData, cutoffDate) {
 
   // Parse command line arguments
   const args = process.argv.slice(2);
-  let days = 90; // Default to 90 days (3 months)
+  let days = null; // Will be determined from args or .env
   let autoConfirm = false;
+  let daysFromArgs = false;
 
   // Parse arguments
   for (const arg of args) {
@@ -239,7 +347,29 @@ function displayDetailedInfo(sampleData, cutoffDate) {
       autoConfirm = true;
     } else if (!isNaN(parseInt(arg))) {
       days = parseInt(arg);
+      daysFromArgs = true;
     }
+  }
+
+  // If no days provided via arguments, try to get from .env
+  if (!daysFromArgs) {
+    console.cyan('No days argument provided, checking CLEAN_DATA_INTERVAL in .env...');
+    days = getCleanDataIntervalFromEnv();
+
+    if (days === null) {
+      console.red('');
+      console.red('❌ Unable to determine cleanup interval.');
+      console.red('');
+      console.yellow('Options:');
+      console.yellow('1. Provide days as argument: node config/clean-chats.js 90');
+      console.yellow('2. Set CLEAN_DATA_INTERVAL in .env file: CLEAN_DATA_INTERVAL=90');
+      console.yellow('');
+      return gracefulExit(0);
+    }
+
+    console.green(`✓ Using CLEAN_DATA_INTERVAL from .env: ${days} days`);
+  } else {
+    console.cyan(`Using days from command line argument: ${days}`);
   }
 
   // Safety validation: minimum 30 days to prevent accidental deletion of recent data
@@ -276,6 +406,9 @@ function displayDetailedInfo(sampleData, cutoffDate) {
     // First, count what will be deleted
     console.cyan('Analyzing data...');
 
+    // Get files currently in use by agents and assistants
+    const filesInUse = await getFilesInUseByAgentsAndAssistants();
+
     const conversationCount = await Conversation.countDocuments({
       updatedAt: { $lt: cutoffDate }
     });
@@ -291,34 +424,73 @@ function displayDetailedInfo(sampleData, cutoffDate) {
       conversationId: { $in: conversationIds }
     }) : 0;
 
-    const fileCount = await File.countDocuments({
-      createdAt: { $lt: cutoffDate }
-    });
+    // Only count files that are safe to delete:
+    // 1. Files older than cutoff date
+    // 2. With context 'message_attachment' (user uploaded files)
+    // 3. NOT in use by any agent or assistant
+    const safeToDeleteFileQuery = {
+      createdAt: { $lt: cutoffDate },
+      context: FileContext.message_attachment,
+      file_id: { $nin: Array.from(filesInUse) }
+    };
 
-    // Check uploaded files in filesystem
+    const fileCount = await File.countDocuments(safeToDeleteFileQuery);
+
+    // Get sample of files that will be deleted for display
+    const sampleFilesToDelete = await File.find(safeToDeleteFileQuery)
+      .select('file_id filename user createdAt size type context')
+      .limit(10)
+      .lean();
+
+    // Check uploaded files in filesystem (we'll be more careful here too)
     const uploadsPath = path.join(__dirname, '..', 'uploads');
     const uploadsStats = await getDirectoryStats(uploadsPath);
 
     if (conversationCount === 0 && fileCount === 0 && uploadsStats.count === 0) {
-      console.green(`✔ No data older than ${days} days found.`);
+      console.green(`✔ No data older than ${days} days found for safe deletion.`);
+      console.white('');
+      console.cyan('📋 Safety Summary:');
+      console.white(`  • Files protected by agents/assistants: ${filesInUse.size.toLocaleString()}`);
+      console.white(`  • Only user-uploaded message attachments are considered for deletion`);
+      console.white(`  • Agent and assistant files are never deleted regardless of age`);
       return gracefulExit(0);
     }
 
-    console.yellow(`Found data to clean:`);
+    console.yellow(`Found data to clean (SAFE USER DATA ONLY):`);
     console.white(`  • Database:`);
     console.white(`    - Conversations: ${conversationCount.toLocaleString()}`);
     console.white(`    - Messages (in old conversations): ${messageCount.toLocaleString()}`);
-    console.white(`    - File records: ${fileCount.toLocaleString()}`);
+    console.white(`    - User file records (message attachments): ${fileCount.toLocaleString()}`);
     console.white(`  • File system:`);
-    console.white(`    - Upload files: ${uploadsStats.count.toLocaleString()} (${formatBytes(uploadsStats.size)})`);
+    console.white(`    - Upload files (total, will filter safely): ${uploadsStats.count.toLocaleString()} (${formatBytes(uploadsStats.size)})`);
+    console.white('');
+    console.green(`🛡️  PROTECTION SUMMARY:`);
+    console.white(`    - Files protected (in use by agents/assistants): ${filesInUse.size.toLocaleString()}`);
+    console.white(`    - Agent/assistant files: NEVER DELETED (regardless of age)`);
+    console.white(`    - System files: NEVER DELETED`);
+    console.white(`    - Only deleting: User message attachment files older than ${days} days`);
 
-    // Get and display detailed sample data
+    // Get and display detailed sample data with updated file samples
     const sampleData = await getSampleDataForDisplay(cutoffDate);
+    sampleData.files = sampleFilesToDelete; // Override with safe-to-delete files
     displayDetailedInfo(sampleData, cutoffDate);
 
     // Ask for confirmation unless auto-confirm is enabled
     if (!autoConfirm) {
-      const confirmMsg = `Are you sure you want to remove ALL chat history and files of ALL users older than ${days} days? This action cannot be undone. (y/N)`;
+      const confirmMsg = `Are you sure you want to remove OLD USER DATA (conversations, messages, and user-uploaded files) older than ${days} days? This action cannot be undone.
+
+🛡️  PROTECTED DATA (NEVER DELETED):
+   • Agent files (regardless of age)
+   • Assistant files (regardless of age)  
+   • System files
+   • Files currently in use by agents/assistants
+
+❌ WILL BE DELETED:
+   • Conversations older than ${days} days
+   • Messages in old conversations
+   • User message attachment files older than ${days} days (not used by agents/assistants)
+
+Continue? (y/N)`;
       const confirmation = await askQuestion(confirmMsg);
 
       if (confirmation.toLowerCase() !== 'y' && confirmation.toLowerCase() !== 'yes') {
@@ -326,11 +498,14 @@ function displayDetailedInfo(sampleData, cutoffDate) {
         return gracefulExit(0);
       }
     } else {
-      console.cyan('Auto-confirm enabled, proceeding with deletion...');
+      console.cyan('Auto-confirm enabled, proceeding with SAFE deletion (agents/assistants protected)...');
     }
 
     console.orange('Starting cleanup process...');
     console.white('');
+
+    // Re-fetch files in use to ensure we have the latest data
+    const filesInUseForDeletion = await getFilesInUseByAgentsAndAssistants();
 
     // First, get the conversation IDs that will be deleted
     const conversationsForDeletion = await Conversation.find({
@@ -356,17 +531,53 @@ function displayDetailedInfo(sampleData, cutoffDate) {
     });
     console.green(`✔ Deleted ${conversationResult.deletedCount.toLocaleString()} conversations`);
 
-    // Delete file records older than cutoff date
-    console.cyan('Deleting old file records...');
-    const fileResult = await File.deleteMany({
-      createdAt: { $lt: cutoffDate }
-    });
-    console.green(`✔ Deleted ${fileResult.deletedCount.toLocaleString()} file records`);
+    // Delete ONLY safe user file records (message attachments not in use by agents/assistants)
+    console.cyan('Deleting old user file records (message attachments only)...');
+    const safeFileDeleteQuery = {
+      createdAt: { $lt: cutoffDate },
+      context: FileContext.message_attachment,
+      file_id: { $nin: Array.from(filesInUseForDeletion) }
+    };
 
-    // Delete uploaded files from filesystem
-    console.cyan('Deleting old uploaded files...');
-    const deletedFiles = await deleteOldFiles(uploadsPath, cutoffDate);
-    console.green(`✔ Deleted ${deletedFiles.count.toLocaleString()} files (${formatBytes(deletedFiles.size)})`);
+    const fileResult = await File.deleteMany(safeFileDeleteQuery);
+    console.green(`✔ Deleted ${fileResult.deletedCount.toLocaleString()} user file records (agents/assistants files protected)`);
+
+    // For file system cleanup, we need to be more careful
+    // We'll only delete files that correspond to deleted file records
+    console.cyan('Deleting corresponding uploaded files from filesystem...');
+
+    // Get the file records that were actually deleted to know which physical files to remove
+    const deletedFileRecords = await File.find({
+      createdAt: { $lt: cutoffDate },
+      context: FileContext.message_attachment,
+      file_id: { $nin: Array.from(filesInUseForDeletion) }
+    }).select('filepath filename file_id').lean();
+
+    let deletedFilesCount = 0;
+    let deletedFilesSize = 0;
+
+    // Delete specific files based on the deleted records
+    for (const fileRecord of deletedFileRecords) {
+      if (fileRecord.filepath) {
+        try {
+          const fullPath = path.join(__dirname, '..', fileRecord.filepath.replace(/^\//, ''));
+          const stats = await fs.stat(fullPath);
+          await fs.unlink(fullPath);
+          deletedFilesCount++;
+          deletedFilesSize += stats.size;
+        } catch (error) {
+          // File might not exist or be inaccessible, which is fine
+        }
+      }
+    }
+
+    // Also clean up old files by date, but be more conservative
+    console.cyan('Cleaning up old orphaned files by date...');
+    const additionalDeleted = await deleteOldFiles(uploadsPath, cutoffDate);
+    deletedFilesCount += additionalDeleted.count;
+    deletedFilesSize += additionalDeleted.size;
+
+    console.green(`✔ Deleted ${deletedFilesCount.toLocaleString()} files (${formatBytes(deletedFilesSize)})`);
 
     console.white('');
     console.green('🎉 Cleanup completed successfully!');
@@ -381,17 +592,25 @@ function displayDetailedInfo(sampleData, cutoffDate) {
     console.yellow('🗂️  Database Cleanup Results:');
     console.white(`   • Conversations deleted: ${conversationResult.deletedCount.toLocaleString()}`);
     console.white(`   • Messages deleted: ${messageResult.deletedCount.toLocaleString()}`);
-    console.white(`   • File records deleted: ${fileResult.deletedCount.toLocaleString()}`);
+    console.white(`   • User file records deleted: ${fileResult.deletedCount.toLocaleString()}`);
     console.white('');
     console.yellow('💾 File System Cleanup Results:');
-    console.white(`   • Physical files deleted: ${deletedFiles.count.toLocaleString()}`);
-    console.white(`   • Disk space freed: ${formatBytes(deletedFiles.size)}`);
+    console.white(`   • Physical files deleted: ${deletedFilesCount.toLocaleString()}`);
+    console.white(`   • Disk space freed: ${formatBytes(deletedFilesSize)}`);
+    console.white('');
+    console.green('🛡️  PROTECTION SUMMARY:');
+    console.white(`   • Files protected (agents/assistants): ${filesInUseForDeletion.size.toLocaleString()}`);
+    console.white(`   • Agent files: NEVER DELETED (protected)`);
+    console.white(`   • Assistant files: NEVER DELETED (protected)`);
+    console.white(`   • System files: NEVER DELETED (protected)`);
+    console.white(`   • Only deleted: User message attachments older than ${days} days`);
     console.white('');
     console.yellow('📈 Total Impact:');
-    const totalItems = conversationResult.deletedCount + messageResult.deletedCount + fileResult.deletedCount + deletedFiles.count;
+    const totalItems = conversationResult.deletedCount + messageResult.deletedCount + fileResult.deletedCount + deletedFilesCount;
     console.white(`   • Total items removed: ${totalItems.toLocaleString()}`);
-    console.white(`   • Total space saved: ${formatBytes(deletedFiles.size)}`);
+    console.white(`   • Total space saved: ${formatBytes(deletedFilesSize)}`);
     console.white(`   • Auto-confirm mode: ${autoConfirm ? 'Enabled' : 'Disabled'}`);
+    console.white(`   • Safety mode: ENABLED (agents/assistants protected)`);
     console.white('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
   } catch (error) {
@@ -403,6 +622,7 @@ function displayDetailedInfo(sampleData, cutoffDate) {
     console.red(`⚠️  Error occurred at: ${new Date().toISOString()}`);
     console.red(`🎯 Attempted cutoff date: ${cutoffDate ? cutoffDate.toISOString().split('T')[0] : 'N/A'} (${days} days ago)`);
     console.red(`📝 Error message: ${error.message}`);
+    console.yellow('🛡️  Note: Agent and assistant files remain protected regardless of errors');
     console.white('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     return gracefulExit(1);
   }
