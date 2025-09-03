@@ -4,10 +4,10 @@ const { exec } = require('child_process');
 
 /**
  * Script de cron de Intelequia para limpieza automática de chats
- * Ejecuta el comando dentro del contenedor LibreChat usando docker exec
+ * MODO INTERNO: Se ejecuta directamente dentro del contenedor LibreChat
  * El script clean-chats.js se encarga de leer CLEAN_DATA_INTERVAL del .env
  * 
- * Comando: docker exec LibreChat npm run clean-chats -- -y
+ * Comando: npm run clean-chats -- -y (ejecutado internamente)
  */
 
 function log(message) {
@@ -15,24 +15,17 @@ function log(message) {
 }
 
 function main() {
-    log('Intelequia cron cleanup job started (Docker mode)');
+    log('Intelequia internal cron cleanup job started');
 
-    // Ejecutar clean-chats dentro del contenedor LibreChat usando docker exec
-    const projectDir = path.join(__dirname, '..', '..');
+    // Comando que se ejecutará directamente dentro del contenedor
+    const command = 'npm run clean-chats -- -y';
 
-    // Comando que se ejecutará dentro del contenedor
-    const cleanCommand = 'npm run clean-chats -- -y';
+    log(`Executing internally: ${command}`);
 
-    // Comando docker exec que se ejecuta desde el host
-    const command = `docker exec LibreChat ${cleanCommand}`;
-
-    log(`Executing in container 'LibreChat': ${cleanCommand}`);
-    log(`Full command: ${command}`);
-
-    exec(command, { cwd: projectDir }, (error, stdout, stderr) => {
+    exec(command, { cwd: '/app' }, (error, stdout, stderr) => {
         if (error) {
             log(`ERROR: ${error.message}`);
-            log('Make sure the LibreChat container is running: docker ps | grep LibreChat');
+            log('Internal cron execution failed');
             process.exit(1);
         }
 

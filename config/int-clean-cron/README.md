@@ -1,15 +1,14 @@
-# Intelequia - Intelewriter Automatic Cleanup (Docker Mode)
+# Intelequia - Intelewriter Automatic Cleanup (Internal Mode)
 
 This folder contains the Intelequia scripts for automatic cleanup of Intelewriter chats.
 
 ## 📁 Files
 
-- `cron-clean-chats.js` - Docker-aware cron script (runs on HOST, executes in CONTAINER)
-- `setup-cron.sh` - Automatic cron job configurator (Docker mode)
-- `test-docker-cleanup.sh` - Test script to verify Docker setup
+- `cron-clean-chats.js` - Internal cron script (runs INSIDE the container)
+- `setup-cron.sh` - Automatic cron job configurator (Internal mode)
 - `README.md` - This documentation
 
-## 🚀 Quick Setup (Docker Mode)
+## 🚀 Quick Setup (Internal Mode)
 
 ### Prerequisites
 
@@ -20,114 +19,77 @@ This folder contains the Intelequia scripts for automatic cleanup of Intelewrite
    CLEAN_DATA_INTERVAL=90
    ```
 
-### Installation: Host Cron → Container Execution (Recommended)
+### Installation: Internal Cron (Automatic)
 
-This is the **SAFEST** approach: the cron runs on the host but executes commands inside the LibreChat container.
+This is the **NEW IMPROVED** approach: the cron runs INSIDE the LibreChat container and configures itself automatically when the container starts.
 
-#### Step 1: Test the Setup First
+#### How it works:
 
-```bash
-# Navigate to the script directory
-cd /path/to/your/LibreChat/config/int-clean-cron
+1. **Automatic Setup**: When the container starts, it automatically installs cron and configures the cleanup job
+2. **Internal Execution**: The cron runs inside the container, no external dependencies
+3. **Persistent**: Survives container recreations and updates
 
-# Make the test script executable
-chmod +x test-docker-cleanup.sh
+#### No Manual Setup Required!
 
-# Test that Docker cleanup works
-./test-docker-cleanup.sh
-```
+The system is now **completely automatic**. Just start your LibreChat container and the cron will be configured and running.
 
-#### Step 2: Configure Automatic Cron
-
-```bash
-# Make the setup script executable
-chmod +x setup-cron.sh
-
-# Run the setup script (this sets up cron on the HOST)
-./setup-cron.sh
-```
-
-### Alternative Approaches
-
-#### Option 1: Manual Docker Command
-```bash
-# Run cleanup directly in container
-docker-compose exec api npm run clean-chats -- -y
-
-# Or if your service is named differently:
-docker-compose exec librechat npm run clean-chats -- -y
-```
-
-#### Option 2: Manual Host Cron Setup
-```bash
-# Add to host crontab manually
-crontab -e
-
-# Add this line (adjust paths as needed):
-0 6 * * * /usr/bin/node /path/to/LibreChat/config/int-clean-cron/cron-clean-chats.js >> /path/to/LibreChat/config/int-clean-cron/logs/intelewriter-cleanup.log 2>&1
-```
-
-## 🐳 How Docker Mode Works
+## 🐳 How Internal Mode Works
 
 ### Architecture:
-1. **Cron runs on HOST** (physical machine/VM)
-2. **Commands execute INSIDE LibreChat container**
-3. **Survives container recreations** ✅
-4. **Survives image updates** ✅
-5. **Survives service restarts** ✅
+1. **Container starts** with docker-compose
+2. **Automatically installs cron** and dependencies  
+3. **Configures internal cron job** (daily at 6:00 AM)
+4. **Starts LibreChat backend** as usual
+5. **Cron runs automatically** inside the container
 
 ### Command Flow:
 ```
-HOST cron → docker-compose exec → LibreChat container → npm run clean-chats
+Container startup → Install cron → Configure cron → Start backend → Internal cron executes cleanup
 ```
 
-## ⚙️ Enhanced Docker Features
+## ⚙️ Enhanced Internal Features
 
-### Automatic Service Discovery:
-The `cron-clean-chats.js` script will:
-1. Log which service worked for future reference
-2. Fail gracefully if no service is found
+### Automatic Setup:
+- ✅ **Zero manual configuration** required
+- ✅ **Automatic cron installation** when container starts
+- ✅ **Self-configuring** cleanup schedule
+- ✅ **Immediate activation** on container creation
 
-### Enhanced Error Handling:
-- ✅ Detects if containers are not running
-- ✅ Tries multiple service names
-- ✅ Clear error messages
-- ✅ Detailed logging
-
-### Smart Logging:
-- 📝 Container execution details
-- � Service discovery process
-- �️ Protection status (agents/assistants files)
-- 📈 Cleanup results
+### Smart Internal Execution:
+- ✅ Runs directly inside the container (no external dependencies)
+- ✅ Direct access to npm commands and environment
+- ✅ Integrated logging within container logs
+- ✅ No Docker socket access needed
 
 ## 🔍 Verification and Testing
 
-### Testing Commands:
+### Checking Internal Cron Status:
 
 ```bash
-# Test the Docker cleanup manually
-./test-docker-cleanup.sh
-
-# Test the cron script directly
-node cron-clean-chats.js
-
-# Check what containers are running
+# Check if container is running
 docker-compose ps
 
-# View current host crontab
+# Access container shell
+docker-compose exec api bash
+
+# Inside container - check cron status
 crontab -l
 
-# View logs in real-time
-tail -f logs/intelewriter-cleanup.log
+# Inside container - check logs
+tail -f /app/config/int-clean-cron/logs/intelewriter-cleanup.log
+
+# Inside container - test script manually
+node /app/config/int-clean-cron/cron-clean-chats.js
 ```
 
 ### Manual Cleanup Commands:
 
 ```bash
-docker-compose exec librechat npm run clean-chats -- -y
+# From outside container
+docker-compose exec api npm run clean-chats -- -y
 
-# With custom days
-docker-compose exec api npm run clean-chats 120 -y
+# From inside container
+npm run clean-chats -- -y
 ```
 
 ## 📋 CLEAN_DATA_INTERVAL Examples
@@ -145,96 +107,80 @@ CLEAN_DATA_INTERVAL=15     # Less than 30 days
 # CLEAN_DATA_INTERVAL=90   # Commented out
 ```
 
-## 🔄 Docker Workflow
+## 🔄 Internal Workflow
 
 ### Automatic Cron Execution:
-1. **Host cron** triggers at 6 AM daily
-2. `cron-clean-chats.js` runs on **HOST**
-3. Script executes `docker-compose exec [service] npm run clean-chats -- -y`
-4. `clean-chats.js` runs **INSIDE container**
-5. Reads `CLEAN_DATA_INTERVAL` from container's `.env`
-6. **Only deletes user files** (protects agents/assistants)
-7. Logs results back to host
+1. **Container starts** with docker-compose up
+2. **Setup script runs** automatically during startup
+3. **Cron is installed** and configured internally
+4. **Internal cron** triggers at 6 AM daily
+5. `cron-clean-chats.js` runs **INSIDE container**
+6. Script executes `npm run clean-chats -- -y` directly
+7. `clean-chats.js` runs and reads `CLEAN_DATA_INTERVAL` from `.env`
+8. **Only deletes user files** (protects agents/assistants)
+9. Logs results to internal log file
 
 ### Container Recreation Safety:
-- ✅ **Container recreated?** → Cron still works
-- ✅ **Image updated?** → Cron still works  
-- ✅ **Service restarted?** → Cron still works
-- ✅ **Host rebooted?** → Cron restored automatically
+- ✅ **Container recreated?** → Cron auto-configures on startup
+- ✅ **Image updated?** → Cron auto-configures on startup  
+- ✅ **Service restarted?** → Cron auto-configures on startup
+- ✅ **Host rebooted?** → Cron auto-configures when containers start
 
 ## 🛠️ Maintenance
 
 ### Viewing Status:
 ```bash
-# Check host cron status
-crontab -l | grep intelewriter
+# Check container cron status
+docker-compose exec api crontab -l
 
 # Check container status
 docker-compose ps
 
-# View recent logs
-tail -20 logs/intelewriter-cleanup.log
+# View recent logs (from inside container)
+docker-compose exec api tail -20 /app/config/int-clean-cron/logs/intelewriter-cleanup.log
 
-# Test connectivity to container
+# Test internal connectivity
 docker-compose exec api echo "Container accessible"
-```
-
-### Removing Cron Job:
-```bash
-# Edit host crontab and remove Intelequia lines
-crontab -e
 ```
 
 ### Changing Schedule:
 1. Modify `setup-cron.sh` (change the `CRON_SCHEDULE` variable)
-2. Run `./setup-cron.sh` again
-3. Confirm replacement when prompted
+2. Restart the container: `docker-compose restart api`
+3. The new schedule will be automatically configured
 
 ### Troubleshooting:
 
 #### Common Issues:
 
-1. **"No such service" error:**
+1. **Container not starting:**
    ```bash
-   # Check available services
-   docker-compose ps --services
-   # Update script if needed
+   # Check container logs
+   docker-compose logs api
    ```
 
-2. **Container not running:**
+2. **Cron not running:**
    ```bash
-   # Start LibreChat
-   docker-compose up -d
+   # Check if cron service is running inside container
+   docker-compose exec api service cron status
+   
+   # Restart cron service
+   docker-compose exec api service cron restart
    ```
 
-3. **Permission denied:**
+3. **Script execution errors:**
    ```bash
-   # Ensure scripts are executable
-   chmod +x *.sh
+   # Test script manually
+   docker-compose exec api node /app/config/int-clean-cron/cron-clean-chats.js
    ```
 
-4. **Node.js not found in container:**
-   - This shouldn't happen with official LibreChat images
-   - Check if you're using a custom image
+4. **Permission issues:**
+   - The container now runs as root to install and manage cron
+   - This is necessary for the internal cron functionality
 
 #### Log Locations:
-- **Main logs:** `./logs/intelewriter-cleanup.log`
-- **Host cron logs:** `/var/log/cron` or `journalctl -u cron`
+- **Main logs:** `/app/config/int-clean-cron/logs/intelewriter-cleanup.log` (inside container)
 - **Container logs:** `docker-compose logs api`
-
-## 🛡️ Safety Features
-
-### File Protection:
-- ❌ **NEVER deletes:** Agent files (any age)
-- ❌ **NEVER deletes:** Assistant files (any age)
-- ❌ **NEVER deletes:** System files
-- ✅ **Only deletes:** User message attachments older than X days
-
-### Execution Safety:
-- 🔒 **Minimum 30 days** retention
-- 🔍 **Validates .env** before execution
-- 🛡️ **Protects files in use** by agents/assistants
-- 📝 **Detailed logging** of what's protected vs. deleted
+- **System cron logs:** Inside container at `/var/log/cron`
 
 ---
-*Developed by Intelequia for Intelewriter - Docker Mode*
+*Developed by Intelequia for Intelewriter - Internal Mode*

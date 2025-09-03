@@ -5,17 +5,37 @@
 # EJECUTA EN EL HOST - El comando se ejecuta DENTRO del contenedor LibreChat
 
 echo "========================================="
-echo "Intelequia - Configurador de Cron"
-echo "Intelewriter Chat Cleanup (Docker exec)"
+echo "Intelequia - Configurador de Cron INTERNO"
+echo "Intelewriter Chat Cleanup (Internal)"
 echo "========================================="
 
-# Obtener rutas
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
-CRON_SCRIPT="$SCRIPT_DIR/cron-clean-chats.js"
+# Verificar que estamos en el contenedor
+if [ ! -f "/app/package.json" ]; then
+    echo "ERROR: Este script debe ejecutarse dentro del contenedor LibreChat"
+    exit 1
+fi
 
-echo "Directorio del proyecto: $PROJECT_DIR"
-echo "Script de cron: $CRON_SCRIPT"
+echo "✓ Ejecutándose dentro del contenedor LibreChat"
+
+# Instalar cron si no está instalado
+if ! command -v cron &> /dev/null; then
+    echo "Instalando cron..."
+    apt-get update -q
+    apt-get install -y cron
+    echo "✓ Cron instalado"
+else
+    echo "✓ Cron ya está disponible"
+fi
+
+# Configurar el script de cron
+SCRIPT_DIR="/app/config/int-clean-cron"
+CRON_SCRIPT="$SCRIPT_DIR/cron-clean-chats.js"
+LOG_DIR="$SCRIPT_DIR/logs"
+LOG_FILE="$LOG_DIR/intelewriter-cleanup.log"
+
+# Crear directorio de logs si no existe
+mkdir -p "$LOG_DIR"
+echo "✓ Directorio de logs creado: $LOG_DIR"
 
 # Verificar que el script existe
 if [ ! -f "$CRON_SCRIPT" ]; then
@@ -27,49 +47,26 @@ fi
 chmod +x "$CRON_SCRIPT"
 echo "✓ Script marcado como ejecutable"
 
-# Verificar Docker
-DOCKER_PATH=$(which docker)
-
-if [ -z "$DOCKER_PATH" ]; then
-    echo "ERROR: Docker no está instalado o no está en el PATH"
+# Verificar Node.js (debe estar disponible en el contenedor)
+if ! command -v node &> /dev/null; then
+    echo "ERROR: Node.js no está disponible en el contenedor"
     exit 1
 fi
-echo "✓ Docker encontrado en: $DOCKER_PATH"
-
-# Verificar que hay contenedores corriendo
-echo ""
-echo "Verificando contenedor LibreChat..."
-if docker ps --format "table {{.Names}}" | grep -q "^LibreChat$"; then
-    echo "✓ Contenedor 'LibreChat' está corriendo"
-else
-    echo "⚠️  Contenedor 'LibreChat' no está corriendo actualmente"
-    echo "   El cron funcionará cuando el contenedor esté activo"
-    echo ""
-    echo "Contenedores activos:"
-    docker ps --format "table {{.Names}}\t{{.Status}}" || echo "   Ninguno"
-fi
-
-# Verificar Node.js
-NODE_PATH=$(which node)
-if [ -z "$NODE_PATH" ]; then
-    echo "ERROR: Node.js no está instalado o no está en el PATH"
-    exit 1
-fi
-echo "✓ Node.js encontrado en: $NODE_PATH"
+echo "✓ Node.js encontrado en el contenedor"
 
 # Verificar configuración actual en .env
 echo ""
 echo "Verificando configuración en .env:"
-if grep -q "CLEAN_DATA_INTERVAL" "$PROJECT_DIR/.env"; then
+if grep -q "CLEAN_DATA_INTERVAL" "/app/.env"; then
     # Buscar líneas que contengan CLEAN_DATA_INTERVAL
-    FOUND_LINES=$(grep "CLEAN_DATA_INTERVAL" "$PROJECT_DIR/.env")
+    FOUND_LINES=$(grep "CLEAN_DATA_INTERVAL" "/app/.env")
     echo "Líneas encontradas:"
     echo "$FOUND_LINES" | while IFS= read -r line; do
         echo "  $line"
     done
     
     # Buscar TODAS las líneas válidas (no comentadas)
-    VALID_LINES=$(grep "^[[:space:]]*CLEAN_DATA_INTERVAL[[:space:]]*=" "$PROJECT_DIR/.env")
+    VALID_LINES=$(grep "^[[:space:]]*CLEAN_DATA_INTERVAL[[:space:]]*=" "/app/.env")
     VALID_COUNT=$(echo "$VALID_LINES" | grep -c "^[[:space:]]*CLEAN_DATA_INTERVAL" 2>/dev/null || echo "0")
     
     if [ "$VALID_COUNT" -eq 0 ]; then
@@ -142,18 +139,13 @@ fi
 
 echo ""
 echo "Configurando limpieza automática diaria a las 6:00 AM..."
-echo "El comando se ejecutará en el HOST pero procesará DENTRO del contenedor LibreChat"
+echo "El comando se ejecutará INTERNAMENTE dentro del contenedor LibreChat"
 
 CRON_SCHEDULE="0 6 * * *"
-DESCRIPTION="Diario a las 6:00 AM (docker exec)"
+DESCRIPTION="Diario a las 6:00 AM (interno)"
 
 # Crear la entrada de cron con logging en el directorio local del script
-LOG_DIR="$SCRIPT_DIR/logs"
-LOG_FILE="$LOG_DIR/intelewriter-cleanup.log"
-CRON_ENTRY="$CRON_SCHEDULE $NODE_PATH $CRON_SCRIPT >> $LOG_FILE 2>&1"
-
-# Crear el directorio de logs si no existe
-mkdir -p "$LOG_DIR"
+CRON_ENTRY="$CRON_SCHEDULE /usr/local/bin/node $CRON_SCRIPT >> $LOG_FILE 2>&1"
 
 # Añadir comentario y entrada
 echo "" >> "$TEMP_CRON"
@@ -163,25 +155,27 @@ echo "$CRON_ENTRY" >> "$TEMP_CRON"
 # Instalar el nuevo crontab
 if crontab "$TEMP_CRON"; then
     echo ""
-    echo "✅ Cron job de Intelequia configurado exitosamente!"
+    echo "✅ Cron job interno de Intelequia configurado exitosamente!"
     echo ""
     echo "Configuración:"
     echo "- Horario: $DESCRIPTION"
-    echo "- Modo: HOST ejecuta 'docker exec LibreChat npm run clean-chats'"
+    echo "- Modo: INTERNO del contenedor"
     echo "- Comando: $CRON_ENTRY"
     echo "- Logs: $LOG_FILE"
     echo ""
     echo "IMPORTANTE:"
-    echo "- El cron se ejecuta en el HOST (máquina física)"
-    echo "- El comando se ejecuta con: docker exec LibreChat npm run clean-chats"
-    echo "- El contenedor 'LibreChat' debe estar corriendo para que funcione"
-    echo "- Si recreas contenedores, el cron seguirá funcionando"
+    echo "- El cron se ejecuta DENTRO del contenedor"
+    echo "- Se configura automáticamente al iniciar el contenedor"
+    echo "- Los logs están dentro del contenedor en $LOG_FILE"
     echo ""
     echo "Comandos útiles:"
     echo "- Ver crontab: crontab -l"
     echo "- Ver logs: tail -f $LOG_FILE"
-    echo "- Ver contenedor: docker ps | grep LibreChat"
     echo "- Probar script: node $CRON_SCRIPT"
+    
+    # Iniciar el servicio cron
+    service cron start
+    echo "✓ Servicio cron iniciado"
 else
     echo "ERROR: No se pudo instalar el crontab"
     rm "$TEMP_CRON"
@@ -198,5 +192,5 @@ if [[ "$test_response" =~ ^[Yy]$ ]]; then
     echo ""
     echo "Ejecutando prueba del script..."
     echo "================================"
-    "$NODE_PATH" "$CRON_SCRIPT"
+    /usr/local/bin/node "$CRON_SCRIPT"
 fi
