@@ -352,6 +352,7 @@ async function runAssistant({
   accumulatedMessages = [],
   in_progress: inProgress,
 }) {
+  const appConfig = openai.req.config;
   let steps = accumulatedSteps;
   let messages = accumulatedMessages;
   const in_progress = inProgress ?? createInProgressHandler(openai, thread_id, messages);
@@ -398,10 +399,10 @@ async function runAssistant({
   });
 
   const { endpoint = EModelEndpoint.azureAssistants } = openai.req.body;
-  /** @type {TCustomConfig.endpoints.assistants} */
-  const assistantsEndpointConfig = openai.req.app.locals?.[endpoint] ?? {};
-  let { pollIntervalMs, timeoutMs } = assistantsEndpointConfig;
-  
+  /** @type {AppConfig['endpoints']['assistants']} */
+  const assistantsEndpointConfig = appConfig.endpoints?.[endpoint] ?? {};
+  const { pollIntervalMs, timeoutMs } = assistantsEndpointConfig;
+
   const run = await waitForRun({
     openai,
     run_id,
