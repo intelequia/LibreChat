@@ -1,3 +1,14 @@
+/**
+ * Agent Client Controller
+ * 
+ * Modified by Intelequia to integrate with centralized token tracking system.
+ * Removed duplicate tracking to prevent App Insights event duplication.
+ * 
+ * @organization Intelequia
+ * @modified September 2025
+ * @description Agent client with optimized tracking integration
+ */
+
 require('events').EventEmitter.defaultMaxListeners = 100;
 const { logger } = require('@librechat/data-schemas');
 const { DynamicStructuredTool } = require('@langchain/core/tools');
@@ -160,7 +171,7 @@ class AgentClient extends BaseClient {
    * `AgentClient` is not opinionated about vision requests, so we don't do anything here
    * @param {MongoFile[]} attachments
    */
-  checkVisionRequest() {}
+  checkVisionRequest() { }
 
   getSaveOptions() {
     // TODO:
@@ -679,6 +690,9 @@ class AgentClient extends BaseClient {
             read: cache_read,
           },
           completionTokens: usage.output_tokens,
+        }, {
+          endpoint: this.options.endpoint,
+          model: txMetadata.model,
         }).catch((err) => {
           logger.error(
             '[api/server/controllers/agents/client.js #recordCollectedUsage] Error spending structured tokens',
@@ -690,6 +704,9 @@ class AgentClient extends BaseClient {
       spendTokens(txMetadata, {
         promptTokens: usage.input_tokens,
         completionTokens: usage.output_tokens,
+      }, {
+        endpoint: this.options.endpoint,
+        model: txMetadata.model,
       }).catch((err) => {
         logger.error(
           '[api/server/controllers/agents/client.js #recordCollectedUsage] Error spending tokens',
@@ -1239,8 +1256,8 @@ class AgentClient extends BaseClient {
         }
 
         return {
-          input_tokens: input_tokens,
-          output_tokens: output_tokens,
+          input_tokens: input_tokens || 0,
+          output_tokens: output_tokens || 0,
         };
       });
 
@@ -1281,6 +1298,7 @@ class AgentClient extends BaseClient {
     promptTokens,
     completionTokens,
     context = 'message',
+    completionLength = 0,
   }) {
     try {
       await spendTokens(
@@ -1293,6 +1311,11 @@ class AgentClient extends BaseClient {
           endpointTokenConfig: this.options.endpointTokenConfig,
         },
         { promptTokens, completionTokens },
+        {
+          endpoint: this.options.endpoint,
+          model: model || this.modelOptions?.model || this.model,
+          completionLength: completionLength,
+        }
       );
 
       if (
@@ -1311,6 +1334,10 @@ class AgentClient extends BaseClient {
             endpointTokenConfig: this.options.endpointTokenConfig,
           },
           { completionTokens: usage.reasoning_tokens },
+          {
+            endpoint: this.options.endpoint,
+            model: model || this.modelOptions?.model || this.model,
+          }
         );
       }
     } catch (error) {

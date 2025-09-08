@@ -182,8 +182,7 @@ class OpenAIClient extends BaseClient {
 
     if (this.maxPromptTokens + this.maxResponseTokens > this.maxContextTokens) {
       throw new Error(
-        `maxPromptTokens + max_tokens (${this.maxPromptTokens} + ${this.maxResponseTokens} = ${
-          this.maxPromptTokens + this.maxResponseTokens
+        `maxPromptTokens + max_tokens (${this.maxPromptTokens} + ${this.maxResponseTokens} = ${this.maxPromptTokens + this.maxResponseTokens
         }) must be less than or equal to maxContextTokens (${this.maxContextTokens})`,
       );
     }
@@ -818,6 +817,14 @@ ${convo}
       });
 
       title = await runTitleChain({ llm, text, convo, signal: this.abortController.signal });
+
+      // Track token usage for LangChain title generation
+      if (title && title !== 'New Chat') {
+        const promptTokens = this.getTokenCount(convo);
+        const completionTokens = this.getTokenCount(title);
+
+        await this.recordTokenUsage({ promptTokens, completionTokens, context: 'title' });
+      }
     } catch (e) {
       if (e?.message?.toLowerCase()?.includes('abort')) {
         logger.debug('[OpenAIClient] Aborted title generation');
@@ -985,8 +992,7 @@ ${convo}
       if (this.options.debug) {
         logger.debug('[OpenAIClient] summaryTokenCount', summaryTokenCount);
         logger.debug(
-          `[OpenAIClient] Summarization complete: remainingContextTokens: ${remainingContextTokens}, after refining: ${
-            remainingContextTokens - summaryTokenCount
+          `[OpenAIClient] Summarization complete: remainingContextTokens: ${remainingContextTokens}, after refining: ${remainingContextTokens - summaryTokenCount
           }`,
         );
       }
@@ -1016,7 +1022,7 @@ ${convo}
    * @param {string} [params.context='message']
    * @returns {Promise<void>}
    */
-  async recordTokenUsage({ promptTokens, completionTokens, usage, context = 'message' }) {
+  async recordTokenUsage({ promptTokens, completionTokens, usage, context = 'message', completionLength = 0 }) {
     await spendTokens(
       {
         context,
@@ -1026,6 +1032,11 @@ ${convo}
         endpointTokenConfig: this.options.endpointTokenConfig,
       },
       { promptTokens, completionTokens },
+      {
+        endpoint: this.options.endpoint,
+        model: this.modelOptions.model,
+        completionLength: completionLength,
+      }
     );
 
     if (
@@ -1043,6 +1054,10 @@ ${convo}
           endpointTokenConfig: this.options.endpointTokenConfig,
         },
         { completionTokens: usage.reasoning_tokens },
+        {
+          endpoint: this.options.endpoint,
+          model: this.modelOptions.model,
+        }
       );
     }
   }
@@ -1200,9 +1215,9 @@ ${convo}
 
         opts.baseURL = this.langchainProxy
           ? constructAzureURL({
-              baseURL: this.langchainProxy,
-              azureOptions: this.azure,
-            })
+            baseURL: this.langchainProxy,
+            azureOptions: this.azure,
+          })
           : this.azureEndpoint.split(/(?<!\/)\/(chat|completion)\//)[0];
 
         opts.defaultQuery = { 'api-version': this.azure.azureOpenAIApiVersion };
