@@ -1,58 +1,39 @@
 #!/usr/bin/env node
-const path = require('path');
 const { exec } = require('child_process');
 
 /**
- * Script de cron de Intelequia para limpieza automática de chats
- * MODO INTERNO: Se ejecuta directamente dentro del contenedor LibreChat
- * El script clean-chats.js se encarga de leer CLEAN_DATA_INTERVAL del .env
- * 
- * Comando: npm run clean-chats -- -y (ejecutado internamente)
+ * Intelequia cron script for automatic chat cleanup
+ * Executes: npm run clean-chats -- -y
+ * Logging is handled directly in clean-chats.js
  */
 
-function log(message) {
-    console.log(`[${new Date().toISOString()}] ${message}`);
-}
+async function main() {
+    console.log(`[${new Date().toISOString()}] Starting Intelequia cleanup cron job...`);
 
-function main() {
-    log('Intelequia internal cron cleanup job started');
-
-    // Comando que se ejecutará directamente dentro del contenedor
     const command = 'npm run clean-chats -- -y';
 
-    log(`Executing internally: ${command}`);
-
     exec(command, { cwd: '/app' }, (error, stdout, stderr) => {
+        const timestamp = new Date().toISOString();
+
         if (error) {
-            log(`ERROR: ${error.message}`);
-            log('Internal cron execution failed');
+            console.error(`[${timestamp}] ERROR: ${error.message}`);
             process.exit(1);
         }
 
-        if (stderr) {
-            log(`STDERR: ${stderr}`);
+        if (stderr && stderr.trim()) {
+            console.log(`[${timestamp}] STDERR: ${stderr.trim()}`);
         }
 
-        log('Chat cleanup process completed successfully');
         if (stdout) {
-            // Solo mostrar las líneas importantes del output
-            const lines = stdout.split('\n');
-            const importantLines = lines.filter(line =>
-                line.includes('✓') ||
-                line.includes('❌') ||
-                line.includes('ERROR') ||
-                line.includes('SAFETY') ||
-                line.includes('Using CLEAN_DATA_INTERVAL') ||
-                line.includes('Unable to determine') ||
-                line.includes('completed successfully') ||
-                line.includes('No data older than') ||
-                line.includes('PROTECTION SUMMARY') ||
-                line.includes('COMPLETE CLEANUP SUMMARY')
-            );
-            importantLines.forEach(line => log(`OUTPUT: ${line.trim()}`));
+            console.log(stdout);
         }
+
+        console.log(`[${timestamp}] Intelequia cleanup cron job completed`);
         process.exit(0);
     });
 }
 
-main();
+main().catch((error) => {
+    console.error(`[${new Date().toISOString()}] FATAL ERROR: ${error.message}`);
+    process.exit(1);
+});

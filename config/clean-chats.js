@@ -8,6 +8,25 @@ require('module-alias')({ base: path.resolve(__dirname, '..', 'api') });
 const { askQuestion, silentExit } = require('./helpers');
 const connect = require('./connect');
 
+// Intelequia logging configuration
+const INTELEQUIA_LOG_DIR = path.join(__dirname, 'int-clean-cron', 'logs');
+const INTELEQUIA_LOG_FILE = path.join(INTELEQUIA_LOG_DIR, 'intelewriter-cleanup.log');
+
+/**
+ * Intelequia logging function
+ */
+async function inteleLog(message) {
+  const timestamp = new Date().toISOString();
+  const logEntry = `[${timestamp}] ${message}`;
+
+  try {
+    await fs.mkdir(INTELEQUIA_LOG_DIR, { recursive: true });
+    await fs.appendFile(INTELEQUIA_LOG_FILE, logEntry + '\n');
+  } catch (error) {
+    console.error(`Error writing to Intelequia log: ${error.message}`);
+  }
+}
+
 /**
  * Get all file IDs that are currently in use by agents and assistants
  * @returns {Promise<Set<string>>} Set of file IDs in use
@@ -453,6 +472,19 @@ function displayDetailedInfo(sampleData, cutoffDate) {
       console.white(`  • Files protected by agents/assistants: ${filesInUse.size.toLocaleString()}`);
       console.white(`  • Only user-uploaded message attachments are considered for deletion`);
       console.white(`  • Agent and assistant files are never deleted regardless of age`);
+
+      // Intelequia logging when no data to delete
+      try {
+        await inteleLog('========================================');
+        await inteleLog('Intelequia cleanup job completed - no data to delete');
+        await inteleLog(`STATS: Chats deleted: 0 | Messages deleted: 0 | Files deleted: 0`);
+        await inteleLog(`CONFIG: Cleanup interval: ${days} days`);
+        await inteleLog(`DETAILS: Cutoff date: ${cutoffDate.toISOString().split('T')[0]} | Protected files: ${filesInUse.size}`);
+        await inteleLog('========================================');
+      } catch (logError) {
+        console.yellow(`⚠️ Warning: Could not write to Intelequia log: ${logError.message}`);
+      }
+
       return gracefulExit(0);
     }
 
@@ -613,6 +645,18 @@ Continue? (y/N)`;
     console.white(`   • Safety mode: ENABLED (agents/assistants protected)`);
     console.white('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
+    // Intelequia logging with specific requested statistics
+    try {
+      await inteleLog('========================================');
+      await inteleLog('Intelequia cleanup job completed successfully');
+      await inteleLog(`STATS: Chats deleted: ${conversationResult.deletedCount} | Messages deleted: ${messageResult.deletedCount} | Files deleted: ${deletedFilesCount}`);
+      await inteleLog(`CONFIG: Cleanup interval: ${days} days`);
+      await inteleLog(`DETAILS: Cutoff date: ${cutoffDate.toISOString().split('T')[0]} | Space freed: ${formatBytes(deletedFilesSize)} | Protected files: ${filesInUseForDeletion.size}`);
+      await inteleLog('========================================');
+    } catch (logError) {
+      console.yellow(`⚠️ Warning: Could not write to Intelequia log: ${logError.message}`);
+    }
+
   } catch (error) {
     console.red('Error during cleanup:');
     console.error(error);
@@ -624,6 +668,19 @@ Continue? (y/N)`;
     console.red(`📝 Error message: ${error.message}`);
     console.yellow('🛡️  Note: Agent and assistant files remain protected regardless of errors');
     console.white('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    // Intelequia logging for errors
+    try {
+      await inteleLog('========================================');
+      await inteleLog('Intelequia cleanup job FAILED');
+      await inteleLog(`ERROR: ${error.message}`);
+      await inteleLog(`CONFIG: Cleanup interval: ${days} days`);
+      await inteleLog(`DETAILS: Attempted cutoff date: ${cutoffDate ? cutoffDate.toISOString().split('T')[0] : 'N/A'}`);
+      await inteleLog('========================================');
+    } catch (logError) {
+      console.yellow(`⚠️ Warning: Could not write to Intelequia log: ${logError.message}`);
+    }
+
     return gracefulExit(1);
   }
 
