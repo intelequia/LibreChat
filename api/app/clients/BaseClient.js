@@ -1,5 +1,18 @@
+/**
+ * Base Client for LibreChat
+ * 
+ * Modified by Intelequia to optimize App Insights tracking system.
+ * Centralized token tracking moved to spendTokens.js for better maintainability.
+ * 
+ * @organization Intelequia  
+ * @modified September 2025
+ * @description Base client with optimized tracking architecture
+ */
+
 const crypto = require('crypto');
 const fetch = require('node-fetch');
+const { logger } = require('@librechat/data-schemas');
+const { getBalanceConfig } = require('@librechat/api');
 const {
   supportsBalanceCheck,
   isAgentsEndpoint,
@@ -15,7 +28,6 @@ const { checkBalance } = require('~/models/balanceMethods');
 const { truncateToolCallOutputs } = require('./prompts');
 const { getFiles } = require('~/models/File');
 const TextStream = require('./TextStream');
-const { logger } = require('~/config');
 
 class BaseClient {
   constructor(apiKey, options = {}) {
@@ -112,13 +124,15 @@ class BaseClient {
    * If a correction to the token usage is needed, the method should return an object with the corrected token counts.
    * Should only be used if `recordCollectedUsage` was not used instead.
    * @param {string} [model]
+   * @param {AppConfig['balance']} [balance]
    * @param {number} promptTokens
    * @param {number} completionTokens
    * @returns {Promise<void>}
    */
-  async recordTokenUsage({ model, promptTokens, completionTokens }) {
+  async recordTokenUsage({ model, balance, promptTokens, completionTokens }) {
     logger.debug('[BaseClient] `recordTokenUsage` not implemented.', {
       model,
+      balance,
       promptTokens,
       completionTokens,
     });
@@ -248,11 +262,11 @@ class BaseClient {
     const userMessage = opts.isEdited
       ? this.currentMessages[this.currentMessages.length - 2]
       : this.createUserMessage({
-          messageId: userMessageId,
-          parentMessageId,
-          conversationId,
-          text: message,
-        });
+        messageId: userMessageId,
+        parentMessageId,
+        conversationId,
+        text: message,
+      });
 
     if (typeof opts?.getReqData === 'function') {
       opts.getReqData({
@@ -571,6 +585,7 @@ class BaseClient {
   }
 
   async sendMessage(message, opts = {}) {
+    const appConfig = this.options.req?.config;
     /** @type {Promise<TMessage>} */
     let userMessagePromise;
     const { user, head, isEdited, conversationId, responseMessageId, saveOptions, userMessage } =
@@ -662,31 +677,27 @@ class BaseClient {
      * @organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */
+    const { trackQueryEvent } = require('~/models/spendTokens');
 
-    const { findUser } = require('~/models');
-    const userId = user
-    const {email} = await findUser({ _id: userId });
-
-    /**
-     * Custom event to track when user creates a completion query
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    global.appInsights.trackEvent({
-      name: this.options.endpoint == "azureOpenAI"?'AzureQuery':'AgentQuery',
-      properties: {
-        userId: user,
-        userEmail: email,
+    // Track query event
+    await trackQueryEvent(
+      {
+        conversationId: conversationId,
+        user: user,
+        model: this.modelOptions?.model ?? this.model,
+      },
+      {
+        endpoint: this.options.endpoint,
+        model: this.modelOptions?.model ?? this.model,
         charactersLength: userMessage.text.length,
         messageTokens: userMessage.tokenCount,
-        model: this.modelOptions?.model ?? this.model,
-        conversationId: conversationId,
-      },
-    });
+      }
+    );
 
-    const balance = this.options.req?.app?.locals?.balance;
+    const balanceConfig = getBalanceConfig(appConfig);
+
     if (
-      balance?.enabled &&
+      balanceConfig?.enabled &&
       supportsBalanceCheck[this.options.endpointType ?? this.options.endpoint]
     ) {
       await checkBalance({
@@ -708,14 +719,20 @@ class BaseClient {
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-    global.appInsights.trackEvent({
-      name: this.options.endpoint == "azureOpenAI"? 'AzureAnswerStarted':'AgentAnswerStarted',
-      properties: {
-        userId: user,
-        userEmail: email,
+    const { trackStartEvent } = require('~/models/spendTokens');
+
+    // Track start event
+    await trackStartEvent(
+      {
+        conversationId: conversationId,
+        user: user,
         model: this.modelOptions?.model ?? this.model,
       },
-    });
+      {
+        endpoint: this.options.endpoint,
+        model: this.modelOptions?.model ?? this.model,
+      }
+    );
 
     /** @type {string|string[]|undefined} */
     const completion = await this.sendCompletion(payload, opts);
@@ -769,7 +786,6 @@ class BaseClient {
 
     if (
       tokenCountMap &&
-      this.recordTokenUsage &&
       this.getTokenCountForResponse &&
       this.getTokenCount
     ) {
@@ -795,33 +811,33 @@ class BaseClient {
       } else {
         responseMessage.tokenCount = this.getTokenCountForResponse(responseMessage);
         completionTokens = responseMessage.tokenCount;
-        await this.recordTokenUsage({
-          usage,
-          promptTokens,
-          completionTokens,
-          model: responseMessage.model,
-        });
+        if (this.recordTokenUsage && typeof this.recordTokenUsage === 'function') {
+          await this.recordTokenUsage({
+            usage,
+            promptTokens,
+            completionTokens,
+            balance: balanceConfig,
+            model: responseMessage.model,
+          });
+        } else {
+          const { spendTokens } = require('~/models/spendTokens');
+          await spendTokens(
+            {
+              context: 'message',
+              model: responseMessage.model,
+              conversationId: conversationId,
+              user: user,
+              endpointTokenConfig: this.options.endpointTokenConfig,
+            },
+            { promptTokens, completionTokens },
+            {
+              endpoint: this.options.endpoint,
+              model: responseMessage.model,
+              completionLength: responseMessage.text ? responseMessage.text.length : 0,
+            }
+          );
+        }
       }
-
-      /**
-       * Custom event to track when a completion query has ended
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      global.appInsights.trackEvent({
-        name: this.options.endpoint == "azureOpenAI"? 'AzureAnswerEnded':'AgentAnswerEnded',
-        properties: {
-          userId: user,
-          userEmail: email,
-          charactersLength: completion.length,
-          promptTokens: promptTokens,
-          completionTokens: completionTokens,
-          messageTokens: completionTokens + promptTokens ,
-          model: this.modelOptions?.model ?? this.model,
-        },
-      });
-      
-      await this.recordTokenUsage({ promptTokens, completionTokens, usage });
     }
 
     if (userMessagePromise) {

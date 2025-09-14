@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Search, X } from 'lucide-react';
 import { useFormContext } from 'react-hook-form';
-import { Constants, isAgentsEndpoint } from 'librechat-data-provider';
+import { isAgentsEndpoint } from 'librechat-data-provider';
 import { Dialog, DialogPanel, DialogTitle, Description } from '@headlessui/react';
 import { useUpdateUserPluginsMutation } from 'librechat-data-provider/react-query';
 import type {
@@ -15,7 +15,6 @@ import type { AgentForm, AssistantForm, TPluginStoreDialogProps } from '~/common
 import { PluginPagination, PluginAuthForm } from '~/components/Plugins/Store';
 import { useAgentPanelContext } from '~/Providers/AgentPanelContext';
 import { useLocalize, usePluginDialogHelpers } from '~/hooks';
-import { useAvailableToolsQuery } from '~/data-provider';
 import ToolItem from './ToolItem';
 
 function ToolSelectDialog({
@@ -26,39 +25,9 @@ function ToolSelectDialog({
   endpoint: AssistantsEndpoint | EModelEndpoint.agents;
 }) {
   const localize = useLocalize();
-//   const { getValues, setValue } = useFormContext();
-
-// /** Changed to useAvailableToolsQuery instead of useAvailablePluginsQuery, now retrieves all tools/Plugins
-//  * @Organization Intelequia
-//  * @Author Enrique M.Pedroza Castillo
-//  */
-//   const toolsQuery = useAvailableToolsQuery(endpoint);
-//   const [tools, setTools] = useState(toolsQuery?.data);
-//   useEffect(() => {
-//     if(toolsQuery){
-//       if(toolsQuery.data){
-//         setTools(toolsQuery.data)
-//       }
-//     }
-//   }, [toolsQuery]);
-  const isAssistantEndpoint = endpoint == "azureAgents" || endpoint == "azureAssistants";
-
-  const { getValues, setValue } = isAssistantEndpoint ?
-    useFormContext<AssistantForm>() :
-    useFormContext<AgentForm>();
-
-
-  const { data: tools } = useAvailableToolsQuery(endpoint);
-  let groupedTools = {};
-  try {
-    const context = useAgentPanelContext();
-    groupedTools = context.groupedTools || {};
-
-  }catch (error) {
-    console.log('Error retrieving grouped tools:', error);
-  }
-  // const { groupedTools } = useAgentPanelContext();
   const isAgentTools = isAgentsEndpoint(endpoint);
+  const { getValues, setValue } = useFormContext<AgentForm>();
+  const { groupedTools, pluginTools } = useAgentPanelContext();
 
   const {
     maxPage,
@@ -96,14 +65,9 @@ function ToolSelectDialog({
     }, 5000);
   };
 
-  const toolsFormKey = 'tools';
-  const toolsFormAssistantsKey = "functions";
-  const key = isAssistantEndpoint ? toolsFormAssistantsKey : toolsFormKey;
-
   const handleInstall = (pluginAction: TPluginAction) => {
     const addFunction = () => {
-
-      const installedToolIds: string[] = getValues( key) || [];
+      const installedToolIds: string[] = getValues('tools') || [];
       // Add the parent
       installedToolIds.push(pluginAction.pluginKey);
 
@@ -116,7 +80,7 @@ function ToolSelectDialog({
           }
         }
       }
-      setValue(key, Array.from(new Set(installedToolIds))); // no duplicates just in case
+      setValue('tools', Array.from(new Set(installedToolIds))); // no duplicates just in case
     };
 
     if (!pluginAction.auth) {
@@ -146,8 +110,8 @@ function ToolSelectDialog({
         onError: (error: unknown) => handleInstallError(error as TError),
         onSuccess: () => {
           const remainingToolIds =
-            getValues(key)?.filter((toolId) => !toolIdsToRemove.includes(toolId)) || [];
-          setValue(key, remainingToolIds);
+            getValues('tools')?.filter((toolId) => !toolIdsToRemove.includes(toolId)) || [];
+          setValue('tools', remainingToolIds);
         },
       },
     );
@@ -155,38 +119,28 @@ function ToolSelectDialog({
 
   const onAddTool = (pluginKey: string) => {
     setShowPluginAuthForm(false);
-    const getAvailablePluginFromKey = tools?.find((p) => p.pluginKey === pluginKey);
-    setSelectedPlugin(getAvailablePluginFromKey);
+    const availablePluginFromKey = pluginTools?.find((p) => p.pluginKey === pluginKey);
+    setSelectedPlugin(availablePluginFromKey);
 
-    const isMCPTool = pluginKey.includes(Constants.mcp_delimiter);
-
-    if (isMCPTool) {
-      // MCP tools have their variables configured elsewhere (e.g., MCPPanel or MCPSelect),
-      // so we directly proceed to install without showing the auth form.
-      handleInstall({ pluginKey, action: 'install', auth: {} });
+    const { authConfig, authenticated = false } = availablePluginFromKey ?? {};
+    if (authConfig && authConfig.length > 0 && !authenticated) {
+      setShowPluginAuthForm(true);
     } else {
-      const { authConfig, authenticated = false } = getAvailablePluginFromKey ?? {};
-      if (authConfig && authConfig.length > 0 && !authenticated) {
-        setShowPluginAuthForm(true);
-      } else {
-        handleInstall({
-          pluginKey,
-          action: 'install',
-          auth: {},
-        });
-      }
+      handleInstall({
+        pluginKey,
+        action: 'install',
+        auth: {},
+      });
     }
   };
 
   const filteredTools = Object.values(groupedTools || {}).filter(
-    (tool: AgentToolType & { tools?: AgentToolType[] }) => {
-      // Check if the parent tool matches
-      if (tool.metadata?.name?.toLowerCase().includes(searchValue.toLowerCase())) {
+    (currentTool: AgentToolType & { tools?: AgentToolType[] }) => {
+      if (currentTool.metadata?.name?.toLowerCase().includes(searchValue.toLowerCase())) {
         return true;
       }
-      // Check if any child tools match
-      if (tool.tools) {
-        return tool.tools.some((childTool) =>
+      if (currentTool.tools) {
+        return currentTool.tools.some((childTool) =>
           childTool.metadata?.name?.toLowerCase().includes(searchValue.toLowerCase()),
         );
       }
@@ -203,9 +157,9 @@ function ToolSelectDialog({
       }
     }
   }, [
-    tools,
-    itemsPerPage,
+    pluginTools,
     searchValue,
+    itemsPerPage,
     filteredTools,
     searchChanged,
     setMaxPage,

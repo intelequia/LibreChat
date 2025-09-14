@@ -6,6 +6,7 @@ import { specsConfigSchema, TSpecsConfig } from './models';
 import { fileConfigSchema } from './file-config';
 import { FileSources } from './types/files';
 import { MCPServersSchema } from './mcp';
+import { apiBaseUrl } from './api-endpoints';
 
 export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'discord', 'saml'];
 
@@ -301,6 +302,7 @@ export const endpointSchema = baseEndpointSchema.merge(
     }),
     summarize: z.boolean().optional(),
     summaryModel: z.string().optional(),
+    iconURL: z.string().optional(),
     forcePrompt: z.boolean().optional(),
     modelDisplayLabel: z.string().optional(),
     headers: z.record(z.any()).optional(),
@@ -640,6 +642,7 @@ export type TStartupConfig = {
   sharePointPickerGraphScope?: string;
   sharePointPickerSharePointScope?: string;
   openidReuseTokens?: boolean;
+  minPasswordLength?: number;
   webSearch?: {
     searchProvider?: SearchProviders;
     scraperType?: ScraperTypes;
@@ -792,6 +795,8 @@ export const memorySchema = z.object({
 
 export type TMemoryConfig = z.infer<typeof memorySchema>;
 
+const customEndpointsSchema = z.array(endpointSchema.partial()).optional();
+
 export const configSchema = z.object({
   version: z.string(),
   cache: z.boolean().default(true),
@@ -841,7 +846,7 @@ export const configSchema = z.object({
       [EModelEndpoint.azureAgents]: assistantEndpointSchema.optional(),
       [EModelEndpoint.assistants]: assistantEndpointSchema.optional(),
       [EModelEndpoint.agents]: agentsEndpointSchema.optional(),
-      [EModelEndpoint.custom]: z.array(endpointSchema.partial()).optional(),
+      [EModelEndpoint.custom]: customEndpointsSchema.optional(),
       [EModelEndpoint.bedrock]: baseEndpointSchema.optional(),
     })
     .strict()
@@ -854,6 +859,7 @@ export const configSchema = z.object({
 export const getConfigDefaults = () => getSchemaDefaults(configSchema);
 
 export type TCustomConfig = z.infer<typeof configSchema>;
+export type TCustomEndpoints = z.infer<typeof customEndpointsSchema>;
 
 export type TProviderSchema =
   | z.infer<typeof ttsOpenaiSchema>
@@ -1050,10 +1056,10 @@ export const initialModelsConfig: TModelsConfig = {
 };
 
 export const EndpointURLs = {
-  [EModelEndpoint.assistants]: '/api/assistants/v2/chat',
-  [EModelEndpoint.azureAssistants]: '/api/assistants/v1/chat',
-  [EModelEndpoint.agents]: `/api/${EModelEndpoint.agents}/chat`,
-  [EModelEndpoint.azureAgents]: '/api/azureAgents/chat',
+  [EModelEndpoint.assistants]: `${apiBaseUrl()}/api/assistants/v2/chat`,
+  [EModelEndpoint.azureAssistants]: `${apiBaseUrl()}/api/assistants/v1/chat`,
+  [EModelEndpoint.agents]: `${apiBaseUrl()}/api/${EModelEndpoint.agents}/chat`,
+  [EModelEndpoint.azureAgents]: `${apiBaseUrl()}/api/azureAgents/chat`,
 } as const;
 
 export const modularEndpoints = new Set<EModelEndpoint | string>([
@@ -1226,13 +1232,13 @@ export enum CacheKeys {
    */
   STATIC_CONFIG = 'STATIC_CONFIG',
   /**
+   * Key for the app config namespace.
+   */
+  APP_CONFIG = 'APP_CONFIG',
+  /**
    * Key for accessing Abort Keys
    */
   ABORT_KEYS = 'ABORT_KEYS',
-  /**
-   * Key for the override config cache.
-   */
-  OVERRIDE_CONFIG = 'OVERRIDE_CONFIG',
   /**
    * Key for the bans cache.
    */
@@ -1532,7 +1538,7 @@ export enum TTSProviders {
 /** Enum for app-wide constants */
 export enum Constants {
   /** Key for the app's version. */
-  VERSION = 'v0.8.0-rc2',
+  VERSION = 'v0.8.0-rc3',
   /** Key for the Custom Config's version (librechat.yaml). */
   CONFIG_VERSION = '1.2.8',
   /** Standard value for the first message's `parentMessageId` value, to indicate no parent exists. */
@@ -1565,8 +1571,13 @@ export enum Constants {
   mcp_delimiter = '_mcp_',
   /** Prefix for MCP plugins */
   mcp_prefix = 'mcp_',
-  /** Unique value to indicate all MCP servers */
+  /** Unique value to indicate all MCP servers. For backend use only. */
   mcp_all = 'sys__all__sys',
+  /**
+   * Unique value to indicate the MCP tool was added to an agent.
+   * This helps inform the UI if the mcp server was previously added.
+   * */
+  mcp_server = 'sys__server__sys',
   /** Placeholder Agent ID for Ephemeral Agents */
   EPHEMERAL_AGENT_ID = 'ephemeral',
 }

@@ -321,7 +321,7 @@ class AnthropicClient extends BaseClient {
    * @param {string} [params.context='message']
    * @returns {Promise<void>}
    */
-  async recordTokenUsage({ promptTokens, completionTokens, usage, model, context = 'message' }) {
+  async recordTokenUsage({ promptTokens, completionTokens, usage, model, context = 'message', completionLength = 0 }) {
     if (usage != null && usage?.input_tokens != null) {
       const input = usage.input_tokens ?? 0;
       const write = usage.cache_creation_input_tokens ?? 0;
@@ -339,6 +339,11 @@ class AnthropicClient extends BaseClient {
           promptTokens: { input, write, read },
           completionTokens,
         },
+        {
+          endpoint: this.options.endpoint,
+          model: model ?? this.modelOptions.model,
+          completionLength: completionLength,
+        }
       );
 
       return;
@@ -353,6 +358,11 @@ class AnthropicClient extends BaseClient {
         endpointTokenConfig: this.options.endpointTokenConfig,
       },
       { promptTokens, completionTokens },
+      {
+        endpoint: this.options.endpoint,
+        model: model ?? this.modelOptions.model,
+        completionLength: completionLength,
+      }
     );
   }
 
@@ -397,13 +407,13 @@ class AnthropicClient extends BaseClient {
     const formattedMessages = orderedMessages.map((message, i) => {
       const formattedMessage = this.useMessages
         ? formatMessage({
-            message,
-            endpoint: EModelEndpoint.anthropic,
-          })
+          message,
+          endpoint: EModelEndpoint.anthropic,
+        })
         : {
-            author: message.isCreatedByUser ? this.userLabel : this.assistantLabel,
-            content: message?.content ?? message.text,
-          };
+          author: message.isCreatedByUser ? this.userLabel : this.assistantLabel,
+          content: message?.content ?? message.text,
+        };
 
       const needsTokenCount = this.contextStrategy && !orderedMessages[i].tokenCount;
       /* If tokens were never counted, or, is a Vision request and the message has files, count again */

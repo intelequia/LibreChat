@@ -160,8 +160,7 @@ class GoogleClient extends BaseClient {
 
     if (this.maxPromptTokens + this.maxResponseTokens > this.maxContextTokens) {
       throw new Error(
-        `maxPromptTokens + maxOutputTokens (${this.maxPromptTokens} + ${this.maxResponseTokens} = ${
-          this.maxPromptTokens + this.maxResponseTokens
+        `maxPromptTokens + maxOutputTokens (${this.maxPromptTokens} + ${this.maxResponseTokens} = ${this.maxPromptTokens + this.maxResponseTokens
         }) must be less than or equal to maxContextTokens (${this.maxContextTokens})`,
       );
     }
@@ -247,11 +246,11 @@ class GoogleClient extends BaseClient {
       msg.content = (
         !Array.isArray(msg.content)
           ? [
-              {
-                type: ContentTypes.TEXT,
-                [ContentTypes.TEXT]: msg.content,
-              },
-            ]
+            {
+              type: ContentTypes.TEXT,
+              [ContentTypes.TEXT]: msg.content,
+            },
+          ]
           : msg.content
       ).concat(message.image_urls);
 
@@ -772,9 +771,8 @@ class GoogleClient extends BaseClient {
     }
 
     if (error != null && reply === '') {
-      const errorMessage = `{ "type": "${ErrorTypes.GoogleError}", "info": "${
-        error.message ?? 'The Google provider failed to generate content, please contact the Admin.'
-      }" }`;
+      const errorMessage = `{ "type": "${ErrorTypes.GoogleError}", "info": "${error.message ?? 'The Google provider failed to generate content, please contact the Admin.'
+        }" }`;
       throw new Error(errorMessage);
     }
     return reply;
@@ -841,7 +839,7 @@ class GoogleClient extends BaseClient {
    * @param {string} [params.context='message']
    * @returns {Promise<void>}
    */
-  async recordTokenUsage({ promptTokens, completionTokens, model, context = 'message' }) {
+  async recordTokenUsage({ promptTokens, completionTokens, model, context = 'message', completionLength = 0 }) {
     await spendTokens(
       {
         context,
@@ -851,6 +849,11 @@ class GoogleClient extends BaseClient {
         endpointTokenConfig: this.options.endpointTokenConfig,
       },
       { promptTokens, completionTokens },
+      {
+        endpoint: this.options.endpoint,
+        model: model ?? this.modelOptions.model,
+        completionLength: completionLength,
+      }
     );
   }
 
@@ -925,7 +928,7 @@ class GoogleClient extends BaseClient {
       this.initializeClient();
       title = await this.titleChatCompletion(payload, {
         abortController: new AbortController(),
-        onProgress: () => {},
+        onProgress: () => { },
       });
     } catch (e) {
       logger.error('[GoogleClient] There was an issue generating the title', e);

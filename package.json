@@ -1,6 +1,6 @@
 {
   "name": "LibreChat",
-  "version": "v0.8.0-rc2",
+  "version": "v0.8.0-rc3",
   "description": "",
   "workspaces": [
     "api",
@@ -81,7 +81,8 @@
     "migrate:agent-permissions:batch": "node config/migrate-agent-permissions.js --batch-size=50",
     "migrate:prompt-permissions:dry-run": "node config/migrate-prompt-permissions.js --dry-run",
     "migrate:prompt-permissions": "node config/migrate-prompt-permissions.js",
-    "migrate:prompt-permissions:batch": "node config/migrate-prompt-permissions.js --batch-size=50"
+    "migrate:prompt-permissions:batch": "node config/migrate-prompt-permissions.js --batch-size=50",
+    "clean-chats": "node config/clean-chats.js"
   },
   "repository": {
     "type": "git",

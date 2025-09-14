@@ -1,7 +1,7 @@
 const { v4 } = require('uuid');
 const { sleep } = require('@librechat/agents');
-const { sendEvent } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
+const { sendEvent, getBalanceConfig } = require('@librechat/api');
 const {
   Time,
   Constants,
@@ -96,6 +96,7 @@ async function sendResponseTelemetry(req, conversationId, response, model)  {
  * @returns {void}
  */
 const chatV1 = async (req, res) => {
+  const appConfig = req.config;
   logger.debug('[/assistants/chat/] req.body', req.body);
 
   const {
@@ -318,8 +319,8 @@ const chatV1 = async (req, res) => {
     }
 
     const checkBalanceBeforeRun = async () => {
-      const balance = req.app?.locals?.balance;
-      if (!balance?.enabled) {
+      const balanceConfig = getBalanceConfig(appConfig);
+      if (!balanceConfig?.enabled) {
         return;
       }
       const transactions =
