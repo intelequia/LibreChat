@@ -197,7 +197,11 @@ function getCleanDataIntervalFromEnv() {
       return null;
     }
 
-    const rawValue = match[1].trim();
+    let rawValue = match[1].trim();
+
+    // Remove inline comments (everything after # or //)
+    rawValue = rawValue.split(/\s+#/)[0].trim();
+    rawValue = rawValue.split(/\s+\/\//)[0].trim();
 
     // Remove quotes if present
     const cleanValue = rawValue.replace(/^["']|["']$/g, '');
@@ -238,9 +242,14 @@ function getCleanDataIntervalFromEnv() {
  */
 async function getSampleDataForDisplay(cutoffDate) {
   try {
+    // Only get conversations that are NOT archived
     const sampleConversations = await Conversation.find({
-      updatedAt: { $lt: cutoffDate }
-    }).select('conversationId title user updatedAt endpoint').limit(10).lean();
+      updatedAt: { $lt: cutoffDate },
+      $or: [
+        { isArchived: { $exists: false } },
+        { isArchived: false }
+      ]
+    }).select('conversationId title user updatedAt endpoint isArchived').limit(10).lean();
 
     // Get messages from the conversations that will be deleted
     const conversationIds = sampleConversations.map(conv => conv.conversationId);
@@ -329,11 +338,13 @@ function displayDetailedInfo(sampleData, cutoffDate) {
  * Script to clean old chat conversations, messages, and user-uploaded files
  * 
  * SAFETY FEATURES:
+ * - NEVER deletes archived chats and their messages (regardless of age)
  * - NEVER deletes agent files (regardless of age)
  * - NEVER deletes assistant files (regardless of age) 
  * - NEVER deletes system files
  * - Only deletes user message attachment files older than specified days
  * - Protects files currently in use by any agent or assistant
+ * - Messages remain if their conversation is still active (not deleted)
  * - Minimum retention period is 30 days to prevent accidental data loss
  * 
  * Usage: node config/clean-chats.js [days] [-y]
@@ -428,14 +439,32 @@ function displayDetailedInfo(sampleData, cutoffDate) {
     // Get files currently in use by agents and assistants
     const filesInUse = await getFilesInUseByAgentsAndAssistants();
 
-    const conversationCount = await Conversation.countDocuments({
-      updatedAt: { $lt: cutoffDate }
+    const conversationQuery = {
+      updatedAt: { $lt: cutoffDate },
+      $or: [
+        { isArchived: { $exists: false } },
+        { isArchived: false }
+      ]
+    };
+
+    const conversationCount = await Conversation.countDocuments(conversationQuery);
+
+    // Count archived conversations that are protected (old enough to delete BUT archived)
+    const archivedCount = await Conversation.countDocuments({
+      updatedAt: { $lt: cutoffDate },
+      isArchived: true
+    });
+
+    // Count protected files (old enough to delete BUT used by agents/assistants)
+    const protectedFilesCount = await File.countDocuments({
+      createdAt: { $lt: cutoffDate },
+      context: FileContext.message_attachment,
+      file_id: { $in: Array.from(filesInUse) }
     });
 
     // Get conversation IDs to find related messages
-    const conversationsToDelete = await Conversation.find({
-      updatedAt: { $lt: cutoffDate }
-    }).select('conversationId').lean();
+    const conversationsToDelete = await Conversation.find(conversationQuery)
+      .select('conversationId').lean();
 
     const conversationIds = conversationsToDelete.map(conv => conv.conversationId);
 
@@ -469,7 +498,10 @@ function displayDetailedInfo(sampleData, cutoffDate) {
       console.green(`✔ No data older than ${days} days found for safe deletion.`);
       console.white('');
       console.cyan('📋 Safety Summary:');
-      console.white(`  • Files protected by agents/assistants: ${filesInUse.size.toLocaleString()}`);
+      console.white(`  • Archived chats protected: ${archivedCount.toLocaleString()} (would be deleted but archived)`);
+      console.white(`  • Protected files (agents/assistants): ${protectedFilesCount.toLocaleString()} (would be deleted but in use)`);
+      console.white(`  • Total files in use: ${filesInUse.size.toLocaleString()}`);
+      console.white(`  • Archived chats are permanently protected (never deleted)`);
       console.white(`  • Only user-uploaded message attachments are considered for deletion`);
       console.white(`  • Agent and assistant files are never deleted regardless of age`);
 
@@ -478,8 +510,9 @@ function displayDetailedInfo(sampleData, cutoffDate) {
         await inteleLog('========================================');
         await inteleLog('Intelequia cleanup job completed - no data to delete');
         await inteleLog(`STATS: Chats deleted: 0 | Messages deleted: 0 | Files deleted: 0`);
+        await inteleLog(`PROTECTED: Archived chats: ${archivedCount} (would be deleted but archived) | Protected files: ${protectedFilesCount} (would be deleted but in use by agents/assistants)`);
         await inteleLog(`CONFIG: Cleanup interval: ${days} days`);
-        await inteleLog(`DETAILS: Cutoff date: ${cutoffDate.toISOString().split('T')[0]} | Protected files: ${filesInUse.size}`);
+        await inteleLog(`DETAILS: Cutoff date: ${cutoffDate.toISOString().split('T')[0]}`);
         await inteleLog('========================================');
       } catch (logError) {
         console.yellow(`⚠️ Warning: Could not write to Intelequia log: ${logError.message}`);
@@ -497,7 +530,12 @@ function displayDetailedInfo(sampleData, cutoffDate) {
     console.white(`    - Upload files (total, will filter safely): ${uploadsStats.count.toLocaleString()} (${formatBytes(uploadsStats.size)})`);
     console.white('');
     console.green(`🛡️  PROTECTION SUMMARY:`);
-    console.white(`    - Files protected (in use by agents/assistants): ${filesInUse.size.toLocaleString()}`);
+    console.white(`    - Archived chats protected: ${archivedCount.toLocaleString()} (would be deleted but archived)`);
+    console.white(`    - Protected files (agents/assistants): ${protectedFilesCount.toLocaleString()} (would be deleted but in use)`);
+    console.white(`    - Total files in use by agents/assistants: ${filesInUse.size.toLocaleString()}`);
+    console.white('');
+    console.yellow(`📝 PROTECTION DETAILS:`);
+    console.white(`    - Archived chats: NEVER DELETED (remain forever)`);
     console.white(`    - Agent/assistant files: NEVER DELETED (regardless of age)`);
     console.white(`    - System files: NEVER DELETED`);
     console.white(`    - Only deleting: User message attachment files older than ${days} days`);
@@ -512,6 +550,7 @@ function displayDetailedInfo(sampleData, cutoffDate) {
       const confirmMsg = `Are you sure you want to remove OLD USER DATA (conversations, messages, and user-uploaded files) older than ${days} days? This action cannot be undone.
 
 🛡️  PROTECTED DATA (NEVER DELETED):
+   • Archived chats and their messages (regardless of age)
    • Agent files (regardless of age)
    • Assistant files (regardless of age)  
    • System files
@@ -540,9 +579,17 @@ Continue? (y/N)`;
     const filesInUseForDeletion = await getFilesInUseByAgentsAndAssistants();
 
     // First, get the conversation IDs that will be deleted
-    const conversationsForDeletion = await Conversation.find({
-      updatedAt: { $lt: cutoffDate }
-    }).select('conversationId').lean();
+    // Only delete conversations that are NOT archived
+    const conversationQueryForDeletion = {
+      updatedAt: { $lt: cutoffDate },
+      $or: [
+        { isArchived: { $exists: false } },
+        { isArchived: false }
+      ]
+    };
+
+    const conversationsForDeletion = await Conversation.find(conversationQueryForDeletion)
+      .select('conversationId').lean();
 
     const conversationIdsForDeletion = conversationsForDeletion.map(conv => conv.conversationId);
 
@@ -556,12 +603,10 @@ Continue? (y/N)`;
       console.green(`✔ Deleted ${messageResult.deletedCount.toLocaleString()} messages from old conversations`);
     }
 
-    // Delete conversations older than cutoff date
-    console.cyan('Deleting old conversations...');
-    const conversationResult = await Conversation.deleteMany({
-      updatedAt: { $lt: cutoffDate }
-    });
-    console.green(`✔ Deleted ${conversationResult.deletedCount.toLocaleString()} conversations`);
+    // Delete conversations older than cutoff date (but NOT archived)
+    console.cyan('Deleting old conversations (excluding archived)...');
+    const conversationResult = await Conversation.deleteMany(conversationQueryForDeletion);
+    console.green(`✔ Deleted ${conversationResult.deletedCount.toLocaleString()} conversations (archived chats protected)`);
 
     // Delete ONLY safe user file records (message attachments not in use by agents/assistants)
     console.cyan('Deleting old user file records (message attachments only)...');
@@ -615,6 +660,13 @@ Continue? (y/N)`;
     console.green('🎉 Cleanup completed successfully!');
     console.white('');
 
+    // Recalculate protected files count for final summary
+    const finalProtectedFilesCount = await File.countDocuments({
+      createdAt: { $lt: cutoffDate },
+      context: FileContext.message_attachment,
+      file_id: { $in: Array.from(filesInUseForDeletion) }
+    });
+
     // Detailed summary with all information
     console.cyan('📊 COMPLETE CLEANUP SUMMARY:');
     console.white('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -631,7 +683,12 @@ Continue? (y/N)`;
     console.white(`   • Disk space freed: ${formatBytes(deletedFilesSize)}`);
     console.white('');
     console.green('🛡️  PROTECTION SUMMARY:');
-    console.white(`   • Files protected (agents/assistants): ${filesInUseForDeletion.size.toLocaleString()}`);
+    console.white(`   • Archived chats protected: ${archivedCount.toLocaleString()} (would be deleted but archived)`);
+    console.white(`   • Protected files (agents/assistants): ${finalProtectedFilesCount.toLocaleString()} (would be deleted but in use)`);
+    console.white(`   • Total files in use: ${filesInUseForDeletion.size.toLocaleString()}`);
+    console.white('');
+    console.yellow('📝 PROTECTION DETAILS:');
+    console.white(`   • Archived chats: NEVER DELETED (protected)`);
     console.white(`   • Agent files: NEVER DELETED (protected)`);
     console.white(`   • Assistant files: NEVER DELETED (protected)`);
     console.white(`   • System files: NEVER DELETED (protected)`);
@@ -642,7 +699,7 @@ Continue? (y/N)`;
     console.white(`   • Total items removed: ${totalItems.toLocaleString()}`);
     console.white(`   • Total space saved: ${formatBytes(deletedFilesSize)}`);
     console.white(`   • Auto-confirm mode: ${autoConfirm ? 'Enabled' : 'Disabled'}`);
-    console.white(`   • Safety mode: ENABLED (agents/assistants protected)`);
+    console.white(`   • Safety mode: ENABLED (archived chats and agent files protected)`);
     console.white('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     // Intelequia logging with specific requested statistics
@@ -650,8 +707,9 @@ Continue? (y/N)`;
       await inteleLog('========================================');
       await inteleLog('Intelequia cleanup job completed successfully');
       await inteleLog(`STATS: Chats deleted: ${conversationResult.deletedCount} | Messages deleted: ${messageResult.deletedCount} | Files deleted: ${deletedFilesCount}`);
+      await inteleLog(`PROTECTED: Archived chats: ${archivedCount} (would be deleted but archived) | Protected files: ${finalProtectedFilesCount} (would be deleted but in use by agents/assistants)`);
       await inteleLog(`CONFIG: Cleanup interval: ${days} days`);
-      await inteleLog(`DETAILS: Cutoff date: ${cutoffDate.toISOString().split('T')[0]} | Space freed: ${formatBytes(deletedFilesSize)} | Protected files: ${filesInUseForDeletion.size}`);
+      await inteleLog(`DETAILS: Cutoff date: ${cutoffDate.toISOString().split('T')[0]} | Space freed: ${formatBytes(deletedFilesSize)}`);
       await inteleLog('========================================');
     } catch (logError) {
       console.yellow(`⚠️ Warning: Could not write to Intelequia log: ${logError.message}`);
@@ -666,7 +724,7 @@ Continue? (y/N)`;
     console.red(`⚠️  Error occurred at: ${new Date().toISOString()}`);
     console.red(`🎯 Attempted cutoff date: ${cutoffDate ? cutoffDate.toISOString().split('T')[0] : 'N/A'} (${days} days ago)`);
     console.red(`📝 Error message: ${error.message}`);
-    console.yellow('🛡️  Note: Agent and assistant files remain protected regardless of errors');
+    console.yellow('🛡️  Note: Archived chats, agent and assistant files remain protected regardless of errors');
     console.white('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     // Intelequia logging for errors
