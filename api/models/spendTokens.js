@@ -193,7 +193,7 @@ const getTrackingInfo = (context) => {
  *
  * @function
  * @async
- * @param {Object} txData - Transaction data.
+ * @param {txData} txData - Transaction data.
  * @param {Object} tokenUsage - The number of tokens used.
  * @param {number} tokenUsage.promptTokens - The number of prompt tokens used.
  * @param {number} tokenUsage.completionTokens - The number of completion tokens used.
@@ -267,7 +267,7 @@ const spendTokens = async (txData, tokenUsage, trackingData = {}) => {
  *
  * @function
  * @async
- * @param {Object} txData - Transaction data.
+ * @param {txData} txData - Transaction data.
  * @param {Object} tokenUsage - The number of tokens used.
  * @param {Object} tokenUsage.promptTokens - The number of prompt tokens used.
  * @param {number} tokenUsage.promptTokens.input - The number of input tokens.
