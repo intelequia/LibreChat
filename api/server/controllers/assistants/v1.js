@@ -46,7 +46,7 @@ const createAssistant = async (req, res) => {
     delete assistantData.conversation_starters;
     delete assistantData.append_current_datetime;
 
-    const toolDefinitions = await getCachedTools({ includeGlobal: true });
+    const toolDefinitions = await getCachedTools();
 
     assistantData.tools = tools
       .map((tool) => {
@@ -164,7 +164,7 @@ const patchAssistant = async (req, res) => {
       ...updateData
     } = req.body;
 
-    const toolDefinitions = await getCachedTools({ includeGlobal: true });
+    const toolDefinitions = await getCachedTools();
 
     updateData.tools = (updateData.tools ?? [])
       .map(async (tool) => {

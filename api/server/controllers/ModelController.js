@@ -1,8 +1,8 @@
+const { logger } = require('@librechat/data-schemas');
 const { CacheKeys } = require('librechat-data-provider');
 const { loadDefaultModels, loadConfigModels } = require('~/server/services/Config');
 const { getLogStores } = require('~/cache');
 const { parseModels} = require('~/utils')
-const { logger } = require('~/config');
 
 /**
  * @param {ServerRequest} req
