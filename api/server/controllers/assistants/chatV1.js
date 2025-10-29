@@ -34,32 +34,32 @@ const { checkBalance } = require('~/models/balanceMethods');
 const { getConvo } = require('~/models/Conversation');
 const getLogStores = require('~/cache/getLogStores');
 const { countTokens } = require('~/server/utils');
-const { getModelMaxTokens, intelequiaCountTokens } = require('~/utils');
+const { intelequiaCountTokens } = require('~/utils');
 const { getOpenAIClient } = require('./helpers');
 
 const ten_minutes = 1000 * 60 * 10;
 
-async function sendResponseTelemetry(req, conversationId, response, model)  {
+async function sendResponseTelemetry(req, conversationId, response, model) {
 
   const Conversation = require('~/models/schema/convoSchema');
-  const Message = require ('~/models/schema/messageSchema');
+  const Message = require('~/models/schema/messageSchema');
 
-  const {messages} = 
+  const { messages } =
     await Conversation.findOne({ conversationId })
       .select('messages')
       .exec();
 
-  const messagesText = 
-    await Message.find({ _id: {  $in: messages } })
-    .exec();
-  
+  const messagesText =
+    await Message.find({ _id: { $in: messages } })
+      .exec();
+
   let messagesHistory = [];
 
-  for (let i =0; i< messagesText.length; i++){
-    if(messagesText[i].text)
+  for (let i = 0; i < messagesText.length; i++) {
+    if (messagesText[i].text)
       messagesHistory.push(messagesText[i].text)
-    if(messagesText[i].content) {
-      if(messagesText[i].content[0].type === 'text')
+    if (messagesText[i].content) {
+      if (messagesText[i].content[0].type === 'text')
         messagesHistory.push(messagesText[i].content[0].text.value)
       else
         messagesHistory.push(messagesText[i].content[1].text.value)
@@ -170,11 +170,10 @@ const chatV1 = async (req, res) => {
     } else if (error.message === 'Request closed') {
       logger.debug('[/assistants/chat/] Request aborted on close');
     } else if (/Files.*are invalid/.test(error.message)) {
-      const errorMessage = `Files are invalid, or may not have uploaded yet.${
-        endpoint === EModelEndpoint.azureAssistants
+      const errorMessage = `Files are invalid, or may not have uploaded yet.${endpoint === EModelEndpoint.azureAssistants
           ? " If using Azure OpenAI, files are only available in the region of the assistant's model at the time of upload."
           : ''
-      }`;
+        }`;
       return sendResponse(req, res, messageData, errorMessage);
     } else if (error?.message?.includes('string too long')) {
       return sendResponse(
@@ -453,12 +452,10 @@ const chatV1 = async (req, res) => {
         });
 
       const pluralized = plural ? 's' : '';
-      body.additional_instructions = `${
-        body.additional_instructions ? `${body.additional_instructions}\n` : ''
-      }The user has uploaded ${imageCount} image${pluralized}.
-      Use the \`${ImageVisionTool.function.name}\` tool to retrieve ${
-        plural ? '' : 'a '
-      }detailed text description${pluralized} for ${plural ? 'each' : 'the'} image${pluralized}.`;
+      body.additional_instructions = `${body.additional_instructions ? `${body.additional_instructions}\n` : ''
+        }The user has uploaded ${imageCount} image${pluralized}.
+      Use the \`${ImageVisionTool.function.name}\` tool to retrieve ${plural ? '' : 'a '
+        }detailed text description${pluralized} for ${plural ? 'each' : 'the'} image${pluralized}.`;
 
       return files;
     };
@@ -581,9 +578,9 @@ const chatV1 = async (req, res) => {
         body.model = openai._options.model;
         openai.attachedFileIds = attachedFileIds;
         openai.visionPromise = visionPromise;
-        if(userMessage?.attachments?.length > 0)
-          body.tools = [ { type: "file_search" } ]
-        
+        if (userMessage?.attachments?.length > 0)
+          body.tools = [{ type: "file_search" }]
+
         const userEmail = req.user.email;
         if (retry) {
           response = await runAssistant({

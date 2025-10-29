@@ -102,5 +102,3 @@ export function assistantsConfigSetup(
     titlePromptTemplate: parsedConfig.titlePromptTemplate,
   };
 }
-
-module.exports = { azureAssistantsDefaults, assistantsConfigSetup, azureAgentsDefaults };
