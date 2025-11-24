@@ -744,26 +744,6 @@ class BaseClient {
       }
     );
 
-    /**
-       * Custom event to track when a completion query process is starting
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-    const { trackStartEvent } = require('~/models/spendTokens');
-
-    // Track start event
-    await trackStartEvent(
-      {
-        conversationId: conversationId,
-        user: user,
-        model: this.modelOptions?.model ?? this.model,
-      },
-      {
-        endpoint: this.options.endpoint,
-        model: this.modelOptions?.model ?? this.model,
-      }
-    );
-
     /** @type {string|string[]|undefined} */
     const { completion, metadata } = await this.sendCompletion(payload, opts);
     if (this.abortController) {
