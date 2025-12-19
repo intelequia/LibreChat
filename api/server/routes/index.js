@@ -2,7 +2,6 @@ const accessPermissions = require('./accessPermissions');
 const assistants = require('./assistants');
 const azureAgents = require('./azureAgents');
 const categories = require('./categories');
-const tokenizer = require('./tokenizer');
 const endpoints = require('./endpoints');
 const staticRoute = require('./static');
 const messages = require('./messages');
@@ -10,7 +9,6 @@ const memories = require('./memories');
 const presets = require('./presets');
 const prompts = require('./prompts');
 const balance = require('./balance');
-const plugins = require('./plugins');
 const actions = require('./actions');
 const banner = require('./banner');
 const search = require('./search');
@@ -24,7 +22,6 @@ const files = require('./files');
 const share = require('./share');
 const tags = require('./tags');
 const auth = require('./auth');
-const edit = require('./edit');
 const keys = require('./keys');
 const user = require('./user');
 const mcp = require('./mcp');
@@ -32,7 +29,6 @@ const intelequiaConfig = require('./intelequia/config');
 
 module.exports = {
   mcp,
-  edit,
   auth,
   keys,
   user,
@@ -48,14 +44,12 @@ module.exports = {
   config,
   models,
   prompts,
-  plugins,
   actions,
   presets,
   balance,
   messages,
   memories,
   endpoints,
-  tokenizer,
   assistants,
   azureAgents,
   categories,

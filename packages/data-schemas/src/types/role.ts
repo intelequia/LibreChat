@@ -54,6 +54,11 @@ export interface IRole extends Document {
     [PermissionTypes.FILE_CITATIONS]?: {
       [Permissions.USE]?: boolean;
     };
+    [PermissionTypes.MCP_SERVERS]?: {
+      [Permissions.USE]?: boolean;
+      [Permissions.CREATE]?: boolean;
+      [Permissions.SHARE]?: boolean;
+    };
   };
 }
 

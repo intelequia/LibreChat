@@ -6,7 +6,7 @@ const {
   getBedrockModels,
   getOpenAIModels,
   getGoogleModels,
-} = require('~/server/services/ModelService');
+} = require('@librechat/api');
 
 /**
  * Loads the default models for the application.

@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const fetch = require('node-fetch');
 const { logger } = require('@librechat/data-schemas');
 const {
+  countTokens,
   getBalanceConfig,
   extractFileContext,
   encodeAndFormatAudios,
@@ -30,12 +31,17 @@ const {
   isAgentsEndpoint,
   supportsBalanceCheck,
 } = require('librechat-data-provider');
-const { getMessages, saveMessage, updateMessage, saveConvo, getConvo } = require('~/models');
+const {
+  updateMessage,
+  getMessages,
+  saveMessage,
+  saveConvo,
+  getConvo,
+  getFiles,
+} = require('~/models');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { checkBalance } = require('~/models/balanceMethods');
 const { truncateToolCallOutputs } = require('./prompts');
-const countTokens = require('~/server/utils/countTokens');
-const { getFiles } = require('~/models/File');
 const TextStream = require('./TextStream');
 
 class BaseClient {
@@ -1033,6 +1039,13 @@ class BaseClient {
 
     const unsetFields = {};
     const exceptions = new Set(['spec', 'iconURL']);
+    const hasNonEphemeralAgent =
+      isAgentsEndpoint(this.options.endpoint) &&
+      endpointOptions?.agent_id &&
+      endpointOptions.agent_id !== Constants.EPHEMERAL_AGENT_ID;
+    if (hasNonEphemeralAgent) {
+      exceptions.add('model');
+    }
     if (existingConvo != null) {
       this.fetchedConvo = true;
       for (const key in existingConvo) {
@@ -1286,8 +1299,8 @@ class BaseClient {
       this.options.req,
       attachments,
       {
-        provider: this.options.agent?.provider,
-        endpoint: this.options.agent?.endpoint,
+        provider: this.options.agent?.provider ?? this.options.endpoint,
+        endpoint: this.options.agent?.endpoint ?? this.options.endpoint,
         useResponsesApi: this.options.agent?.model_parameters?.useResponsesApi,
       },
       getStrategyFunctions,
@@ -1304,8 +1317,8 @@ class BaseClient {
       this.options.req,
       attachments,
       {
-        provider: this.options.agent?.provider,
-        endpoint: this.options.agent?.endpoint,
+        provider: this.options.agent?.provider ?? this.options.endpoint,
+        endpoint: this.options.agent?.endpoint ?? this.options.endpoint,
       },
       getStrategyFunctions,
     );
@@ -1319,8 +1332,8 @@ class BaseClient {
       this.options.req,
       attachments,
       {
-        provider: this.options.agent?.provider,
-        endpoint: this.options.agent?.endpoint,
+        provider: this.options.agent?.provider ?? this.options.endpoint,
+        endpoint: this.options.agent?.endpoint ?? this.options.endpoint,
       },
       getStrategyFunctions,
     );

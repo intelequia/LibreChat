@@ -72,7 +72,7 @@ function AuthLayout({
         <ThemeSelector />
       </div>
 
-      <div className="flex flex-grow items-center justify-center">
+      <main className="flex flex-grow items-center justify-center">
         <div className="w-authPageWidth overflow-hidden bg-white px-6 py-4 dark:bg-gray-900 sm:max-w-md sm:rounded-lg">
           {!hasStartupConfigError && !isFetching && header && (
             <h1
@@ -88,7 +88,7 @@ function AuthLayout({
               <SocialLoginRender startupConfig={startupConfig} />
             )}
         </div>
-      </div>
+      </main>
       <Footer startupConfig={startupConfig} />
     </div>
   );

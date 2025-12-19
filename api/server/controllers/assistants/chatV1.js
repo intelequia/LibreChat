@@ -1,12 +1,13 @@
 const { v4 } = require('uuid');
 const { sleep } = require('@librechat/agents');
 const { logger } = require('@librechat/data-schemas');
-const { sendEvent, getBalanceConfig, getModelMaxTokens } = require('@librechat/api');
+const { sendEvent, getBalanceConfig, getModelMaxTokens, countTokens } = require('@librechat/api');
 const {
   Time,
   Constants,
   RunStatus,
   CacheKeys,
+  VisionModes,
   ContentTypes,
   EModelEndpoint,
   ViolationTypes,
@@ -25,6 +26,7 @@ const {
 const { runAssistant, createOnTextProgress } = require('~/server/services/AssistantService');
 const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
 const { formatMessage, createVisionPrompt } = require('~/app/clients/prompts');
+const { encodeAndFormat } = require('~/server/services/Files/images/encode');
 const { createRun, StreamRunManager } = require('~/server/services/Runs');
 const { addTitle } = require('~/server/services/Endpoints/assistants');
 const { createRunBody } = require('~/server/services/createRunBody');
@@ -33,7 +35,6 @@ const { getTransactions } = require('~/models/Transaction');
 const { checkBalance } = require('~/models/balanceMethods');
 const { getConvo } = require('~/models/Conversation');
 const getLogStores = require('~/cache/getLogStores');
-const { countTokens } = require('~/server/utils');
 const { intelequiaCountTokens } = require('~/utils');
 const { getOpenAIClient } = require('./helpers');
 
@@ -115,7 +116,7 @@ const chatV1 = async (req, res) => {
     clientTimestamp,
   } = req.body;
 
-  /** @type {OpenAIClient} */
+  /** @type {OpenAI} */
   let openai;
   /** @type {string|undefined} - the current thread id */
   let thread_id = _thread_id;
@@ -171,8 +172,8 @@ const chatV1 = async (req, res) => {
       logger.debug('[/assistants/chat/] Request aborted on close');
     } else if (/Files.*are invalid/.test(error.message)) {
       const errorMessage = `Files are invalid, or may not have uploaded yet.${endpoint === EModelEndpoint.azureAssistants
-          ? " If using Azure OpenAI, files are only available in the region of the assistant's model at the time of upload."
-          : ''
+        ? " If using Azure OpenAI, files are only available in the region of the assistant's model at the time of upload."
+        : ''
         }`;
       return sendResponse(req, res, messageData, errorMessage);
     } else if (error?.message?.includes('string too long')) {
@@ -353,11 +354,10 @@ const chatV1 = async (req, res) => {
       });
     };
 
-    const { openai: _openai, client } = await getOpenAIClient({
+    const { openai: _openai } = await getOpenAIClient({
       req,
       res,
       endpointOption,
-      initAppClient: true,
     });
 
     openai = _openai;
@@ -432,7 +432,15 @@ const chatV1 = async (req, res) => {
         role: 'user',
         content: '',
       };
-      const files = await client.addImageURLs(visionMessage, attachments);
+      const { files, image_urls } = await encodeAndFormat(
+        req,
+        attachments,
+        {
+          endpoint: EModelEndpoint.assistants,
+        },
+        VisionModes.generative,
+      );
+      visionMessage.image_urls = image_urls.length ? image_urls : undefined;
       if (!visionMessage.image_urls?.length) {
         return;
       }
@@ -694,7 +702,6 @@ const chatV1 = async (req, res) => {
         text,
         responseText: response.text,
         conversationId,
-        client,
       });
     }
 
