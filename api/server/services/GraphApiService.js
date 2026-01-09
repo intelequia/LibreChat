@@ -6,6 +6,66 @@ const { Client } = require('@microsoft/microsoft-graph-client');
 const { getOpenIdConfig } = require('~/strategies/openidStrategy');
 const getLogStores = require('~/cache/getLogStores');
 
+
+/** Intelequia: Create patchedFetch to fix the issue with Graph behind a proxy  **/
+const nodeFetch = require('node-fetch');
+// Create custom agent to handle proxies and SSL issues
+let httpsAgent;
+let httpAgent;
+let usingProxyAgent = false;
+
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+
+// Create a patched fetch that will be used globally
+const createPatchedFetch = (agent) => {
+  return (url, options = {}) => {
+    const urlString = typeof url === 'string' ? url : url.href || url.toString();
+    const useAgent = urlString.startsWith('https:') ? agent : httpAgent;
+    return nodeFetch(url, { ...options, agent: useAgent });
+  };
+};
+
+// Override global fetch to use our custom agents
+let patchedFetch;
+if (typeof global.fetch === 'undefined') {
+  global.fetch = (...args) => patchedFetch ? patchedFetch(...args) : nodeFetch(...args);
+} else {
+  const originalFetch = global.fetch;
+  global.fetch = (...args) => patchedFetch ? patchedFetch(...args) : originalFetch(...args);
+}
+
+// Also alias for consistency
+const fetch = (...args) => patchedFetch ? patchedFetch(...args) : nodeFetch(...args);
+
+if (proxyUrl) {
+  // Try to use proxy agents if proxy is configured
+  try {
+    const HttpsProxyAgent = require('https-proxy-agent');
+    const HttpProxyAgent = require('http-proxy-agent');    
+    
+    // Handle both export styles (default and named exports)
+    const HttpsProxyAgentConstructor = HttpsProxyAgent.HttpsProxyAgent || HttpsProxyAgent;
+    const HttpProxyAgentConstructor = HttpProxyAgent.HttpProxyAgent || HttpProxyAgent;
+    
+    httpsAgent = new HttpsProxyAgentConstructor(proxyUrl);
+    httpAgent = new HttpProxyAgentConstructor(proxyUrl);
+    usingProxyAgent = true;
+    logger.info(`Using proxy agent: ${proxyUrl}`);
+  } catch (err) {
+    logger.warn(`Proxy agents module not available: ${err.message}`);
+    logger.warn('Install with: npm install https-proxy-agent http-proxy-agent');
+    // Fallback to direct connection
+    httpsAgent = undefined;
+  }
+} else {
+  // No proxy configured
+  httpsAgent = undefined;
+}
+
+// Initialize the patched fetch with our agents
+patchedFetch = createPatchedFetch(httpsAgent);
+
+
 /**
  * @import { TPrincipalSearchResult, TGraphPerson, TGraphUser, TGraphGroup, TGraphPeopleResponse, TGraphUsersResponse, TGraphGroupsResponse } from 'librechat-data-provider'
  */
@@ -75,6 +135,12 @@ const exchangeTokenForGraphAccess = async (config, accessToken, sub) => {
       .map((scope) => `https://graph.microsoft.com/${scope}`)
       .join(' ');
 
+    // Configure custom agent for the OpenID client
+    const clientOptions = {};
+    if (usingProxyAgent) {
+      clientOptions[Symbol.for('openid-client.custom.fetch')] = patchedFetch;
+    }
+
     const grantResponse = await client.genericGrantRequest(
       config,
       'urn:ietf:params:oauth:grant-type:jwt-bearer',
@@ -83,6 +149,7 @@ const exchangeTokenForGraphAccess = async (config, accessToken, sub) => {
         assertion: accessToken,
         requested_token_use: 'on_behalf_of',
       },
+      clientOptions,
     );
 
     await tokensCache.set(
