@@ -137,7 +137,7 @@ const searchEntraIdPrincipals = async (accessToken, sub, query, type = 'all', li
     const graphClient = await createGraphClient(accessToken, sub);
     let allResults = [];
 
-    if (type === 'users' || type === 'all') {
+    if ((type === 'users' || type === 'all') && process.env.OPENID_GRAPH_SCOPES && process.env.OPENID_GRAPH_SCOPES.toLowerCase().includes('people.read')) {
       const contactResults = await searchContacts(graphClient, query, limit);
       allResults.push(...contactResults);
     }
