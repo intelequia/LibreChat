@@ -1,4 +1,4 @@
-const { Tool } = require('langchain/tools');
+const { Tool } = require('@langchain/core/tools');
 
 class AzureAIFunctions extends Tool {
   constructor(fields = {}) {
@@ -38,7 +38,7 @@ class AzureAIFunctions extends Tool {
   async _call(data) {
 
     var userEmail = data.userEmail;
-    if (typeof data == "string"){
+    if (typeof data == "string") {
       const User = require('~/models/User');
       const { email } = await User.findOne({ _id: this.userId }).lean();
       userEmail = email;
@@ -65,12 +65,12 @@ class AzureAIFunctions extends Tool {
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
       }
-      
+
       global.appInsights.trackEvent({
         name: 'Plugin',
         properties: {
           toolName: "azure-ai-search",
-          userEmail: userEmail ,
+          userEmail: userEmail,
           assistantId: data.assistant ?? "",
           messageLength: JSON.stringify(json).length
         },

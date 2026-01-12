@@ -1,4 +1,4 @@
-const { Tool } = require('langchain/tools');
+const { Tool } = require('@langchain/core/tools');
 const axios = require('axios');
 const intelequiaCountTokens = require('../../intelequiaTokenCount')
 const {
@@ -6,7 +6,7 @@ const {
   handleProyectsfilter
 } = require('../configurations/projectHandler')
 
-class Dataverse extends Tool  {
+class Dataverse extends Tool {
 
   constructor(fields) {
     super();
@@ -54,8 +54,8 @@ class Dataverse extends Tool  {
     };
   }
 
-  async getDynamicsSearch (url, token){
-    url = url.replace('GET ',"")
+  async getDynamicsSearch(url, token) {
+    url = url.replace('GET ', "")
     try {
       const headers = {
         'Authorization': `Bearer ${token}`
@@ -63,12 +63,12 @@ class Dataverse extends Tool  {
       const { data } = await axios.get(url, { headers })
       return data
     }
-    catch (e){
+    catch (e) {
       throw new Error("Error at retrieve data from Dynamics");
     }
   }
 
-  async smartSwitch (query, token){
+  async smartSwitch(query, token) {
 
     const instructions = [
       `La consulta del usuario es la siguiente: ${query}.`,
@@ -78,42 +78,42 @@ class Dataverse extends Tool  {
 
     const message = instructions.join(' ');
     const { response } = await this.sendCompletion(message)
-    switch (response){
+    switch (response) {
       case 1: return await this.handleProject(query, message, token);
       case 2: return await this.handleOportunity(query, message, token);
     }
   }
 
-  async handleOportunity(query, message, token){
+  async handleOportunity(query, message, token) {
     const url = 'https://intelequia.crm4.dynamics.com/api/data/v9.2/opportunities?$top=10&$select=prioritycode,totaltax,estimatedclosedate,_pricelevelid_value,confirminterest,opportunityid,identifycompetitors,name,inteleq_numerodeofertas,statuscode,customerneed,totaltax_base,estimatedvalue,currentsituation,statecode,need&$orderby=createdon desc'
-    const {value} = await this.getDynamicsSearch(url, token);
+    const { value } = await this.getDynamicsSearch(url, token);
     return {
       response: JSON.stringify(value),
-      model:"gpt-4o-mini",
+      model: "gpt-4o-mini",
       query: "(completionQuery + message)"
     }
   }
 
-  async handleProject (query, message, token){
+  async handleProject(query, message, token) {
     const completionQuery = createProjectCompletionQuery(query)
     const projectFilterResponse = await this.sendCompletion(completionQuery)
     const dataverseUrlQuery = handleProyectsfilter(projectFilterResponse.response, this.dataverseURL)
-    const {value} = await this.getDynamicsSearch(dataverseUrlQuery, token);
+    const { value } = await this.getDynamicsSearch(dataverseUrlQuery, token);
 
     const dataverseResponse = []
 
-    for (const item of value){
+    for (const item of value) {
 
-      if(item.cr794_Jefedeequipo && item.owninguser && item.cr794_Equipo && item.cr794_Cliente && item.owningbusinessunit)
-          dataverseResponse.push(item)
+      if (item.cr794_Jefedeequipo && item.owninguser && item.cr794_Equipo && item.cr794_Cliente && item.owningbusinessunit)
+        dataverseResponse.push(item)
 
-      if(dataverseResponse.length == 10)
+      if (dataverseResponse.length == 10)
         break
     }
 
     return {
       response: JSON.stringify(dataverseResponse),
-      model:projectFilterResponse.model,
+      model: projectFilterResponse.model,
       query: (completionQuery + message)
     }
   }
@@ -133,7 +133,7 @@ class Dataverse extends Tool  {
 
     const queryTokens = intelequiaCountTokens([query], model)
 
-    const responseTokens = intelequiaCountTokens([response],model)
+    const responseTokens = intelequiaCountTokens([response], model)
 
     global.appInsights.trackEvent({
       name: 'Plugin',

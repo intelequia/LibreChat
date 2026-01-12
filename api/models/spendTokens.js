@@ -9,7 +9,7 @@
  * @description Handles token transactions and App Insights tracking for all contexts
  */
 
-const { logger } = require('~/config');
+const { logger } = require('@librechat/data-schemas');
 const { createTransaction, createStructuredTransaction } = require('./Transaction');
 
 // Event type mappings for better maintainability

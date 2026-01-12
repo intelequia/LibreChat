@@ -161,7 +161,7 @@ describe('formatToolContent', () => {
   });
 
   describe('resource handling', () => {
-    it('should handle UI resources', () => {
+    it('should handle UI resources in artifacts', () => {
       const result: t.MCPToolCallResponse = {
         content: [
           {
@@ -170,33 +170,28 @@ describe('formatToolContent', () => {
               uri: 'ui://carousel',
               mimeType: 'application/json',
               text: '{"items": []}',
-              name: 'carousel',
-              description: 'A carousel component',
             },
           },
         ],
       };
 
       const [content, artifacts] = formatToolContent(result, 'openai');
-      expect(content).toEqual([
-        {
-          type: 'text',
-          text: '',
-          metadata: {
-            type: 'ui_resources',
-            data: [
-              {
-                uri: 'ui://carousel',
-                mimeType: 'application/json',
-                text: '{"items": []}',
-                name: 'carousel',
-                description: 'A carousel component',
-              },
-            ],
-          },
-        },
-      ]);
-      expect(artifacts).toBeUndefined();
+      expect(Array.isArray(content)).toBe(true);
+      const textContent = Array.isArray(content) ? content[0] : { text: '' };
+      expect(textContent).toMatchObject({ type: 'text' });
+      expect(textContent.text).toContain('UI Resource ID:');
+      expect(textContent.text).toContain('UI Resource Marker: \\ui{');
+      expect(textContent.text).toContain('Resource URI: ui://carousel');
+      expect(textContent.text).toContain('Resource MIME Type: application/json');
+
+      const uiResourceArtifact = artifacts?.ui_resources?.data?.[0];
+      expect(uiResourceArtifact).toBeTruthy();
+      expect(uiResourceArtifact).toMatchObject({
+        uri: 'ui://carousel',
+        mimeType: 'application/json',
+        text: '{"items": []}',
+      });
+      expect(uiResourceArtifact?.resourceId).toEqual(expect.any(String));
     });
 
     it('should handle regular resources', () => {
@@ -206,8 +201,6 @@ describe('formatToolContent', () => {
             type: 'resource',
             resource: {
               uri: 'file://document.pdf',
-              name: 'Document',
-              description: 'Important document',
               mimeType: 'application/pdf',
               text: 'Document content',
             },
@@ -222,8 +215,6 @@ describe('formatToolContent', () => {
           text:
             'Resource Text: Document content\n' +
             'Resource URI: file://document.pdf\n' +
-            'Resource: Document\n' +
-            'Resource Description: Important document\n' +
             'Resource MIME Type: application/pdf',
         },
       ]);
@@ -237,7 +228,6 @@ describe('formatToolContent', () => {
             type: 'resource',
             resource: {
               uri: 'https://example.com/resource',
-              name: 'Example Resource',
               text: '',
             },
           },
@@ -248,7 +238,7 @@ describe('formatToolContent', () => {
       expect(content).toEqual([
         {
           type: 'text',
-          text: 'Resource URI: https://example.com/resource\n' + 'Resource: Example Resource',
+          text: 'Resource URI: https://example.com/resource',
         },
       ]);
       expect(artifacts).toBeUndefined();
@@ -270,7 +260,6 @@ describe('formatToolContent', () => {
             type: 'resource',
             resource: {
               uri: 'file://data.csv',
-              name: 'Data file',
               text: '',
             },
           },
@@ -278,27 +267,67 @@ describe('formatToolContent', () => {
       };
 
       const [content, artifacts] = formatToolContent(result, 'openai');
-      expect(content).toEqual([
-        {
-          type: 'text',
-          text: 'Some text\n\n' + 'Resource URI: file://data.csv\n' + 'Resource: Data file',
-        },
-        {
-          type: 'text',
-          text: '',
-          metadata: {
-            type: 'ui_resources',
-            data: [
-              {
-                uri: 'ui://button',
-                mimeType: 'application/json',
-                text: '{"label": "Click me"}',
-              },
-            ],
+      expect(Array.isArray(content)).toBe(true);
+      const textEntry = Array.isArray(content) ? content[0] : { text: '' };
+      expect(textEntry).toMatchObject({ type: 'text' });
+      expect(textEntry.text).toContain('Some text');
+      expect(textEntry.text).toContain('UI Resource Marker: \\ui{');
+      expect(textEntry.text).toContain('Resource URI: ui://button');
+      expect(textEntry.text).toContain('Resource MIME Type: application/json');
+      expect(textEntry.text).toContain('Resource URI: file://data.csv');
+
+      const uiResource = artifacts?.ui_resources?.data?.[0];
+      expect(uiResource).toMatchObject({
+        uri: 'ui://button',
+        mimeType: 'application/json',
+        text: '{"label": "Click me"}',
+      });
+      expect(uiResource?.resourceId).toEqual(expect.any(String));
+    });
+
+    it('should handle both images and UI resources in artifacts', () => {
+      const result: t.MCPToolCallResponse = {
+        content: [
+          { type: 'text', text: 'Content with multimedia' },
+          { type: 'image', data: 'base64imagedata', mimeType: 'image/png' },
+          {
+            type: 'resource',
+            resource: {
+              uri: 'ui://graph',
+              mimeType: 'application/json',
+              text: '{"type": "line"}',
+            },
           },
+        ],
+      };
+
+      const [content, artifacts] = formatToolContent(result, 'openai');
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toMatchObject({ type: 'text', text: 'Content with multimedia' });
+        expect(content[1].type).toBe('text');
+        expect(content[1].text).toContain('UI Resource Marker: \\ui{');
+        expect(content[1].text).toContain('Resource URI: ui://graph');
+        expect(content[1].text).toContain('Resource MIME Type: application/json');
+      }
+      expect(artifacts).toEqual({
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: 'data:image/png;base64,base64imagedata' },
+          },
+        ],
+        ui_resources: {
+          data: [
+            {
+              uri: 'ui://graph',
+              mimeType: 'application/json',
+              text: '{"type": "line"}',
+              resourceId: expect.any(String),
+            },
+          ],
         },
-      ]);
-      expect(artifacts).toBeUndefined();
+      });
     });
   });
 
@@ -341,8 +370,6 @@ describe('formatToolContent', () => {
             type: 'resource',
             resource: {
               uri: 'https://api.example.com/data',
-              name: 'API Data',
-              description: 'External data source',
               text: '',
             },
           },
@@ -352,33 +379,21 @@ describe('formatToolContent', () => {
       };
 
       const [content, artifacts] = formatToolContent(result, 'anthropic');
-      expect(content).toEqual([
-        { type: 'text', text: 'Introduction' },
-        {
-          type: 'text',
-          text:
-            'Middle section\n\n' +
-            'Resource URI: https://api.example.com/data\n' +
-            'Resource: API Data\n' +
-            'Resource Description: External data source',
-        },
-        { type: 'text', text: 'Conclusion' },
-        {
-          type: 'text',
-          text: '',
-          metadata: {
-            type: 'ui_resources',
-            data: [
-              {
-                uri: 'ui://chart',
-                mimeType: 'application/json',
-                text: '{"type": "bar"}',
-              },
-            ],
-          },
-        },
-      ]);
-      expect(artifacts).toEqual({
+      expect(Array.isArray(content)).toBe(true);
+      if (Array.isArray(content)) {
+        expect(content[0]).toEqual({ type: 'text', text: 'Introduction' });
+        expect(content[1].type).toBe('text');
+        expect(content[1].text).toContain('Middle section');
+        expect(content[1].text).toContain('UI Resource ID:');
+        expect(content[1].text).toContain('UI Resource Marker: \\ui{');
+        expect(content[1].text).toContain('Resource URI: ui://chart');
+        expect(content[1].text).toContain('Resource MIME Type: application/json');
+        expect(content[1].text).toContain('Resource URI: https://api.example.com/data');
+        expect(content[2].type).toBe('text');
+        expect(content[2].text).toContain('Conclusion');
+        expect(content[2].text).toContain('UI Resource Markers Available:');
+      }
+      expect(artifacts).toMatchObject({
         content: [
           {
             type: 'image_url',
@@ -389,6 +404,16 @@ describe('formatToolContent', () => {
             image_url: { url: 'https://example.com/image2.jpg' },
           },
         ],
+        ui_resources: {
+          data: [
+            {
+              uri: 'ui://chart',
+              mimeType: 'application/json',
+              text: '{"type": "bar"}',
+              resourceId: expect.any(String),
+            },
+          ],
+        },
       });
     });
 

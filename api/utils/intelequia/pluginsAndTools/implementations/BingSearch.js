@@ -1,9 +1,9 @@
-const { Tool } = require('langchain/tools');
+const { Tool } = require('@langchain/core/tools');
 const intelequiaCountTokens = require('../../intelequiaTokenCount')
 
 class BingSearch extends Tool {
 
-  constructor(fields){
+  constructor(fields) {
     super();
     this.name = 'bing-search';
     this.description = 'Use the \'bing-search\' tool to retrieve search results relevant to your input';
@@ -13,10 +13,10 @@ class BingSearch extends Tool {
     this.apiKey = process.env.BING_SEARCH_V7_SUBSCRIPTION_KEY
   }
 
-  async _call(data){
+  async _call(data) {
 
     var userEmail = data.userEmail;
-    if (typeof data == "string"){
+    if (typeof data == "string") {
       const User = require('~/models/User');
       const { email } = await User.findOne({ _id: this.userId }).lean();
       userEmail = email;
@@ -28,17 +28,17 @@ class BingSearch extends Tool {
     const responseFilter = process.env.BING_SEARCH_FILTER || "Webpages";
 
     var sites = "";
-    if(process.env.BING_SEARCH_SITE_SEARCH && process.env.BING_SEARCH_SITE_SEARCH !="")
-      sites = "site:("+process.env.BING_SEARCH_SITE_SEARCH+")";
+    if (process.env.BING_SEARCH_SITE_SEARCH && process.env.BING_SEARCH_SITE_SEARCH != "")
+      sites = "site:(" + process.env.BING_SEARCH_SITE_SEARCH + ")";
 
     const url = this.url +
       "?q=" + sites + query +
-      "&mkt=" + market + 
-      "&count=" + count + 
-      "&responseFilter=" + responseFilter 
+      "&mkt=" + market +
+      "&count=" + count +
+      "&responseFilter=" + responseFilter
 
     const method = this.method;
-    
+
     const headers = { 'Ocp-Apim-Subscription-Key': this.apiKey }
 
     const response = await fetch(url, {
@@ -55,7 +55,7 @@ class BingSearch extends Tool {
       name: 'Plugin',
       properties: {
         toolName: "bing-search",
-        userEmail: userEmail ,
+        userEmail: userEmail,
         assistantId: data.assistant ?? "",
         messageLength: searchResult.length
       },

@@ -5,6 +5,9 @@ const { CacheKeys } = require('librechat-data-provider');
 const { Client } = require('@microsoft/microsoft-graph-client');
 const { getOpenIdConfig } = require('~/strategies/openidStrategy');
 const getLogStores = require('~/cache/getLogStores');
+const nodeFetch = require('node-fetch');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+const { ProxyAgent } = require('undici');
 
 /**
  * @import { TPrincipalSearchResult, TGraphPerson, TGraphUser, TGraphGroup, TGraphPeopleResponse, TGraphUsersResponse, TGraphGroupsResponse } from 'librechat-data-provider'
@@ -38,10 +41,17 @@ const createGraphClient = async (accessToken, sub) => {
     const openidConfig = getOpenIdConfig();
     const exchangedToken = await exchangeTokenForGraphAccess(openidConfig, accessToken, sub);
 
+    const fetchOptions = {};
+    // Add proxy support if configured
+    if (process.env.PROXY) {
+      fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
+    }
+
     const graphClient = Client.init({
       authProvider: (done) => {
         done(null, exchangedToken);
       },
+      fetchOptions,
     });
 
     return graphClient;
@@ -75,6 +85,14 @@ const exchangeTokenForGraphAccess = async (config, accessToken, sub) => {
       .map((scope) => `https://graph.microsoft.com/${scope}`)
       .join(' ');
 
+    const clientOptions = {};
+    if (process.env.PROXY) {
+      let httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+      clientOptions[Symbol.for('openid-client.custom.fetch')] = (url, options = {}) => {
+          return nodeFetch(url, { ...options, agent: httpsAgent });
+      };
+    }
+
     const grantResponse = await client.genericGrantRequest(
       config,
       'urn:ietf:params:oauth:grant-type:jwt-bearer',
@@ -83,6 +101,7 @@ const exchangeTokenForGraphAccess = async (config, accessToken, sub) => {
         assertion: accessToken,
         requested_token_use: 'on_behalf_of',
       },
+      clientOptions,
     );
 
     await tokensCache.set(
@@ -118,7 +137,7 @@ const searchEntraIdPrincipals = async (accessToken, sub, query, type = 'all', li
     const graphClient = await createGraphClient(accessToken, sub);
     let allResults = [];
 
-    if (type === 'users' || type === 'all') {
+    if ((type === 'users' || type === 'all') && process.env.OPENID_GRAPH_SCOPES && process.env.OPENID_GRAPH_SCOPES.toLowerCase().includes('people.read')) {
       const contactResults = await searchContacts(graphClient, query, limit);
       allResults.push(...contactResults);
     }
@@ -159,7 +178,7 @@ const searchEntraIdPrincipals = async (accessToken, sub, query, type = 'all', li
 
 /**
  * Get current user's Entra ID group memberships from Microsoft Graph
- * Uses /me/memberOf endpoint to get groups the user is a member of
+ * Uses /me/getMemberGroups endpoint to get transitive groups the user is a member of
  * @param {string} accessToken - OpenID Connect access token
  * @param {string} sub - Subject identifier
  * @returns {Promise<Array<string>>} Array of group ID strings (GUIDs)
@@ -167,10 +186,12 @@ const searchEntraIdPrincipals = async (accessToken, sub, query, type = 'all', li
 const getUserEntraGroups = async (accessToken, sub) => {
   try {
     const graphClient = await createGraphClient(accessToken, sub);
+    const response = await graphClient
+      .api('/me/getMemberGroups')
+      .post({ securityEnabledOnly: false });
 
-    const groupsResponse = await graphClient.api('/me/memberOf').select('id').get();
-
-    return (groupsResponse.value || []).map((group) => group.id);
+    const groupIds = Array.isArray(response?.value) ? response.value : [];
+    return [...new Set(groupIds.map((groupId) => String(groupId)))];
   } catch (error) {
     logger.error('[getUserEntraGroups] Error fetching user groups:', error);
     return [];
@@ -187,13 +208,22 @@ const getUserEntraGroups = async (accessToken, sub) => {
 const getUserOwnedEntraGroups = async (accessToken, sub) => {
   try {
     const graphClient = await createGraphClient(accessToken, sub);
+    const allGroupIds = [];
+    let nextLink = '/me/ownedObjects/microsoft.graph.group';
 
-    const groupsResponse = await graphClient
-      .api('/me/ownedObjects/microsoft.graph.group')
-      .select('id')
-      .get();
+    while (nextLink) {
+      const response = await graphClient.api(nextLink).select('id').top(999).get();
+      const groups = response?.value || [];
+      allGroupIds.push(...groups.map((group) => group.id));
 
-    return (groupsResponse.value || []).map((group) => group.id);
+      nextLink = response['@odata.nextLink']
+        ? response['@odata.nextLink']
+            .replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '')
+            .trim() || null
+        : null;
+    }
+
+    return allGroupIds;
   } catch (error) {
     logger.error('[getUserOwnedEntraGroups] Error fetching user owned groups:', error);
     return [];
@@ -211,21 +241,27 @@ const getUserOwnedEntraGroups = async (accessToken, sub) => {
 const getGroupMembers = async (accessToken, sub, groupId) => {
   try {
     const graphClient = await createGraphClient(accessToken, sub);
-    const allMembers = [];
-    let nextLink = `/groups/${groupId}/members`;
+    const allMembers = new Set();
+    let nextLink = `/groups/${groupId}/transitiveMembers`;
 
     while (nextLink) {
       const membersResponse = await graphClient.api(nextLink).select('id').top(999).get();
 
-      const members = membersResponse.value || [];
-      allMembers.push(...members.map((member) => member.id));
+      const members = membersResponse?.value || [];
+      members.forEach((member) => {
+        if (typeof member?.id === 'string' && member['@odata.type'] === '#microsoft.graph.user') {
+          allMembers.add(member.id);
+        }
+      });
 
       nextLink = membersResponse['@odata.nextLink']
-        ? membersResponse['@odata.nextLink'].split('/v1.0')[1]
+        ? membersResponse['@odata.nextLink']
+            .replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '')
+            .trim() || null
         : null;
     }
 
-    return allMembers;
+    return Array.from(allMembers);
   } catch (error) {
     logger.error('[getGroupMembers] Error fetching group members:', error);
     return [];

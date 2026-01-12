@@ -1,4 +1,4 @@
-const { Tool } = require('langchain/tools');
+const { Tool } = require('@langchain/core/tools');
 const qs = require('qs');
 const intelequiaCountTokens = require('../../intelequiaTokenCount')
 
@@ -20,7 +20,7 @@ class MicrosoftGraph extends Tool {
     this.userId = fields.userId;
   }
 
-  async getGraphTokenFromRefresh(refresh_token){
+  async getGraphTokenFromRefresh(refresh_token) {
     const scope = process.env.OPENID_SCOPE + " " + process.env.OPENAI_GRAPH_SCOPES;
     const body = {
       grant_type: 'refresh_token',
@@ -30,16 +30,16 @@ class MicrosoftGraph extends Tool {
       scope
     }
 
-    try{
-      const response = await axios.post(`https://login.microsoftonline.com/${this.tenantId}/oauth2/v2.0/token`,  qs.stringify(body) , {
+    try {
+      const response = await axios.post(`https://login.microsoftonline.com/${this.tenantId}/oauth2/v2.0/token`, qs.stringify(body), {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
         }
       });
-    
+
       return response.data.access_token;
-    } catch (e){
-      console.error (e)
+    } catch (e) {
+      console.error(e)
     }
 
   }
@@ -88,9 +88,9 @@ class MicrosoftGraph extends Tool {
     const responseMessage = choices[0].message.content
     const jsonString = responseMessage.replace(/```json\n|\n```/g, '').trim();
     return {
-      query:message,
-      model:model,
-      response:JSON.parse(jsonString)
+      query: message,
+      model: model,
+      response: JSON.parse(jsonString)
     };
   }
 
@@ -102,8 +102,8 @@ class MicrosoftGraph extends Tool {
    */
 
   async createClient(userEmail, url) {
-    const cachedToken = global.myCache.get( userEmail + "-graph" )
-    const userAccessToken = await this.getGraphTokenFromRefresh ( cachedToken )
+    const cachedToken = global.myCache.get(userEmail + "-graph")
+    const userAccessToken = await this.getGraphTokenFromRefresh(cachedToken)
 
     try {
       const response = await axios.get(url, {
@@ -114,10 +114,10 @@ class MicrosoftGraph extends Tool {
       return JSON.stringify(response.data);
     } catch (error) {
       console.error('Error en la llamada a Graph API:', error);
-      console.error('URL Requested: ',url)
-      if(error.status == 403)
+      console.error('URL Requested: ', url)
+      if (error.status == 403)
         return "You dont have permission"
-      if(error.status == 401 && userAccessToken == undefined)
+      if (error.status == 401 && userAccessToken == undefined)
         return "Your Sesion has expired, Log in again"
     }
   }
@@ -140,14 +140,14 @@ class MicrosoftGraph extends Tool {
 
   async _call(data) {
     var userEmail = data.userEmail;
-    if (typeof data == "string"){
+    if (typeof data == "string") {
       const User = require('~/models/User');
       const { email } = await User.findOne({ _id: this.userId }).lean();
       userEmail = email;
     }
 
     const userQuery = data.query ?? data;
-    const {query, model, response}  = await this.getGraphApi(userQuery)
+    const { query, model, response } = await this.getGraphApi(userQuery)
     const search = await this.createClient(userEmail, response.url);
     const queryTokens = intelequiaCountTokens([query, search], model)
 
@@ -157,8 +157,8 @@ class MicrosoftGraph extends Tool {
         toolName: "microsoft-graph",
         userEmail: userEmail,
         assistantId: data.assistant ?? "",
-        tokens:queryTokens.prompt,
-        pluginModel:model
+        tokens: queryTokens.prompt,
+        pluginModel: model
       },
     });
     return search

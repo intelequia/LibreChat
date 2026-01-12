@@ -1,7 +1,12 @@
 const { sleep } = require('@librechat/agents');
 const { logger } = require('@librechat/data-schemas');
 const { tool: toolFn, DynamicStructuredTool } = require('@langchain/core/tools');
-const { getToolkitKey, hasCustomUserVars, getUserMCPAuthMap } = require('@librechat/api');
+const {
+  getToolkitKey,
+  hasCustomUserVars,
+  getUserMCPAuthMap,
+  isActionDomainAllowed,
+} = require('@librechat/api');
 const {
   Tools,
   Constants,
@@ -13,6 +18,7 @@ const {
   ImageVisionTool,
   openapiToFunction,
   AgentCapabilities,
+  validateActionDomain,
   defaultAgentCapabilities,
   validateAndParseOpenAPISpec,
 } = require('librechat-data-provider');
@@ -26,7 +32,6 @@ const { processFileURL, uploadImageBuffer } = require('~/server/services/Files/p
 const { getEndpointsConfig, getCachedTools } = require('~/server/services/Config');
 const { manifestToolMap, toolkits } = require('~/app/clients/tools/manifest');
 const { createOnSearchResults } = require('~/server/services/Tools/search');
-const { isActionDomainAllowed } = require('~/server/services/domains');
 const { recordUsage } = require('~/server/services/Threads');
 const { loadTools } = require('~/app/clients/tools/util');
 const { redactMessage } = require('~/config/parsers');
@@ -76,7 +81,7 @@ async function processRequiredActions(client, requiredActions, assistantId) {
     requiredActions,
   );
   const appConfig = client.req.config;
-  const toolDefinitions = await getCachedTools({ userId: client.req.user.id, includeGlobal: true });
+  const toolDefinitions = await getCachedTools();
   const seenToolkits = new Set();
   const tools = requiredActions
     .map((action) => {
@@ -246,10 +251,24 @@ async function processRequiredActions(client, requiredActions, assistantId) {
 
           // Validate and parse OpenAPI spec
           const validationResult = validateAndParseOpenAPISpec(action.metadata.raw_spec);
-          if (!validationResult.spec) {
+          if (!validationResult.spec || !validationResult.serverUrl) {
             throw new Error(
               `Invalid spec: user: ${client.req.user.id} | thread_id: ${requiredActions[0].thread_id} | run_id: ${requiredActions[0].run_id}`,
             );
+          }
+
+          // SECURITY: Validate the domain from the spec matches the stored domain
+          // This is defense-in-depth to prevent any stored malicious actions
+          const domainValidation = validateActionDomain(
+            action.metadata.domain,
+            validationResult.serverUrl,
+          );
+          if (!domainValidation.isValid) {
+            logger.error(`Domain mismatch in stored action: ${domainValidation.message}`, {
+              userId: client.req.user.id,
+              action_id: action.action_id,
+            });
+            continue; // Skip this action rather than failing the entire request
           }
 
           // Process the OpenAPI spec
@@ -380,7 +399,12 @@ async function processRequiredActions(client, requiredActions, assistantId) {
 async function loadAgentTools({ req, res, agent, signal, tool_resources, openAIApiKey }) {
   if (!agent.tools || agent.tools.length === 0) {
     return {};
-  } else if (agent.tools && agent.tools.length === 1 && agent.tools[0] === AgentCapabilities.ocr) {
+  } else if (
+    agent.tools &&
+    agent.tools.length === 1 &&
+    /** Legacy handling for `ocr` as may still exist in existing Agents */
+    (agent.tools[0] === AgentCapabilities.context || agent.tools[0] === AgentCapabilities.ocr)
+  ) {
     return {};
   }
 
@@ -430,6 +454,7 @@ async function loadAgentTools({ req, res, agent, signal, tool_resources, openAIA
 
   /** @type {Record<string, Record<string, string>>} */
   let userMCPAuthMap;
+  //TODO pass config from registry
   if (hasCustomUserVars(req.config)) {
     userMCPAuthMap = await getUserMCPAuthMap({
       tools: agent.tools,
@@ -543,8 +568,23 @@ async function loadAgentTools({ req, res, agent, signal, tool_resources, openAIA
 
     // Validate and parse OpenAPI spec once per action set
     const validationResult = validateAndParseOpenAPISpec(action.metadata.raw_spec);
-    if (!validationResult.spec) {
+    if (!validationResult.spec || !validationResult.serverUrl) {
       continue;
+    }
+
+    // SECURITY: Validate the domain from the spec matches the stored domain
+    // This is defense-in-depth to prevent any stored malicious actions
+    const domainValidation = validateActionDomain(
+      action.metadata.domain,
+      validationResult.serverUrl,
+    );
+    if (!domainValidation.isValid) {
+      logger.error(`Domain mismatch in stored action: ${domainValidation.message}`, {
+        userId: req.user.id,
+        agent_id: agent.id,
+        action_id: action.action_id,
+      });
+      continue; // Skip this action rather than failing the entire request
     }
 
     const encrypted = {

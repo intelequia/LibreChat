@@ -5,7 +5,7 @@ const { encryptMetadata, domainParser } = require('~/server/services/ActionServi
 const { getOpenAIClient } = require('~/server/controllers/assistants/helpers');
 const { updateAction, getActions, deleteAction } = require('~/models/Action');
 const { updateAssistantDoc, getAssistant } = require('~/models/Assistant');
-const { isActionDomainAllowed } = require('~/server/services/domains');
+const { isActionDomainAllowed } = require('@librechat/api');
 const { logger } = require('~/config');
 
 const router = express.Router();

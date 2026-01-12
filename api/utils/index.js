@@ -1,13 +1,7 @@
-const tokenHelpers = require('./tokens');
-const deriveBaseURL = require('./deriveBaseURL');
-const extractBaseURL = require('./extractBaseURL');
-const findMessageContent = require('./findMessageContent');
+// Hecho por Intelequia 19/12/2025
+
 const intelequia = require('./intelequia');
 
 module.exports = {
-  deriveBaseURL,
-  extractBaseURL,
-  ...tokenHelpers,
-  findMessageContent,
-  ...intelequia,
+    ...intelequia,
 };

@@ -1,4 +1,4 @@
-const { Tool } = require('langchain/tools');
+const { Tool } = require('@langchain/core/tools');
 
 const axios = require('axios');
 
@@ -21,7 +21,7 @@ class Sharepoint extends Tool {
    */
 
   async createClient(userEmail, userQuery) {
-    const cachedToken = global.myCache.get( userEmail + "-token" )
+    const cachedToken = global.myCache.get(userEmail + "-token")
     // "intelequia.sharepoint.com,76093170-463a-458b-b5f7-f4d4cf3a5381,1e7947c7-1755-49c2-9110-47ae348116f7"
     const sharepointSitePath = `path:\"${this.sharepointSiteURL}\"`
     const requestData = {
@@ -51,16 +51,16 @@ class Sharepoint extends Tool {
       return JSON.stringify(response.data);
     } catch (error) {
       console.error('Error en la llamada a Graph API:', error);
-      if(error.status == 403)
+      if (error.status == 403)
         return "You dont have permission"
-      if(error.status == 401 && userAccessToken == undefined)
+      if (error.status == 401 && userAccessToken == undefined)
         return "Your Sesion has expired, Log in again"
     }
   }
 
   async _call(data) {
     var userEmail = data.userEmail;
-    if (typeof data == "string"){
+    if (typeof data == "string") {
       const { findUser } = require('~/models');
       const { email } = await findUser({ _id: this.userId });
       userEmail = email;
@@ -75,7 +75,7 @@ class Sharepoint extends Tool {
         toolName: "sharepoint",
         userEmail: userEmail,
         assistantId: data.assistant ?? "",
-        tokens:0,
+        tokens: 0,
         siteURL: this.sharepointSiteURL
       },
     });

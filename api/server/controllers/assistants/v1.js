@@ -9,7 +9,7 @@ const { updateAssistantDoc, getAssistants } = require('~/models/Assistant');
 const { getOpenAIClient, fetchAssistants } = require('./helpers');
 const { getCachedTools } = require('~/server/services/Config');
 const { manifestToolMap } = require('~/app/clients/tools');
-const { deleteFileByFilter } = require('~/models/File');
+const { deleteFileByFilter } = require('~/models');
 const { IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification, isToolEnabled, GetToolSpecification } = require('~/utils');
 
 /**
@@ -46,7 +46,7 @@ const createAssistant = async (req, res) => {
     delete assistantData.conversation_starters;
     delete assistantData.append_current_datetime;
 
-    const toolDefinitions = await getCachedTools({ includeGlobal: true });
+    const toolDefinitions = await getCachedTools();
 
     assistantData.tools = tools
       .map((tool) => {
@@ -164,7 +164,7 @@ const patchAssistant = async (req, res) => {
       ...updateData
     } = req.body;
 
-    const toolDefinitions = await getCachedTools({ includeGlobal: true });
+    const toolDefinitions = await getCachedTools();
 
     updateData.tools = (updateData.tools ?? [])
       .map(async (tool) => {
@@ -172,7 +172,7 @@ const patchAssistant = async (req, res) => {
           if (tool.type === 'retrieval' && _e === 'azureAssistants') { tool.type = 'file_search'; }
           return tool;
         }
-        
+
         /**
          * Verifies if Tool is within Functions specifications
          * @Organization Intelequia
@@ -189,28 +189,28 @@ const patchAssistant = async (req, res) => {
             .map(([_, val]) => val);
         }
 
-          /**
-           * Verifies if Tool is within Intelequia's Tool List
-           * @Organization Intelequia
-           * @Author Enrique M. Pedroza Castillo
-           */
-          if (await isToolEnabled(tool)) {
-            return await GetToolSpecification(tool)
-          }
+        /**
+         * Verifies if Tool is within Intelequia's Tool List
+         * @Organization Intelequia
+         * @Author Enrique M. Pedroza Castillo
+         */
+        if (await isToolEnabled(tool)) {
+          return await GetToolSpecification(tool)
+        }
 
-          const toolDefinitions = req.app.locals.availableTools;
-          const toolDef = toolDefinitions[tool];
-          if (!toolDef && manifestToolMap[tool] && manifestToolMap[tool].toolkit === true) {
-            return (
-              Object.entries(toolDefinitions)
-                .filter(([key]) => key.startsWith(`${tool}_`))
-                // eslint-disable-next-line no-unused-vars
-                .map(([_, val]) => val)
-            );
-          }
+        const toolDefinitions = req.app.locals.availableTools;
+        const toolDef = toolDefinitions[tool];
+        if (!toolDef && manifestToolMap[tool] && manifestToolMap[tool].toolkit === true) {
+          return (
+            Object.entries(toolDefinitions)
+              .filter(([key]) => key.startsWith(`${tool}_`))
+              // eslint-disable-next-line no-unused-vars
+              .map(([_, val]) => val)
+          );
+        }
 
-          return toolDef;
-        })
+        return toolDef;
+      })
       .filter((tool) => tool)
       .flat();
 
@@ -337,7 +337,7 @@ function filterAssistantDocs({ documents, userId, assistantsConfig = {} }) {
 const getAssistantDocuments = async (req, res) => {
   try {
     const appConfig = req.config;
-    const endpoint = req.query;
+    const endpoint = req.query?.endpoint;
     const assistantsConfig = appConfig.endpoints?.[endpoint];
     const documents = await getAssistants(
       {},
