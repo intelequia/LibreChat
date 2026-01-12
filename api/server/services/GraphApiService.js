@@ -40,11 +40,21 @@ const createGraphClient = async (accessToken, sub) => {
     const openidConfig = getOpenIdConfig();
     const exchangedToken = await exchangeTokenForGraphAccess(openidConfig, accessToken, sub);
 
-    const graphClient = Client.init({
+    const clientOptions = {
       authProvider: (done) => {
         done(null, exchangedToken);
       },
-    });
+    };
+
+    // Add proxy support if configured
+    if (process.env.PROXY) {
+      const httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+      clientOptions.fetchOptions = {
+        agent: httpsAgent,
+      };
+    }
+
+    const graphClient = Client.init(clientOptions);
 
     return graphClient;
   } catch (error) {
