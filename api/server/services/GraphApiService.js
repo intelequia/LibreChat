@@ -7,6 +7,7 @@ const { getOpenIdConfig } = require('~/strategies/openidStrategy');
 const getLogStores = require('~/cache/getLogStores');
 const nodeFetch = require('node-fetch');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { ProxyAgent } = require('undici');
 
 /**
  * @import { TPrincipalSearchResult, TGraphPerson, TGraphUser, TGraphGroup, TGraphPeopleResponse, TGraphUsersResponse, TGraphGroupsResponse } from 'librechat-data-provider'
@@ -40,21 +41,18 @@ const createGraphClient = async (accessToken, sub) => {
     const openidConfig = getOpenIdConfig();
     const exchangedToken = await exchangeTokenForGraphAccess(openidConfig, accessToken, sub);
 
-    const clientOptions = {
+    const fetchOptions = {};
+    // Add proxy support if configured
+    if (process.env.PROXY) {
+      fetchOptions.agent = new ProxyAgent(process.env.PROXY);
+    }
+
+    const graphClient = Client.init({
       authProvider: (done) => {
         done(null, exchangedToken);
       },
-    };
-
-    // Add proxy support if configured
-    if (process.env.PROXY) {
-      const httpsAgent = new HttpsProxyAgent(process.env.PROXY);
-      clientOptions.fetchOptions = {
-        agent: httpsAgent,
-      };
-    }
-
-    const graphClient = Client.init(clientOptions);
+      fetchOptions,
+    });
 
     return graphClient;
   } catch (error) {
