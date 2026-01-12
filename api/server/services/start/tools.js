@@ -81,7 +81,7 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
   }
 
   const basicToolInstances = [
-    new Calculator(),
+    // new Calculator(),
     ...Object.values(oaiToolkit),
     ...Object.values(ytToolkit),
   ];
