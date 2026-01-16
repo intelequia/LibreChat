@@ -66,26 +66,29 @@ const resetPasswordController = async (req, res) => {
 };
 
 const refreshController = async (req, res) => {
-  const refreshToken = req.headers.cookie ? cookies.parse(req.headers.cookie).refreshToken : null;
-  const token_provider = req.headers.cookie
-    ? cookies.parse(req.headers.cookie).token_provider
-    : null;
-  if (!refreshToken) {
-    /**
+  const parsedCookies = req.headers.cookie ? cookies.parse(req.headers.cookie) : {};
+  const token_provider = parsedCookies.token_provider;
+
+  if (token_provider === 'openid' && isEnabled(process.env.OPENID_REUSE_TOKENS)) {
+    /** For OpenID users, read refresh token from session to avoid large cookie issues */
+    const refreshToken = req.session?.openidTokens?.refreshToken || parsedCookies.refreshToken;
+
+    if (!refreshToken) {
+      /**
        * Custom event to track when refresh token is not provided
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-    global.appInsights.trackEvent({
-      name: 'Token Refresh',
-      properties: {
-        message:"Refresh token not provided",
-        refreshToken: refreshToken,
-      },
-    });
-    return res.status(200).send('Refresh token not provided');
-  }
-  if (token_provider === 'openid' && isEnabled(process.env.OPENID_REUSE_TOKENS) === true) {
+      global.appInsights.trackEvent({
+        name: 'Token Refresh',
+        properties: {
+          message: "Refresh token not provided",
+          refreshToken: refreshToken,
+        },
+      });
+      return res.status(200).send('Refresh token not provided');
+    }
+
     try {
       const openIdConfig = getOpenIdConfig();
       const tokenset = await openIdClient.refreshTokenGrant(openIdConfig, refreshToken);
@@ -122,7 +125,7 @@ const refreshController = async (req, res) => {
         );
       }
 
-      const token = setOpenIDAuthTokens(tokenset, res, user._id.toString(), refreshToken);
+      const token = setOpenIDAuthTokens(tokenset, req, res, user._id.toString(), refreshToken);
 
       user.federatedTokens = {
         access_token: tokenset.access_token,
@@ -137,6 +140,13 @@ const refreshController = async (req, res) => {
       return res.status(403).send('Invalid OpenID refresh token');
     }
   }
+
+  /** For non-OpenID users, read refresh token from cookies */
+  const refreshToken = parsedCookies.refreshToken;
+  if (!refreshToken) {
+    return res.status(200).send('Refresh token not provided');
+  }
+
   try {
     const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await getUserById(payload.id, '-password -__v -totpSecret -backupCodes');
@@ -149,7 +159,7 @@ const refreshController = async (req, res) => {
       global.appInsights.trackEvent({
         name: 'Token Refresh',
         properties: {
-          message:"user not found",
+          message: "user not found",
           refreshToken: refreshToken,
           payload: payload
         },
@@ -199,7 +209,7 @@ const refreshController = async (req, res) => {
       global.appInsights.trackEvent({
         name: 'Token Refresh',
         properties: {
-          message:"No session found",
+          message: "No session found",
           refreshToken: refreshToken,
           payload: payload,
           user: userId,
@@ -217,7 +227,7 @@ const refreshController = async (req, res) => {
       global.appInsights.trackEvent({
         name: 'Token Refresh',
         properties: {
-          message:"Expired refresh token",
+          message: "Expired refresh token",
           refreshToken: refreshToken,
           payload: payload,
           user: userId,
@@ -235,7 +245,7 @@ const refreshController = async (req, res) => {
       global.appInsights.trackEvent({
         name: 'Token Refresh',
         properties: {
-          message:"Refresh token expired or not found for this user",
+          message: "Refresh token expired or not found for this user",
           refreshToken: refreshToken,
           payload: payload,
           user: userId,
@@ -254,7 +264,7 @@ const refreshController = async (req, res) => {
     global.appInsights.trackEvent({
       name: 'Token Refresh',
       properties: {
-        message:"Invalid refresh token",
+        message: "Invalid refresh token",
         error: err
       },
     });
