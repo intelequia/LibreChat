@@ -17,15 +17,12 @@ fi
 
 echo "✓ Ejecutándose dentro del contenedor LibreChat"
 
-# Instalar cron si no está instalado
-if ! command -v cron &> /dev/null; then
-    echo "Instalando cron..."
-    apt-get update -q
-    apt-get install -y cron
-    echo "✓ Cron instalado"
-else
-    echo "✓ Cron ya está disponible"
+# Verificar que dcron esté instalado (ya debería estar desde el entrypoint)
+if ! command -v crond &> /dev/null; then
+    echo "ERROR: dcron no está instalado. Se esperaba que estuviera instalado desde el entrypoint."
+    exit 1
 fi
+echo "✓ dcron disponible"
 
 # Configurar el script de cron
 SCRIPT_DIR="/app/config/int-clean-cron"
@@ -116,22 +113,10 @@ fi
 TEMP_CRON=$(mktemp)
 crontab -l 2>/dev/null > "$TEMP_CRON"
 
-# Verificar si ya existe una entrada para este script
+# Verificar si ya existe una entrada para este script y removerla automáticamente
 if grep -q "int-clean-cron" "$TEMP_CRON"; then
     echo ""
-    echo "⚠️  Ya existe una entrada de cron para Intelequia cleanup"
-    echo "Contenido actual del crontab:"
-    echo "-----------------------------"
-    crontab -l | grep -n "int-clean-cron"
-    echo "-----------------------------"
-    echo ""
-    echo "¿Quieres reemplazar la configuración existente? (y/N)"
-    read -r response
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
-        echo "Operación cancelada"
-        rm "$TEMP_CRON"
-        exit 0
-    fi
+    echo "⚠️  Ya existe una entrada de cron para Intelequia cleanup - reemplazando automáticamente"
     # Remover líneas existentes
     grep -v "int-clean-cron" "$TEMP_CRON" > "${TEMP_CRON}.new"
     mv "${TEMP_CRON}.new" "$TEMP_CRON"
@@ -169,13 +154,11 @@ if crontab "$TEMP_CRON"; then
     echo "- Los logs están dentro del contenedor en $LOG_FILE"
     echo ""
     echo "Comandos útiles:"
-    echo "- Ver crontab: crontab -l"
-    echo "- Ver logs: tail -f $LOG_FILE"
-    echo "- Probar script: node $CRON_SCRIPT"
-    
-    # Iniciar el servicio cron
-    service cron start
-    echo "✓ Servicio cron iniciado"
+    echo "- Ver crontab: docker exec LibreChat crontab -l"
+    echo "- Ver logs: docker exec LibreChat tail -f $LOG_FILE"
+    echo "- Probar script: docker exec LibreChat node $CRON_SCRIPT"
+    echo ""
+    echo "✓ Crontab configurado (crond se inicia desde el entrypoint)"
 else
     echo "ERROR: No se pudo instalar el crontab"
     rm "$TEMP_CRON"
@@ -186,11 +169,6 @@ fi
 rm "$TEMP_CRON"
 
 echo ""
-echo "¿Quieres probar el script ahora? (y/N)"
-read -r test_response
-if [[ "$test_response" =~ ^[Yy]$ ]]; then
-    echo ""
-    echo "Ejecutando prueba del script..."
-    echo "================================"
-    /usr/local/bin/node "$CRON_SCRIPT"
-fi
+echo "📋 Para probar el script manualmente, ejecuta:"
+echo "   docker exec LibreChat node $CRON_SCRIPT"
+echo ""
