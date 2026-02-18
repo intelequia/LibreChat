@@ -292,6 +292,7 @@ router.get('/code/download/:session_id/:fileId', async (req, res) => {
     const response = await getDownloadStream(
       `${session_id}/${fileId}`,
       result[EnvVar.CODE_API_KEY],
+      req.user.id,
     );
     res.set(response.headers);
     response.data.pipe(res);

@@ -119,11 +119,30 @@ async function getSessionInfo(fileIdentifier, apiKey) {
   try {
     const baseURL = getCodeBaseURL();
     const [path, queryString] = fileIdentifier.split('?');
+    const isUploadPath = path.startsWith('files/');
     const session_id = path.split('/')[0];
 
     let queryParams = {};
     if (queryString) {
       queryParams = Object.fromEntries(new URLSearchParams(queryString).entries());
+    }
+
+    if (isUploadPath) {
+      const response = await axios({
+        method: 'get',
+        url: `${baseURL}/${path}`,
+        params: {
+          detail: 'summary',
+          ...queryParams,
+        },
+        headers: {
+          'User-Agent': 'LibreChat/1.0',
+          'X-API-Key': apiKey,
+        },
+        timeout: 5000,
+      });
+
+      return response.data?.modified || null;
     }
 
     const response = await axios({
@@ -189,6 +208,7 @@ const primeFiles = async (options, apiKey) => {
   const files = [];
   const sessions = new Map();
   let toolContext = '';
+  const userId = options.req.user.id;
 
   for (let i = 0; i < dbFiles.length; i++) {
     const file = dbFiles[i];
@@ -198,15 +218,21 @@ const primeFiles = async (options, apiKey) => {
 
     if (file.metadata.fileIdentifier) {
       const [path, queryString] = file.metadata.fileIdentifier.split('?');
-      const [session_id, id] = path.split('/');
+      let session_id = '';
+      let id = '';
+      if (path.startsWith('files/')) {
+        id = path.split('/')[1] || path;
+        session_id = `files:${id}`;
+      } else {
+        [session_id, id] = path.split('/');
+      }
 
       const pushFile = () => {
         if (!toolContext) {
           toolContext = `- Note: The following files are available in the "${Tools.execute_code}" tool environment:`;
         }
-        toolContext += `\n\t- /mnt/data/${file.filename}${
-          agentResourceIds.has(file.file_id) ? '' : ' (just attached by user)'
-        }`;
+        toolContext += `\n\t- /mnt/data/uploads/${userId}/${file.filename}${agentResourceIds.has(file.file_id) ? '' : ' (just attached by user)'
+          }`;
         files.push({
           id,
           session_id,
