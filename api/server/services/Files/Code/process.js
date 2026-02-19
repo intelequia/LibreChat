@@ -231,7 +231,7 @@ const primeFiles = async (options, apiKey) => {
         if (!toolContext) {
           toolContext = `- Note: The following files are available in the "${Tools.execute_code}" tool environment:`;
         }
-        toolContext += `\n\t- /mnt/data/uploads/${userId}/${file.filename}${agentResourceIds.has(file.file_id) ? '' : ' (just attached by user)'
+        toolContext += `\n\t- /app/files/uploads/${file.filename}${agentResourceIds.has(file.file_id) ? '' : ' (just attached by user)'
           }`;
         files.push({
           id,

@@ -43,6 +43,8 @@ const CodeExecutionToolSchema = zod.z.object({
 - Input code **IS ALREADY** displayed to the user, so **DO NOT** repeat it in your response unless asked.
 - Output code **IS NOT** displayed to the user, so **DO** write all desired output explicitly.
 - IMPORTANT: You MUST explicitly print/output ALL results you want the user to see.
+- Uploaded files are available at \`/app/files/uploads/\` (e.g. \`/app/files/uploads/data.csv\`).
+- Save generated files to \`/app/files/\` (e.g. \`/app/files/chart.png\`). They are delivered automatically.
 - py: This is not a Jupyter notebook environment. Use \`print()\` for all outputs.
 - py: Matplotlib: Use \`plt.savefig('/app/files/<name>.png')\` to save plots as files.
 - js: use the \`console\` or \`process\` methods for all outputs.
@@ -64,7 +66,9 @@ Runs code and returns stdout/stderr output from a stateless execution environmen
 
 Usage:
 - No network access available.
-- Generated files are automatically delivered; **DO NOT** provide download links.
+- Generated files saved to /app/files/ are automatically delivered to the user as attachments.
+- **DO NOT** provide download links or file paths to the user. Files are delivered automatically.
+- If the user asks for a download link, explain that files appear as attachments in the conversation.
 - NEVER use this tool to execute malicious code.
 `.trim();
     return tools.tool(async ({ lang, code, ...rest }) => {
@@ -119,9 +123,9 @@ Usage:
                     }
                 }
                 return [formattedOutput.trim(), {
-                        session_id: result.session_id,
-                        files: result.files,
-                    }];
+                    session_id: result.session_id,
+                    files: result.files,
+                }];
             }
             return [formattedOutput.trim(), { session_id: result.session_id }];
         }
