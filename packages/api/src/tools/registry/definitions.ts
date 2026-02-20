@@ -3,6 +3,7 @@ import {
   CalculatorToolDefinition,
   CodeExecutionToolDefinition,
 } from '@librechat/agents';
+import { logger } from '@librechat/data-schemas';
 
 /** Extended JSON Schema type that includes standard validation keywords */
 export type ExtendedJsonSchema = {
@@ -602,27 +603,50 @@ Generated image IDs will be returned in the response, so you can refer to them i
   },
 };
 
+/**
+ * Build agent tool definitions safely, validating imports from @librechat/agents
+ */
+function buildAgentToolDefinitions(): Record<string, ToolRegistryDefinition> {
+  const definitions: Record<string, ToolRegistryDefinition> = {};
+
+  if (!CalculatorToolDefinition || !CalculatorToolDefinition.name) {
+    logger.error('[definitions] CalculatorToolDefinition not properly imported from @librechat/agents');
+  } else {
+    definitions[CalculatorToolDefinition.name] = {
+      name: CalculatorToolDefinition.name,
+      description: CalculatorToolDefinition.description,
+      schema: CalculatorToolDefinition.schema as unknown as ExtendedJsonSchema,
+      toolType: 'builtin',
+    };
+  }
+
+  if (!CodeExecutionToolDefinition || !CodeExecutionToolDefinition.name) {
+    logger.error('[definitions] CodeExecutionToolDefinition not properly imported from @librechat/agents');
+  } else {
+    definitions[CodeExecutionToolDefinition.name] = {
+      name: CodeExecutionToolDefinition.name,
+      description: CodeExecutionToolDefinition.description,
+      schema: CodeExecutionToolDefinition.schema as unknown as ExtendedJsonSchema,
+      toolType: 'builtin',
+    };
+  }
+
+  if (!WebSearchToolDefinition || !WebSearchToolDefinition.name) {
+    logger.error('[definitions] WebSearchToolDefinition not properly imported from @librechat/agents');
+  } else {
+    definitions[WebSearchToolDefinition.name] = {
+      name: WebSearchToolDefinition.name,
+      description: WebSearchToolDefinition.description,
+      schema: WebSearchToolDefinition.schema as unknown as ExtendedJsonSchema,
+      toolType: 'builtin',
+    };
+  }
+
+  return definitions;
+}
+
 /** Tool definitions from @librechat/agents */
-const agentToolDefinitions: Record<string, ToolRegistryDefinition> = {
-  [CalculatorToolDefinition.name]: {
-    name: CalculatorToolDefinition.name,
-    description: CalculatorToolDefinition.description,
-    schema: CalculatorToolDefinition.schema as unknown as ExtendedJsonSchema,
-    toolType: 'builtin',
-  },
-  [CodeExecutionToolDefinition.name]: {
-    name: CodeExecutionToolDefinition.name,
-    description: CodeExecutionToolDefinition.description,
-    schema: CodeExecutionToolDefinition.schema as unknown as ExtendedJsonSchema,
-    toolType: 'builtin',
-  },
-  [WebSearchToolDefinition.name]: {
-    name: WebSearchToolDefinition.name,
-    description: WebSearchToolDefinition.description,
-    schema: WebSearchToolDefinition.schema as unknown as ExtendedJsonSchema,
-    toolType: 'builtin',
-  },
-};
+const agentToolDefinitions: Record<string, ToolRegistryDefinition> = buildAgentToolDefinitions();
 
 export function getToolDefinition(toolName: string): ToolRegistryDefinition | undefined {
   return toolDefinitions[toolName] ?? agentToolDefinitions[toolName];

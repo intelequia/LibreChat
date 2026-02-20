@@ -512,6 +512,43 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     }
   }
 
+  /**
+   * Save acces token to cache
+   * @Organization Intelequia
+   * @Author Pablo Suárez Romero
+   */
+  await global.myCache.set(user.email.toString() + '-token', tokenset.access_token, process.env.USER_GROUPS_CACHE_TTL);
+
+  /**
+   * Get token to access dynamics if enabled
+   * @Organization Intelequia
+   * @Author Pablo Suárez Romero
+   */
+  if (process.env.ENABLE_DATAVERSE == "true")
+    await updateDynamicsInCache(tokenset.refresh_token, user);
+  //await getDynamicsTokenFromRefresh(tokenset.refresh_token);
+
+
+  /**
+   * Load permission configuration files from remote repository
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  if (process.env.ENABLE_PERMISSION_MANAGE == "true")
+    user.role = await updateUserGroupsAndRole(tokenset.id_token, user, (userId, update) => updateUser(userId, update));
+
+  /**
+   * Saves Graph Token
+   * @Organization Intelequia
+   * @Author Enrique M. Pedroza Castillo
+   */
+  if (process.env.ENABLE_PERMISSION_MANAGE == "true")
+    await saveGraphToken(tokenset.refresh_token, user)
+
+  /**
+   * OPENID_ADMIN_ROLE: Assign admin role based on OpenID token claims
+   * This runs AFTER Intelequia permission management to ensure admin role takes priority
+   */
   const adminRole = process.env.OPENID_ADMIN_ROLE;
   const adminRoleParameterPath = process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH;
   const adminRoleTokenKind = process.env.OPENID_ADMIN_ROLE_TOKEN_KIND;
@@ -552,38 +589,6 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
       );
     }
   }
-  /**
-   * Save acces token to cache
-   * @Organization Intelequia
-   * @Author Pablo Suárez Romero
-   */
-  await global.myCache.set(user.email.toString() + '-token', tokenset.access_token, process.env.USER_GROUPS_CACHE_TTL);
-
-  /**
-   * Get token to access dynamics if enabled
-   * @Organization Intelequia
-   * @Author Pablo Suárez Romero
-   */
-  if (process.env.ENABLE_DATAVERSE == "true")
-    await updateDynamicsInCache(tokenset.refresh_token, user);
-  //await getDynamicsTokenFromRefresh(tokenset.refresh_token);
-
-
-  /**
-   * Load permission configuration files from remote repository
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (process.env.ENABLE_PERMISSION_MANAGE == "true")
-    user.role = await updateUserGroupsAndRole(tokenset.id_token, user, (userId, update) => updateUser(userId, update));
-
-  /**
-   * Saves Graph Token
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (process.env.ENABLE_PERMISSION_MANAGE == "true")
-    await saveGraphToken(tokenset.refresh_token, user)
 
   if (!!userinfo && userinfo.picture && !user.avatar?.includes('manual=true')) {
     /** @type {string | undefined} */
