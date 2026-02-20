@@ -36,6 +36,11 @@ async function loadConfigModels(req) {
     modelsConfig[EModelEndpoint.azureAssistants] = azureConfig.assistantModels;
   }
 
+  const bedrockConfig = appConfig.endpoints?.[EModelEndpoint.bedrock];
+  if (bedrockConfig?.models && Array.isArray(bedrockConfig.models)) {
+    modelsConfig[EModelEndpoint.bedrock] = bedrockConfig.models;
+  }
+
   if (azureAgentsEndpoint) {
     const defaultAzureAgentModels = defaultModels[EModelEndpoint.azureAgents] || [];
     modelsConfig[EModelEndpoint.azureAgents] = azureAgentsEndpoint.groups.flatMap((group) => {
