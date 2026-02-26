@@ -158,18 +158,20 @@ const titleConvo = async ({ text, conversationId, responseText = '', model, req 
     const data = await response.json();
     const result = data.choices[0].message.content;
 
-    global.appInsights.trackEvent({
-      name: 'Azure Agent Title Generation',
-      properties: {
-        userId: req.user.id,
-        userEmail: req.user.email,
-        charactersLength: result.length,
-        messageTokens: data.usage.total_tokens,
-        promptTokens: data.usage.prompt_tokens,
-        completionTokens: data.usage.completion_tokens,
-        model: model,
-      },
-    });
+    if (global.appInsights) {
+      global.appInsights.trackEvent({
+        name: 'Azure Agent Title Generation',
+        properties: {
+          userId: req.user.id,
+          userEmail: req.user.email,
+          charactersLength: result.length,
+          messageTokens: data.usage.total_tokens,
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          model: model,
+        },
+      });
+    }
 
     return result
   }catch(e){

@@ -120,6 +120,9 @@ auth.json
 # User uploads
 uploads/
 
+# SearXNG
+searxng/
+
 # owner
 release/
 build.sh

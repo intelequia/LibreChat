@@ -375,12 +375,14 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
    */
-  global.appInsights.trackEvent({
-    name: 'Login',
-    properties: {
-      userEmail: claims.email
-    },
-  });
+  if (global.appInsights) {
+    global.appInsights.trackEvent({
+      name: 'Login',
+      properties: {
+        userEmail: claims.email
+      },
+    });
+  }
   const userinfo = {
     ...claims,
   };

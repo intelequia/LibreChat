@@ -2,18 +2,23 @@ require('dotenv').config();
 
 let appInsights = require('applicationinsights');
 
-appInsights
-  .setup(process.env.APPLICATIONINSIGHTS_CONNECTION_STRING)
-  .setAutoCollectConsole(true)
-  .setAutoCollectRequests(true)
-  .setAutoCollectPerformance(true, true)
-  .setAutoCollectExceptions(true)
-  .setAutoCollectDependencies(true)
-  .setDistributedTracingMode(appInsights.DistributedTracingModes.AI_AND_W3C)
-  .setSendLiveMetrics(true)
-  .start();
+// Only initialize Application Insights if connection string is configured
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  appInsights
+    .setup(process.env.APPLICATIONINSIGHTS_CONNECTION_STRING)
+    .setAutoCollectConsole(true)
+    .setAutoCollectRequests(true)
+    .setAutoCollectPerformance(true, true)
+    .setAutoCollectExceptions(true)
+    .setAutoCollectDependencies(true)
+    .setDistributedTracingMode(appInsights.DistributedTracingModes.AI_AND_W3C)
+    .setSendLiveMetrics(true)
+    .start();
 
-global.appInsights = appInsights.defaultClient;
+  global.appInsights = appInsights.defaultClient;
+} else {
+  global.appInsights = null;
+}
 const fs = require('fs');
 const path = require('path');
 require('module-alias')({ base: path.resolve(__dirname, '..') });

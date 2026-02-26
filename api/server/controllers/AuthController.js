@@ -78,13 +78,15 @@ const refreshController = async (req, res) => {
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-      global.appInsights.trackEvent({
-        name: 'Token Refresh',
-        properties: {
-          message: "Refresh token not provided",
-          refreshToken: refreshToken,
-        },
-      });
+      if (global.appInsights) {
+        global.appInsights.trackEvent({
+          name: 'Token Refresh',
+          properties: {
+            message: "Refresh token not provided",
+            refreshToken: refreshToken,
+          },
+        });
+      }
       return res.status(200).send('Refresh token not provided');
     }
 
@@ -160,14 +162,16 @@ const refreshController = async (req, res) => {
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-      global.appInsights.trackEvent({
-        name: 'Token Refresh',
-        properties: {
-          message: "user not found",
-          refreshToken: refreshToken,
-          payload: payload
-        },
-      });
+      if (global.appInsights) {
+        global.appInsights.trackEvent({
+          name: 'Token Refresh',
+          properties: {
+            message: "user not found",
+            refreshToken: refreshToken,
+            payload: payload
+          },
+        });
+      }
       return res.status(401).redirect('/login');
     }
 
@@ -199,16 +203,18 @@ const refreshController = async (req, res) => {
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-      global.appInsights.trackEvent({
-        name: 'Token Refresh',
-        properties: {
-          message: "No session found",
-          refreshToken: refreshToken,
-          payload: payload,
-          user: userId,
-          session: session,
-        },
-      });
+      if (global.appInsights) {
+        global.appInsights.trackEvent({
+          name: 'Token Refresh',
+          properties: {
+            message: "No session found",
+            refreshToken: refreshToken,
+            payload: payload,
+            user: userId,
+            session: session,
+          },
+        });
+      }
       res.status(403).send('No session found');
     } else if (payload.exp < Date.now() / 1000) {
 
@@ -217,16 +223,18 @@ const refreshController = async (req, res) => {
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-      global.appInsights.trackEvent({
-        name: 'Token Refresh',
-        properties: {
-          message: "Expired refresh token",
-          refreshToken: refreshToken,
-          payload: payload,
-          user: userId,
-          session: session,
-        },
-      });
+      if (global.appInsights) {
+        global.appInsights.trackEvent({
+          name: 'Token Refresh',
+          properties: {
+            message: "Expired refresh token",
+            refreshToken: refreshToken,
+            payload: payload,
+            user: userId,
+            session: session,
+          },
+        });
+      }
       res.status(403).redirect('/login');
     } else {
 

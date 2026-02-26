@@ -154,17 +154,19 @@ class RunManager {
          */
         const detailsArray = detailsSignature.split('-');
         if(detailsArray.length > 4 && runStatus === 'completed'){
-          global.appInsights.trackEvent({
-            name: 'ToolCall',
-            properties: {
-              toolName: detailsArray[2] ?? "",
-              userEmail: openai.req.user.email ,
-              promptTokens: detailsArray[3] ?? "",
-              completionTokens: detailsArray[4] ?? "",
-              thread_id: thread_id,
-              run_id: run_id,
-            },
-          });
+          if (global.appInsights) {
+            global.appInsights.trackEvent({
+              name: 'ToolCall',
+              properties: {
+                toolName: detailsArray[2] ?? "",
+                userEmail: openai.req.user.email ,
+                promptTokens: detailsArray[3] ?? "",
+                completionTokens: detailsArray[4] ?? "",
+                thread_id: thread_id,
+                run_id: run_id,
+              },
+            });
+          }
         }
       }
       if (step.type === 'message_creation' && step.status === 'completed') {
@@ -223,17 +225,19 @@ class RunManager {
          */
         const detailsArray = detailsSignature.split('-');
         if(detailsArray.length > 4 && runStatus === 'completed'){
-          global.appInsights.trackEvent({
-            name: 'ToolCall',
-            properties: {
-              toolName: detailsArray[2] ?? "",
-              userEmail: azureAgentClient.req.user.email ,
-              promptTokens: detailsArray[3] ?? "",
-              completionTokens: detailsArray[4] ?? "",
-              thread_id: thread_id,
-              run_id: run_id,
-            },
-          });
+          if (global.appInsights) {
+            global.appInsights.trackEvent({
+              name: 'ToolCall',
+              properties: {
+                toolName: detailsArray[2] ?? "",
+                userEmail: azureAgentClient.req.user.email ,
+                promptTokens: detailsArray[3] ?? "",
+                completionTokens: detailsArray[4] ?? "",
+                thread_id: thread_id,
+                run_id: run_id,
+              },
+            });
+          }
         }
       
         if (step.type === 'message_creation' && step.status === 'completed') {
