@@ -51,15 +51,17 @@ class BingSearch extends Tool {
       throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
     }
     const searchResult = JSON.stringify(json)
-    global.appInsights.trackEvent({
-      name: 'Plugin',
-      properties: {
-        toolName: "bing-search",
-        userEmail: userEmail,
-        assistantId: data.assistant ?? "",
-        messageLength: searchResult.length
-      },
-    });
+    if (global.appInsights) {
+      global.appInsights.trackEvent({
+        name: 'Plugin',
+        properties: {
+          toolName: "bing-search",
+          userEmail: userEmail,
+          assistantId: data.assistant ?? "",
+          messageLength: searchResult.length
+        },
+      });
+    }
 
     return searchResult;
   }

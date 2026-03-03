@@ -461,16 +461,18 @@ const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
    */
-  global.appInsights.trackEvent({
-    name: 'AzureUploadFile',
-    properties: {
-      userId: userId,
-      userEmail: email,
-      fileName: file.filename,
-      fileSize: file.size,
-      fileExtension: file.mimetype.split('/')[1],
-    },
-  });
+  if (global.appInsights) {
+    global.appInsights.trackEvent({
+      name: 'AzureUploadFile',
+      properties: {
+        userId: userId,
+        userEmail: email,
+        fileName: file.filename,
+        fileSize: file.size,
+        fileExtension: file.mimetype.split('/')[1],
+      },
+    });
+  }
   res.status(200).json({ message: 'File uploaded and processed successfully', ...result });
 };
 
@@ -568,16 +570,18 @@ const processFileUpload = async ({ req, res, metadata }) => {
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
    */
-  global.appInsights.trackEvent({
-    name: 'AzureUploadFile',
-    properties: {
-      userId: userId,
-      userEmail: email,
-      fileName: file.filename,
-      fileSize: file.size,
-      fileExtension: file.mimetype.split('/')[1],
-    },
-  });
+  if (global.appInsights) {
+    global.appInsights.trackEvent({
+      name: 'AzureUploadFile',
+      properties: {
+        userId: userId,
+        userEmail: email,
+        fileName: file.filename,
+        fileSize: file.size,
+        fileExtension: file.mimetype.split('/')[1],
+      },
+    });
+  }
   res.status(200).json({ message: 'File uploaded and processed successfully', ...result });
 };
 

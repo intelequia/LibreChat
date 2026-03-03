@@ -313,6 +313,15 @@ export type UpdateMCPServersPermOptions = MutationOptions<
   types.TError | null | undefined
 >;
 
+export type UpdateRemoteAgentsPermVars = UpdatePermVars<p.TRemoteAgentsPermissions>;
+
+export type UpdateRemoteAgentsPermOptions = MutationOptions<
+  UpdatePermResponse,
+  UpdateRemoteAgentsPermVars,
+  unknown,
+  types.TError | null | undefined
+>;
+
 export type UpdateMarketplacePermVars = UpdatePermVars<p.TMarketplacePermissions>;
 
 export type UpdateMarketplacePermOptions = MutationOptions<
@@ -377,6 +386,20 @@ export type TEditArtifactResponse = Pick<types.TMessage, 'content' | 'text' | 'c
 export type EditArtifactOptions = MutationOptions<
   TEditArtifactResponse,
   TEditArtifactRequest,
+  unknown,
+  Error
+>;
+
+export type TBranchMessageRequest = {
+  messageId: string;
+  agentId: string;
+};
+
+export type TBranchMessageResponse = types.TMessage;
+
+export type BranchMessageOptions = MutationOptions<
+  TBranchMessageResponse,
+  TBranchMessageRequest,
   unknown,
   Error
 >;

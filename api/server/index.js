@@ -2,18 +2,23 @@ require('dotenv').config();
 
 let appInsights = require('applicationinsights');
 
-appInsights
-  .setup(process.env.APPLICATIONINSIGHTS_CONNECTION_STRING)
-  .setAutoCollectConsole(true)
-  .setAutoCollectRequests(true)
-  .setAutoCollectPerformance(true, true)
-  .setAutoCollectExceptions(true)
-  .setAutoCollectDependencies(true)
-  .setDistributedTracingMode(appInsights.DistributedTracingModes.AI_AND_W3C)
-  .setSendLiveMetrics(true)
-  .start();
+// Only initialize Application Insights if connection string is configured
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  appInsights
+    .setup(process.env.APPLICATIONINSIGHTS_CONNECTION_STRING)
+    .setAutoCollectConsole(true)
+    .setAutoCollectRequests(true)
+    .setAutoCollectPerformance(true, true)
+    .setAutoCollectExceptions(true)
+    .setAutoCollectDependencies(true)
+    .setDistributedTracingMode(appInsights.DistributedTracingModes.AI_AND_W3C)
+    .setSendLiveMetrics(true)
+    .start();
 
-global.appInsights = appInsights.defaultClient;
+  global.appInsights = appInsights.defaultClient;
+} else {
+  global.appInsights = null;
+}
 const fs = require('fs');
 const path = require('path');
 require('module-alias')({ base: path.resolve(__dirname, '..') });
@@ -31,6 +36,8 @@ const {
   performStartupChecks,
   handleJsonParseError,
   initializeFileStorage,
+  GenerationJobManager,
+  createStreamServices,
 } = require('@librechat/api');
 const { connectDb, indexSync } = require('~/db');
 const initializeOAuthReconnectManager = require('./services/initializeOAuthReconnectManager');
@@ -150,8 +157,10 @@ const startServer = async () => {
   app.use('/oauth', routes.oauth);
   /* API Endpoints */
   app.use('/api/auth', routes.auth);
+  app.use('/api/admin', routes.adminAuth);
   app.use('/api/actions', routes.actions);
   app.use('/api/keys', routes.keys);
+  app.use('/api/api-keys', routes.apiKeys);
   app.use('/api/user', routes.user);
   app.use('/api/search', routes.search);
   app.use('/api/messages', routes.messages);
@@ -220,6 +229,11 @@ const startServer = async () => {
     await initializeMCPs();
     await initializeOAuthReconnectManager();
     await checkMigrations();
+
+    // Configure stream services (auto-detects Redis from USE_REDIS env var)
+    const streamServices = createStreamServices();
+    GenerationJobManager.configure(streamServices);
+    GenerationJobManager.initialize();
   });
 };
 
@@ -267,6 +281,15 @@ process.on('uncaughtException', (err) => {
         stack: err.stack,
       },
     );
+    return;
+  }
+
+  if (isEnabled(process.env.CONTINUE_ON_UNCAUGHT_EXCEPTION)) {
+    logger.error('Unhandled error encountered. The app will continue running.', {
+      name: err?.name,
+      message: err?.message,
+      stack: err?.stack,
+    });
     return;
   }
 

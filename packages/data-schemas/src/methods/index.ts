@@ -1,13 +1,17 @@
-import { createSessionMethods, type SessionMethods } from './session';
+import { createSessionMethods, DEFAULT_REFRESH_TOKEN_EXPIRY, type SessionMethods } from './session';
 import { createTokenMethods, type TokenMethods } from './token';
 import { createRoleMethods, type RoleMethods } from './role';
-import { createUserMethods, type UserMethods } from './user';
+import { createUserMethods, DEFAULT_SESSION_EXPIRY, type UserMethods } from './user';
+
+export { DEFAULT_REFRESH_TOKEN_EXPIRY, DEFAULT_SESSION_EXPIRY };
 import { createKeyMethods, type KeyMethods } from './key';
 import { createFileMethods, type FileMethods } from './file';
 /* Memories */
 import { createMemoryMethods, type MemoryMethods } from './memory';
 /* Agent Categories */
 import { createAgentCategoryMethods, type AgentCategoryMethods } from './agentCategory';
+/* Agent API Keys */
+import { createAgentApiKeyMethods, type AgentApiKeyMethods } from './agentApiKey';
 /* MCP Servers */
 import { createMCPServerMethods, type MCPServerMethods } from './mcpServer';
 /* Plugin Auth */
@@ -26,6 +30,7 @@ export type AllMethods = UserMethods &
   FileMethods &
   MemoryMethods &
   AgentCategoryMethods &
+  AgentApiKeyMethods &
   MCPServerMethods &
   UserGroupMethods &
   AclEntryMethods &
@@ -47,6 +52,7 @@ export function createMethods(mongoose: typeof import('mongoose')): AllMethods {
     ...createFileMethods(mongoose),
     ...createMemoryMethods(mongoose),
     ...createAgentCategoryMethods(mongoose),
+    ...createAgentApiKeyMethods(mongoose),
     ...createMCPServerMethods(mongoose),
     ...createAccessRoleMethods(mongoose),
     ...createUserGroupMethods(mongoose),
@@ -65,6 +71,7 @@ export type {
   FileMethods,
   MemoryMethods,
   AgentCategoryMethods,
+  AgentApiKeyMethods,
   MCPServerMethods,
   UserGroupMethods,
   AclEntryMethods,

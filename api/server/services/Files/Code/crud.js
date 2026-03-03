@@ -13,17 +13,22 @@ const MAX_FILE_SIZE = 150 * 1024 * 1024;
  * @returns {Promise<AxiosResponse>} A promise that resolves to a readable stream of the file content.
  * @throws {Error} If there's an error during the download process.
  */
-async function getCodeOutputDownloadStream(fileIdentifier, apiKey) {
+async function getCodeOutputDownloadStream(fileIdentifier, apiKey, userId = '') {
   try {
     const baseURL = getCodeBaseURL();
+    const [path, queryString] = fileIdentifier.split('?');
+    const queryParams = queryString ? Object.fromEntries(new URLSearchParams(queryString).entries()) : {};
+    const isUploadPath = path.startsWith('files/');
     /** @type {import('axios').AxiosRequestConfig} */
     const options = {
       method: 'get',
-      url: `${baseURL}/download/${fileIdentifier}`,
+      url: isUploadPath ? `${baseURL}/${path}` : `${baseURL}/download/${path}`,
+      params: queryParams,
       responseType: 'stream',
       headers: {
         'User-Agent': 'LibreChat/1.0',
         'X-API-Key': apiKey,
+        ...(userId ? { 'User-Id': userId } : {}),
       },
       timeout: 15000,
     };
@@ -54,8 +59,9 @@ async function getCodeOutputDownloadStream(fileIdentifier, apiKey) {
 async function uploadCodeEnvFile({ req, stream, filename, apiKey, entity_id = '' }) {
   try {
     const form = new FormData();
-    if (entity_id.length > 0) {
-      form.append('entity_id', entity_id);
+    const resolvedEntityId = entity_id.length > 0 ? entity_id : req.user?.id;
+    if (resolvedEntityId) {
+      form.append('entity_id', resolvedEntityId);
     }
     form.append('file', stream, filename);
 
@@ -75,18 +81,25 @@ async function uploadCodeEnvFile({ req, stream, filename, apiKey, entity_id = ''
 
     const response = await axios.post(`${baseURL}/upload`, form, options);
 
-    /** @type {{ message: string; session_id: string; files: Array<{ fileId: string; filename: string }> }} */
+    /** @type {{ message: string; session_id?: string; files?: Array<{ fileId: string; filename: string }>; file_id?: string }} */
     const result = response.data;
     if (result.message !== 'success') {
       throw new Error(`Error uploading file: ${result.message}`);
     }
 
-    const fileIdentifier = `${result.session_id}/${result.files[0].fileId}`;
-    if (entity_id.length === 0) {
+    let fileIdentifier = '';
+    if (result.file_id) {
+      fileIdentifier = `files/${result.file_id}`;
+    } else if (result.session_id && result.files?.length) {
+      fileIdentifier = `${result.session_id}/${result.files[0].fileId}`;
+    } else {
+      throw new Error('Unexpected upload response format');
+    }
+    if (!resolvedEntityId) {
       return fileIdentifier;
     }
 
-    return `${fileIdentifier}?entity_id=${entity_id}`;
+    return `${fileIdentifier}?entity_id=${resolvedEntityId}`;
   } catch (error) {
     throw new Error(
       logAxiosError({

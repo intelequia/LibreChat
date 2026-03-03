@@ -356,14 +356,21 @@ export const langSubset = [
 enum Languages {
   c = 'c',
   cpp = 'cpp',
+  csharp = 'csharp',
   d = 'd',
   f90 = 'f90',
   go = 'go',
+  html = 'html',
   java = 'java',
   js = 'js',
+  powershell = 'powershell',
   php = 'php',
   py = 'py',
+  r = 'r',
+  react = 'react',
   rs = 'rs',
+  ruby = 'ruby',
+  shell = 'shell',
   ts = 'ts',
 }
 
@@ -377,6 +384,11 @@ const languageAliases: Record<string, Languages | undefined> = {
   'c++': Languages.cpp,
   cplusplus: Languages.cpp,
 
+  // C#
+  cs: Languages.csharp,
+  csharp: Languages.csharp,
+  'c#': Languages.csharp,
+
   // D
   d: Languages.d,
 
@@ -389,6 +401,9 @@ const languageAliases: Record<string, Languages | undefined> = {
   go: Languages.go,
   golang: Languages.go,
 
+  // HTML
+  html: Languages.html,
+
   // Java
   java: Languages.java,
 
@@ -398,6 +413,11 @@ const languageAliases: Record<string, Languages | undefined> = {
   node: Languages.js,
   nodejs: Languages.js,
 
+  // PowerShell
+  powershell: Languages.powershell,
+  pwsh: Languages.powershell,
+  ps1: Languages.powershell,
+
   // PHP
   php: Languages.php,
 
@@ -406,9 +426,24 @@ const languageAliases: Record<string, Languages | undefined> = {
   python: Languages.py,
   python3: Languages.py,
 
+  // R
+  r: Languages.r,
+
+  // React
+  react: Languages.react,
+
   // Rust
   rs: Languages.rs,
   rust: Languages.rs,
+
+  // Ruby
+  rb: Languages.ruby,
+  ruby: Languages.ruby,
+
+  // Shell
+  shell: Languages.shell,
+  sh: Languages.shell,
+  bash: Languages.shell,
 
   // TypeScript
   ts: Languages.ts,

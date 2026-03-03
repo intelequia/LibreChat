@@ -18,7 +18,6 @@ const {
   findUser,
 } = require('~/models');
 const { getGraphApiToken } = require('~/server/services/GraphTokenService');
-const { getOAuthReconnectionManager } = require('~/config');
 const { getOpenIdConfig } = require('~/strategies');
 
 const registrationController = async (req, res) => {
@@ -66,29 +65,39 @@ const resetPasswordController = async (req, res) => {
 };
 
 const refreshController = async (req, res) => {
-  const refreshToken = req.headers.cookie ? cookies.parse(req.headers.cookie).refreshToken : null;
-  const token_provider = req.headers.cookie
-    ? cookies.parse(req.headers.cookie).token_provider
-    : null;
-  if (!refreshToken) {
-    /**
+  const parsedCookies = req.headers.cookie ? cookies.parse(req.headers.cookie) : {};
+  const token_provider = parsedCookies.token_provider;
+
+  if (token_provider === 'openid' && isEnabled(process.env.OPENID_REUSE_TOKENS)) {
+    /** For OpenID users, read refresh token from session to avoid large cookie issues */
+    const refreshToken = req.session?.openidTokens?.refreshToken || parsedCookies.refreshToken;
+
+    if (!refreshToken) {
+      /**
        * Custom event to track when refresh token is not provided
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-    global.appInsights.trackEvent({
-      name: 'Token Refresh',
-      properties: {
-        message:"Refresh token not provided",
-        refreshToken: refreshToken,
-      },
-    });
-    return res.status(200).send('Refresh token not provided');
-  }
-  if (token_provider === 'openid' && isEnabled(process.env.OPENID_REUSE_TOKENS) === true) {
+      if (global.appInsights) {
+        global.appInsights.trackEvent({
+          name: 'Token Refresh',
+          properties: {
+            message: "Refresh token not provided",
+            refreshToken: refreshToken,
+          },
+        });
+      }
+      return res.status(200).send('Refresh token not provided');
+    }
+
     try {
       const openIdConfig = getOpenIdConfig();
-      const tokenset = await openIdClient.refreshTokenGrant(openIdConfig, refreshToken);
+      const refreshParams = process.env.OPENID_SCOPE ? { scope: process.env.OPENID_SCOPE } : {};
+      const tokenset = await openIdClient.refreshTokenGrant(
+        openIdConfig,
+        refreshToken,
+        refreshParams,
+      );
       const claims = tokenset.claims();
       const { user, error, migration } = await findOpenIDUser({
         findUser,
@@ -122,7 +131,7 @@ const refreshController = async (req, res) => {
         );
       }
 
-      const token = setOpenIDAuthTokens(tokenset, res, user._id.toString(), refreshToken);
+      const token = setOpenIDAuthTokens(tokenset, req, res, user._id.toString(), refreshToken);
 
       user.federatedTokens = {
         access_token: tokenset.access_token,
@@ -137,6 +146,13 @@ const refreshController = async (req, res) => {
       return res.status(403).send('Invalid OpenID refresh token');
     }
   }
+
+  /** For non-OpenID users, read refresh token from cookies */
+  const refreshToken = parsedCookies.refreshToken;
+  if (!refreshToken) {
+    return res.status(200).send('Refresh token not provided');
+  }
+
   try {
     const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await getUserById(payload.id, '-password -__v -totpSecret -backupCodes');
@@ -146,14 +162,16 @@ const refreshController = async (req, res) => {
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-      global.appInsights.trackEvent({
-        name: 'Token Refresh',
-        properties: {
-          message:"user not found",
-          refreshToken: refreshToken,
-          payload: payload
-        },
-      });
+      if (global.appInsights) {
+        global.appInsights.trackEvent({
+          name: 'Token Refresh',
+          properties: {
+            message: "user not found",
+            refreshToken: refreshToken,
+            payload: payload
+          },
+        });
+      }
       return res.status(401).redirect('/login');
     }
 
@@ -176,17 +194,6 @@ const refreshController = async (req, res) => {
     if (session && session.expiration > new Date()) {
       const token = await setAuthTokens(userId, res, session);
 
-      // trigger OAuth MCP server reconnection asynchronously (best effort)
-      try {
-        void getOAuthReconnectionManager()
-          .reconnectServers(userId)
-          .catch((err) => {
-            logger.error('[refreshController] Error reconnecting OAuth MCP servers:', err);
-          });
-      } catch (err) {
-        logger.warn(`[refreshController] Cannot attempt OAuth MCP servers reconnection:`, err);
-      }
-
       res.status(200).send({ token, user });
     } else if (req?.query?.retry) {
       // Retrying from a refresh token request that failed (401)
@@ -196,16 +203,18 @@ const refreshController = async (req, res) => {
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-      global.appInsights.trackEvent({
-        name: 'Token Refresh',
-        properties: {
-          message:"No session found",
-          refreshToken: refreshToken,
-          payload: payload,
-          user: userId,
-          session: session,
-        },
-      });
+      if (global.appInsights) {
+        global.appInsights.trackEvent({
+          name: 'Token Refresh',
+          properties: {
+            message: "No session found",
+            refreshToken: refreshToken,
+            payload: payload,
+            user: userId,
+            session: session,
+          },
+        });
+      }
       res.status(403).send('No session found');
     } else if (payload.exp < Date.now() / 1000) {
 
@@ -214,16 +223,18 @@ const refreshController = async (req, res) => {
        * @Organization Intelequia
        * @Author Enrique M. Pedroza Castillo
        */
-      global.appInsights.trackEvent({
-        name: 'Token Refresh',
-        properties: {
-          message:"Expired refresh token",
-          refreshToken: refreshToken,
-          payload: payload,
-          user: userId,
-          session: session,
-        },
-      });
+      if (global.appInsights) {
+        global.appInsights.trackEvent({
+          name: 'Token Refresh',
+          properties: {
+            message: "Expired refresh token",
+            refreshToken: refreshToken,
+            payload: payload,
+            user: userId,
+            session: session,
+          },
+        });
+      }
       res.status(403).redirect('/login');
     } else {
 
@@ -235,7 +246,7 @@ const refreshController = async (req, res) => {
       global.appInsights.trackEvent({
         name: 'Token Refresh',
         properties: {
-          message:"Refresh token expired or not found for this user",
+          message: "Refresh token expired or not found for this user",
           refreshToken: refreshToken,
           payload: payload,
           user: userId,
@@ -254,7 +265,7 @@ const refreshController = async (req, res) => {
     global.appInsights.trackEvent({
       name: 'Token Refresh',
       properties: {
-        message:"Invalid refresh token",
+        message: "Invalid refresh token",
         error: err
       },
     });

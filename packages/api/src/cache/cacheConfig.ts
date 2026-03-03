@@ -17,11 +17,24 @@ if (USE_REDIS && !process.env.REDIS_URI) {
   throw new Error('USE_REDIS is enabled but REDIS_URI is not set.');
 }
 
+// USE_REDIS_STREAMS controls whether Redis is used for resumable stream job storage.
+// Defaults to true if USE_REDIS is enabled but USE_REDIS_STREAMS is not explicitly set.
+// Set to 'false' to use in-memory storage for streams while keeping Redis for other caches.
+const USE_REDIS_STREAMS =
+  process.env.USE_REDIS_STREAMS !== undefined
+    ? isEnabled(process.env.USE_REDIS_STREAMS)
+    : USE_REDIS;
+
 // Comma-separated list of cache namespaces that should be forced to use in-memory storage
 // even when Redis is enabled. This allows selective performance optimization for specific caches.
-const FORCED_IN_MEMORY_CACHE_NAMESPACES = process.env.FORCED_IN_MEMORY_CACHE_NAMESPACES
-  ? process.env.FORCED_IN_MEMORY_CACHE_NAMESPACES.split(',').map((key) => key.trim())
-  : [];
+// Defaults to CONFIG_STORE,APP_CONFIG so YAML-derived config stays per-container.
+// Set to empty string to force all namespaces through Redis.
+const FORCED_IN_MEMORY_CACHE_NAMESPACES =
+  process.env.FORCED_IN_MEMORY_CACHE_NAMESPACES !== undefined
+    ? process.env.FORCED_IN_MEMORY_CACHE_NAMESPACES.split(',')
+        .map((key) => key.trim())
+        .filter(Boolean)
+    : [CacheKeys.CONFIG_STORE, CacheKeys.APP_CONFIG];
 
 // Validate against CacheKeys enum
 if (FORCED_IN_MEMORY_CACHE_NAMESPACES.length > 0) {
@@ -60,6 +73,7 @@ const getRedisCA = (): string | null => {
 const cacheConfig = {
   FORCED_IN_MEMORY_CACHE_NAMESPACES,
   USE_REDIS,
+  USE_REDIS_STREAMS,
   REDIS_URI: process.env.REDIS_URI,
   REDIS_USERNAME: process.env.REDIS_USERNAME,
   REDIS_PASSWORD: process.env.REDIS_PASSWORD,

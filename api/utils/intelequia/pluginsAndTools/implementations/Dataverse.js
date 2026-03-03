@@ -135,18 +135,20 @@ class Dataverse extends Tool {
 
     const responseTokens = intelequiaCountTokens([response], model)
 
-    global.appInsights.trackEvent({
-      name: 'Plugin',
-      properties: {
-        toolName: "dataverse",
-        userEmail: userEmail,
-        assistantId: data.assistant ?? "",
-        queryTokens: queryTokens.prompt,
-        queryLength: query.length,
-        responseTokens: responseTokens.prompt,
-        pluginModel: model
-      },
-    });
+    if (global.appInsights) {
+      global.appInsights.trackEvent({
+        name: 'Plugin',
+        properties: {
+          toolName: "dataverse",
+          userEmail: userEmail,
+          assistantId: data.assistant ?? "",
+          queryTokens: queryTokens.prompt,
+          queryLength: query.length,
+          responseTokens: responseTokens.prompt,
+          pluginModel: model
+        },
+      });
+    }
 
     return response;
   }

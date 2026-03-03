@@ -8,23 +8,33 @@ var _enum = require('../common/enum.cjs');
 
 dotenv.config();
 const imageExtRegex = /\.(jpg|jpeg|png|gif|webp)$/i;
-const getCodeBaseURL = () => env.getEnvironmentVariable(_enum.EnvVar.CODE_BASEURL) ?? _enum.Constants.OFFICIAL_CODE_BASEURL;
+const getCodeBaseURL = () => env.getEnvironmentVariable('CODE_INTERPRETER_API_URL')
+    ?? env.getEnvironmentVariable(_enum.EnvVar.CODE_BASEURL)
+    ?? 'http://code-interpreter-manager:3000';
 const imageMessage = ' - the image is already displayed to the user';
 const otherMessage = ' - the file is already downloaded by the user';
 const CodeExecutionToolSchema = zod.z.object({
     lang: zod.z.enum([
         'py',
+        'python',
         'js',
+        'javascript',
         'ts',
-        'c',
-        'cpp',
-        'java',
-        'php',
-        'rs',
-        'go',
-        'd',
-        'f90',
+        'typescript',
+        'sh',
+        'shell',
+        'bash',
         'r',
+        'rb',
+        'ruby',
+        'java',
+        'cs',
+        'csharp',
+        'powershell',
+        'pwsh',
+        'ps1',
+        'html',
+        'react',
     ])
         .describe('The programming language or runtime to execute the code in.'),
     code: zod.z.string()
@@ -33,39 +43,44 @@ const CodeExecutionToolSchema = zod.z.object({
 - Input code **IS ALREADY** displayed to the user, so **DO NOT** repeat it in your response unless asked.
 - Output code **IS NOT** displayed to the user, so **DO** write all desired output explicitly.
 - IMPORTANT: You MUST explicitly print/output ALL results you want the user to see.
+- Uploaded files are available at \`/app/files/uploads/\` (e.g. \`/app/files/uploads/data.csv\`).
+- Save generated files to \`/app/files/\` (e.g. \`/app/files/chart.png\`). They are delivered automatically.
 - py: This is not a Jupyter notebook environment. Use \`print()\` for all outputs.
-- py: Matplotlib: Use \`plt.savefig()\` to save plots as files.
+- py: Matplotlib: Use \`plt.savefig('/app/files/<name>.png')\` to save plots as files.
 - js: use the \`console\` or \`process\` methods for all outputs.
 - r: IMPORTANT: No X11 display available. ALL graphics MUST use Cairo library (library(Cairo)).
 - Other languages: use appropriate output functions.`),
     args: zod.z.array(zod.z.string()).optional()
         .describe('Additional arguments to execute the code with. This should only be used if the input code requires additional arguments to run.'),
 });
-const EXEC_ENDPOINT = `${getCodeBaseURL()}/run`;
 function createCodeExecutionTool(params = {}) {
     const apiKey = params[_enum.EnvVar.CODE_API_KEY] ?? params.apiKey ?? env.getEnvironmentVariable(_enum.EnvVar.CODE_API_KEY) ?? '';
-    const userEmail = params.user_email
+    const userEmail = params.user_email || '';
+    const userId = params.user_id || '';
     if (!apiKey) {
         throw new Error('No API key provided for code execution tool.');
     }
+    const execEndpoint = `${getCodeBaseURL()}/run`;
     const description = `
 Runs code and returns stdout/stderr output from a stateless execution environment, similar to running scripts in a command-line interface. Each execution is isolated and independent.
 
 Usage:
 - No network access available.
-- Generated files are automatically delivered; **DO NOT** provide download links.
+- Generated files saved to /app/files/ are automatically delivered to the user as attachments.
+- **DO NOT** provide download links or file paths to the user. Files are delivered automatically.
+- If the user asks for a download link, explain that files appear as attachments in the conversation.
 - NEVER use this tool to execute malicious code.
 `.trim();
     return tools.tool(async ({ lang, code, ...rest }) => {
         const postData = {
-            user_email:userEmail,
-            language:lang,
+            user_id: userId,
+            user_email: userEmail,
+            language: lang,
             code,
             ...rest,
-            ...params,
         };
         try {
-            const response = await fetch("http://intelewriter-open-interpreter:8000/run", {
+            const response = await fetch(execEndpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -78,10 +93,18 @@ Usage:
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             const result = await response.json();
-            console.log(result)
             let formattedOutput = '';
-            if (result.output[0].content) {
-                formattedOutput += `stdout:\n${result.output[0].content}\n`;
+            if (result.output && Array.isArray(result.output) && result.output.length > 0) {
+                const outputText = result.output
+                    .filter(entry => entry && entry.content)
+                    .map(entry => entry.content)
+                    .join('');
+                if (outputText) {
+                    formattedOutput += `stdout:\n${outputText}\n`;
+                }
+                else {
+                    formattedOutput += 'stdout: Empty. Ensure you\'re writing output explicitly.\n';
+                }
             }
             else {
                 formattedOutput += 'stdout: Empty. Ensure you\'re writing output explicitly.\n';
@@ -100,9 +123,9 @@ Usage:
                     }
                 }
                 return [formattedOutput.trim(), {
-                        session_id: result.session_id,
-                        files: result.files,
-                    }];
+                    session_id: result.session_id,
+                    files: result.files,
+                }];
             }
             return [formattedOutput.trim(), { session_id: result.session_id }];
         }

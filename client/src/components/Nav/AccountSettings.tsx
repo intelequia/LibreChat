@@ -1,7 +1,9 @@
 import { useState, memo, useRef } from 'react';
 import * as Select from '@ariakit/react/select';
-import { FileText, LogOut } from 'lucide-react';
+import { FileText, LogOut, Shield } from 'lucide-react';
 import { LinkIcon, GearIcon, DropdownMenuSeparator, Avatar } from '@librechat/client';
+// Intelequia Admin Panel
+import { SystemRoles } from 'librechat-data-provider';
 import { MyFilesModal } from '~/components/Chat/Input/Files/MyFilesModal';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
@@ -25,7 +27,7 @@ function AccountSettings() {
         ref={accountSettingsButtonRef}
         aria-label={localize('com_nav_account_settings')}
         data-testid="nav-user"
-        className="mt-text-sm flex h-auto w-full items-center gap-2 rounded-xl p-2 text-sm transition-all duration-200 ease-in-out hover:bg-surface-hover aria-[expanded=true]:bg-surface-hover"
+        className="mt-text-sm flex h-auto w-full items-center gap-2 rounded-xl p-2 text-sm transition-all duration-200 ease-in-out hover:bg-surface-active-alt aria-[expanded=true]:bg-surface-active-alt"
       >
         <div className="-ml-0.9 -mt-0.8 h-8 w-8 flex-shrink-0">
           <div className="relative flex">
@@ -40,7 +42,7 @@ function AccountSettings() {
         </div>
       </Select.Select>
       <Select.SelectPopover
-        className="popover-ui w-[305px] rounded-lg md:w-[235px]"
+        className="account-settings-popover popover-ui z-[125] w-[305px] rounded-lg md:w-[244px]"
         style={{
           transformOrigin: 'bottom',
           translate: '0 -4px',
@@ -75,6 +77,17 @@ function AccountSettings() {
           >
             <LinkIcon aria-hidden="true" />
             {localize('com_nav_help_faq')}
+          </Select.SelectItem>
+        )}
+        {/* Intelequia Admin Panel */}
+        {user?.role === SystemRoles.ADMIN && (
+          <Select.SelectItem
+            value=""
+            onClick={() => window.open('/admin', '_blank')}
+            className="select-item text-sm"
+          >
+            <Shield className="icon-md" aria-hidden="true" />
+            {localize('com_nav_go_to_admin_panel')}
           </Select.SelectItem>
         )}
         <Select.SelectItem

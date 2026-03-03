@@ -69,16 +69,18 @@ class Sharepoint extends Tool {
     const userQuery = data.query ?? data;
     const search = await this.createClient(userEmail, userQuery);
 
-    global.appInsights.trackEvent({
-      name: 'Plugin',
-      properties: {
-        toolName: "sharepoint",
-        userEmail: userEmail,
-        assistantId: data.assistant ?? "",
-        tokens: 0,
-        siteURL: this.sharepointSiteURL
-      },
-    });
+    if (global.appInsights) {
+      global.appInsights.trackEvent({
+        name: 'Plugin',
+        properties: {
+          toolName: "sharepoint",
+          userEmail: userEmail,
+          assistantId: data.assistant ?? "",
+          tokens: 0,
+          siteURL: this.sharepointSiteURL
+        },
+      });
+    }
     return search
   }
 }

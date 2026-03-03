@@ -27,14 +27,16 @@ const createAssistant = async (req, res) => {
      * @Organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */
-    global.appInsights.trackEvent({
-      name: 'AssistantCreated',
-      properties: {
-        userId: req.user.id,
-        userEmail: req.user.email,
-        assistantName: req.body.name,
-      },
-    });
+    if (global.appInsights) {
+      global.appInsights.trackEvent({
+        name: 'AssistantCreated',
+        properties: {
+          userId: req.user.id,
+          userEmail: req.user.email,
+          assistantName: req.body.name,
+        },
+      });
+    }
 
     const {
       tools = [],
@@ -46,7 +48,7 @@ const createAssistant = async (req, res) => {
     delete assistantData.conversation_starters;
     delete assistantData.append_current_datetime;
 
-    const toolDefinitions = await getCachedTools();
+    const toolDefinitions = (await getCachedTools()) ?? {};
 
     assistantData.tools = tools
       .map((tool) => {
@@ -147,14 +149,16 @@ const patchAssistant = async (req, res) => {
      * @Organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */
-    global.appInsights.trackEvent({
-      name: 'AssistantUpdated',
-      properties: {
-        userId: req.user.id,
-        userEmail: req.user.email,
-        assistantName: req.body.name,
-      },
-    });
+    if (global.appInsights) {
+      global.appInsights.trackEvent({
+        name: 'AssistantUpdated',
+        properties: {
+          userId: req.user.id,
+          userEmail: req.user.email,
+          assistantName: req.body.name,
+        },
+      });
+    }
 
     const assistant_id = req.params.id;
     const {
@@ -164,7 +168,7 @@ const patchAssistant = async (req, res) => {
       ...updateData
     } = req.body;
 
-    const toolDefinitions = await getCachedTools();
+    const toolDefinitions = (await getCachedTools()) ?? {};
 
     updateData.tools = (updateData.tools ?? [])
       .map(async (tool) => {
@@ -257,14 +261,16 @@ const deleteAssistant = async (req, res) => {
      * @Organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */
-    global.appInsights.trackEvent({
-      name: 'AssistantDeleted',
-      properties: {
-        userId: req.user.id,
-        userEmail: req.user.email,
-        assistantName: req.params.id,
-      },
-    });
+    if (global.appInsights) {
+      global.appInsights.trackEvent({
+        name: 'AssistantDeleted',
+        properties: {
+          userId: req.user.id,
+          userEmail: req.user.email,
+          assistantName: req.params.id,
+        },
+      });
+    }
 
     const assistant_id = req.params.id;
     const deletionStatus = await openai.beta.assistants.delete(assistant_id);

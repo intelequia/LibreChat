@@ -39,6 +39,7 @@ export enum Providers {
   MISTRALAI = 'mistralai',
   MISTRAL = 'mistral',
   DEEPSEEK = 'deepseek',
+  MOONSHOT = 'moonshot',
   OPENROUTER = 'openrouter',
   XAI = 'xai',
 }
@@ -50,12 +51,14 @@ export const documentSupportedProviders = new Set<string>([
   EModelEndpoint.anthropic,
   EModelEndpoint.openAI,
   EModelEndpoint.custom,
-  EModelEndpoint.azureOpenAI,
+  // handled in AttachFileMenu and DragDropModal since azureOpenAI only supports documents with Use Responses API set to true
+  // EModelEndpoint.azureOpenAI,
   EModelEndpoint.google,
   Providers.VERTEXAI,
   Providers.MISTRALAI,
   Providers.MISTRAL,
   Providers.DEEPSEEK,
+  Providers.MOONSHOT,
   Providers.OPENROUTER,
   Providers.XAI,
 ]);
@@ -67,6 +70,7 @@ const openAILikeProviders = new Set<string>([
   Providers.MISTRALAI,
   Providers.MISTRAL,
   Providers.DEEPSEEK,
+  Providers.MOONSHOT,
   Providers.OPENROUTER,
   Providers.XAI,
 ]);
@@ -94,10 +98,14 @@ export enum BedrockProviders {
   Amazon = 'amazon',
   Anthropic = 'anthropic',
   Cohere = 'cohere',
+  DeepSeek = 'deepseek',
   Meta = 'meta',
   MistralAI = 'mistral',
+  Moonshot = 'moonshot',
+  MoonshotAI = 'moonshotai',
+  OpenAI = 'openai',
   StabilityAI = 'stability',
-  DeepSeek = 'deepseek',
+  ZAI = 'zai',
 }
 
 export const getModelKey = (endpoint: EModelEndpoint | string, model: string) => {
@@ -173,6 +181,15 @@ export enum ReasoningEffort {
   low = 'low',
   medium = 'medium',
   high = 'high',
+  xhigh = 'xhigh',
+}
+
+export enum AnthropicEffort {
+  unset = '',
+  low = 'low',
+  medium = 'medium',
+  high = 'high',
+  max = 'max',
 }
 
 export enum ReasoningSummary {
@@ -203,6 +220,7 @@ export const imageDetailValue = {
 
 export const eImageDetailSchema = z.nativeEnum(ImageDetail);
 export const eReasoningEffortSchema = z.nativeEnum(ReasoningEffort);
+export const eAnthropicEffortSchema = z.nativeEnum(AnthropicEffort);
 export const eReasoningSummarySchema = z.nativeEnum(ReasoningSummary);
 export const eVerbositySchema = z.nativeEnum(Verbosity);
 
@@ -230,6 +248,7 @@ export const defaultAgentFormValues = {
   model: '',
   model_parameters: {},
   tools: [],
+  tool_options: {},
   provider: {},
   projectIds: [],
   edges: [],
@@ -383,6 +402,10 @@ export const anthropicSettings = {
     step: 1 as const,
     default: DEFAULT_MAX_OUTPUT,
     reset: (modelName: string) => {
+      if (/claude-opus[-.]?(?:4[-.]?(?:[6-9]|\d{2,})|[5-9]|\d{2,})/.test(modelName)) {
+        return ANTHROPIC_MAX_OUTPUT;
+      }
+
       if (/claude-(?:sonnet|haiku)[-.]?[4-9]/.test(modelName)) {
         return CLAUDE_4_64K_MAX_OUTPUT;
       }
@@ -398,6 +421,13 @@ export const anthropicSettings = {
       return DEFAULT_MAX_OUTPUT;
     },
     set: (value: number, modelName: string) => {
+      if (/claude-opus[-.]?(?:4[-.]?(?:[6-9]|\d{2,})|[5-9]|\d{2,})/.test(modelName)) {
+        if (value > ANTHROPIC_MAX_OUTPUT) {
+          return ANTHROPIC_MAX_OUTPUT;
+        }
+        return value;
+      }
+
       if (/claude-(?:sonnet|haiku)[-.]?[4-9]/.test(modelName) && value > CLAUDE_4_64K_MAX_OUTPUT) {
         return CLAUDE_4_64K_MAX_OUTPUT;
       }
@@ -445,6 +475,16 @@ export const anthropicSettings = {
       step: 1 as const,
       default: LEGACY_ANTHROPIC_MAX_OUTPUT,
     },
+  },
+  effort: {
+    default: AnthropicEffort.unset,
+    options: [
+      AnthropicEffort.unset,
+      AnthropicEffort.low,
+      AnthropicEffort.medium,
+      AnthropicEffort.high,
+      AnthropicEffort.max,
+    ],
   },
   web_search: {
     default: false as const,
@@ -704,6 +744,8 @@ export const tConversationSchema = z.object({
   verbosity: eVerbositySchema.optional().nullable(),
   /* OpenAI: use Responses API */
   useResponsesApi: z.boolean().optional(),
+  /* Anthropic: Effort control */
+  effort: eAnthropicEffortSchema.optional().nullable(),
   /* OpenAI Responses API / Anthropic API / Google API */
   web_search: z.boolean().optional(),
   /* disable streaming */
@@ -826,6 +868,7 @@ export const tQueryParamsSchema = tConversationSchema
     promptCache: true,
     thinking: true,
     thinkingBudget: true,
+    effort: true,
     /** @endpoints bedrock */
     region: true,
     /** @endpoints bedrock */
@@ -909,7 +952,7 @@ export const googleBaseSchema = tConversationSchema.pick({
 });
 
 export const googleSchema = googleBaseSchema
-  .transform((obj: Partial<TConversation>) => removeNullishValues(obj))
+  .transform((obj: Partial<TConversation>) => removeNullishValues(obj, true))
   .catch(() => ({}));
 
 /**
@@ -1107,7 +1150,7 @@ export const compactGoogleSchema = googleBaseSchema
       delete newObj.topK;
     }
 
-    return removeNullishValues(newObj);
+    return removeNullishValues(newObj, true);
   })
   .catch(() => ({}));
 
@@ -1123,6 +1166,7 @@ export const anthropicBaseSchema = tConversationSchema.pick({
   promptCache: true,
   thinking: true,
   thinkingBudget: true,
+  effort: true,
   artifacts: true,
   iconURL: true,
   greeting: true,

@@ -151,16 +151,18 @@ class MicrosoftGraph extends Tool {
     const search = await this.createClient(userEmail, response.url);
     const queryTokens = intelequiaCountTokens([query, search], model)
 
-    global.appInsights.trackEvent({
-      name: 'Plugin',
-      properties: {
-        toolName: "microsoft-graph",
-        userEmail: userEmail,
-        assistantId: data.assistant ?? "",
-        tokens: queryTokens.prompt,
-        pluginModel: model
-      },
-    });
+    if (global.appInsights) {
+      global.appInsights.trackEvent({
+        name: 'Plugin',
+        properties: {
+          toolName: "microsoft-graph",
+          userEmail: userEmail,
+          assistantId: data.assistant ?? "",
+          tokens: queryTokens.prompt,
+          pluginModel: model
+        },
+      });
+    }
     return search
   }
 }

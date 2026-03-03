@@ -32,11 +32,11 @@ export type FavoriteItem = {
 };
 
 export function getFavorites(): Promise<FavoriteItem[]> {
-  return request.get('/api/user/settings/favorites');
+  return request.get(`${endpoints.apiBaseUrl()}/api/user/settings/favorites`);
 }
 
 export function updateFavorites(favorites: FavoriteItem[]): Promise<FavoriteItem[]> {
-  return request.post('/api/user/settings/favorites', { favorites });
+  return request.post(`${endpoints.apiBaseUrl()}/api/user/settings/favorites`, { favorites });
 }
 
 export function getSharedMessages(shareId: string): Promise<t.TSharedMessagesResponse> {
@@ -79,6 +79,20 @@ export function updateUserKey(payload: t.TUpdateUserKeyRequest) {
   }
 
   return request.put(endpoints.keys(), payload);
+}
+
+export function getAgentApiKeys(): Promise<t.TAgentApiKeyListResponse> {
+  return request.get(endpoints.apiKeys());
+}
+
+export function createAgentApiKey(
+  payload: t.TAgentApiKeyCreateRequest,
+): Promise<t.TAgentApiKeyCreateResponse> {
+  return request.post(endpoints.apiKeys(), payload);
+}
+
+export function deleteAgentApiKey(id: string): Promise<void> {
+  return request.delete(endpoints.apiKeyById(id));
 }
 
 export function getPresets(): Promise<s.TPreset[]> {
@@ -162,6 +176,14 @@ export const updateUserPlugins = (payload: t.TUpdateUserPlugins) => {
 
 export const reinitializeMCPServer = (serverName: string) => {
   return request.post(endpoints.mcpReinitialize(serverName));
+};
+
+export const bindMCPOAuth = (serverName: string): Promise<{ success: boolean }> => {
+  return request.post(endpoints.mcpOAuthBind(serverName));
+};
+
+export const bindActionOAuth = (actionId: string): Promise<{ success: boolean }> => {
+  return request.post(endpoints.actionOAuthBind(actionId));
 };
 
 export const getMCPConnectionStatus = (): Promise<q.MCPConnectionStatusResponse> => {
@@ -775,11 +797,11 @@ export function updateConversation(
 export function archiveConversation(
   payload: t.TArchiveConversationRequest,
 ): Promise<t.TArchiveConversationResponse> {
-  return request.post(endpoints.updateConversation(), { arg: payload });
+  return request.post(endpoints.archiveConversation(), { arg: payload });
 }
 
 export function genTitle(payload: m.TGenTitleRequest): Promise<m.TGenTitleResponse> {
-  return request.post(endpoints.genTitle(), payload);
+  return request.get(endpoints.genTitle(payload.conversationId));
 }
 
 export const listMessages = (params?: q.MessagesListParams): Promise<q.MessagesListResponse> => {
@@ -809,6 +831,12 @@ export const editArtifact = async ({
   ...params
 }: m.TEditArtifactRequest): Promise<m.TEditArtifactResponse> => {
   return request.post(endpoints.messagesArtifacts(messageId), params);
+};
+
+export const branchMessage = async (
+  payload: m.TBranchMessageRequest,
+): Promise<m.TBranchMessageResponse> => {
+  return request.post(endpoints.messagesBranch(), payload);
 };
 
 export function getMessagesByConvoId(conversationId: string): Promise<s.TMessage[]> {
@@ -924,6 +952,15 @@ export function updateMCPServersPermissions(
   variables: m.UpdateMCPServersPermVars,
 ): Promise<m.UpdatePermResponse> {
   return request.put(endpoints.updateMCPServersPermissions(variables.roleName), variables.updates);
+}
+
+export function updateRemoteAgentsPermissions(
+  variables: m.UpdateRemoteAgentsPermVars,
+): Promise<m.UpdatePermResponse> {
+  return request.put(
+    endpoints.updateRemoteAgentsPermissions(variables.roleName),
+    variables.updates,
+  );
 }
 
 export function updateMarketplacePermissions(
@@ -1092,3 +1129,12 @@ export function getGraphApiToken(params: q.GraphTokenParams): Promise<q.GraphTok
 export function getDomainServerBaseUrl(): string {
   return `${endpoints.apiBaseUrl()}/api`;
 }
+
+/* Active Jobs */
+export interface ActiveJobsResponse {
+  activeJobIds: string[];
+}
+
+export const getActiveJobs = (): Promise<ActiveJobsResponse> => {
+  return request.get(endpoints.activeJobs());
+};
