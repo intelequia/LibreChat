@@ -574,7 +574,23 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
         throw new Error('Invalid admin role token kind');
     }
 
-    const adminRoles = get(adminRoleObject, adminRoleParameterPath);
+    let adminRoles = get(adminRoleObject, adminRoleParameterPath);
+
+    // Handle Azure AD group overage for admin role groups: when hasgroups or _claim_* indicate overage,
+    // resolve groups via Microsoft Graph instead of relying on token group values.
+    if (
+      adminRoleTokenKind === 'id' &&
+      adminRoleParameterPath === 'groups' &&
+      adminRoleObject &&
+      (adminRoleObject.hasgroups ||
+        (adminRoleObject._claim_names?.groups &&
+          adminRoleObject._claim_sources?.[adminRoleObject._claim_names.groups]))
+    ) {
+      const overageGroups = await resolveGroupsFromOverage(tokenset.access_token);
+      if (overageGroups) {
+        adminRoles = overageGroups;
+      }
+    }
 
     if (
       adminRoles &&
