@@ -76,14 +76,13 @@ function AccountSettings() {
         )}
         {/* Intelequia Admin Panel */}
         {user?.role === SystemRoles.ADMIN && (
-          <Select.SelectItem
-            value=""
+          <Menu.MenuItem
             onClick={() => window.open('/admin', '_blank')}
             className="select-item text-sm"
           >
             <Shield className="icon-md" aria-hidden="true" />
             {localize('com_nav_go_to_admin_panel')}
-          </Select.SelectItem>
+          </Menu.MenuItem>
         )}
         <Menu.MenuItem onClick={() => setShowSettings(true)} className="select-item text-sm">
           <GearIcon className="icon-md" aria-hidden="true" />

@@ -1,6 +1,6 @@
 import React, { FC, useContext, useEffect, useState } from 'react';
 import './businessHeaderStyles.css';
-import { ThemeContext } from '@librechat/client';
+import { ThemeContext, isDark } from '@librechat/client';
 
 interface StartupConfig {
   businessChatTitle?: string;
@@ -14,13 +14,32 @@ interface StartupConfig {
 
 const BusinessHeader: FC = () => {
   const { theme } = useContext(ThemeContext);
+  const [darkMode, setDarkMode] = useState<boolean>(isDark(theme));
   const [businessName, setBusinessName] = useState<string>("");
   const [logoURL, setLogoURL] = useState<string>("");
-  const [data, setData] = useState<StartupConfig | null>(null); 
+  const [data, setData] = useState<StartupConfig | null>(null);
   const [backgroundLight, setBackgroundLight] = useState<string>("");
   const [backgroundDark, setBackgroundDark] = useState<string>("");
   const [titleLight, setTitleLight] = useState<string>("");
   const [titleDark, setTitleDark] = useState<string>("");
+
+  // Actualizar darkMode cuando cambie el tema o la preferencia del sistema
+  useEffect(() => {
+    setDarkMode(isDark(theme));
+
+    // Si el tema es 'system', escuchar cambios en la preferencia del sistema
+    if (theme === 'system') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleChange = (e: MediaQueryListEvent) => {
+        setDarkMode(e.matches);
+      };
+
+      mediaQuery.addEventListener('change', handleChange);
+      return () => {
+        mediaQuery.removeEventListener('change', handleChange);
+      };
+    }
+  }, [theme]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -36,10 +55,10 @@ const BusinessHeader: FC = () => {
         if (!response.ok) {
           throw new Error('Network response was not ok');
         }
-        
-        const result: StartupConfig = await response.json(); 
+
+        const result: StartupConfig = await response.json();
         console.log(response);
-        setData(result);  
+        setData(result);
       } catch (error) {
         console.log(error);
       }
@@ -50,21 +69,21 @@ const BusinessHeader: FC = () => {
 
   useEffect(() => {
     if (data) {
-      const logo = (theme === 'dark')? data.businessChatLogoDark : data.businessChatLogo
-      setBusinessName(data.businessChatTitle || ""); 
-      setLogoURL( logo || ""); 
+      const logo = darkMode ? data.businessChatLogoDark : data.businessChatLogo;
+      setBusinessName(data.businessChatTitle || "");
+      setLogoURL(logo || "");
       setBackgroundLight(data.businessChatBackgroundLight || "");
       setBackgroundDark(data.businessChatBackgroundDark || "");
       setTitleLight(data.businessChatTitleLight || "");
       setTitleDark(data.businessChatTitleDark || "");
     }
-  }, [data]);
+  }, [data, darkMode]);
 
- 
+
   return (
-    <div id="chat_title" className="business-title" style={{backgroundColor:theme === 'dark' ?backgroundDark:backgroundLight}}>
-      <img src={logoURL} className="chat-logo" alt="Logo"/>
-      <p className= "business-name text-text-primary" style={{color:theme === 'dark' ? titleDark:titleLight}}>
+    <div id="chat_title" className="business-title" style={{ backgroundColor: darkMode ? backgroundDark : backgroundLight }}>
+      <img src={logoURL} className="chat-logo" alt="Logo" />
+      <p className="business-name text-text-primary" style={{ color: darkMode ? titleDark : titleLight }}>
         {businessName}
       </p>
     </div>

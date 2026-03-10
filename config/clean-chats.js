@@ -2,7 +2,7 @@
 const path = require('path');
 const fs = require('fs').promises;
 const mongoose = require('mongoose');
-const { Conversation, Message, File, Agent, Assistant } = require('@librechat/data-schemas').createModels(mongoose);
+const { Conversation, Message, File, Agent, Assistant, SharedLink } = require('@librechat/data-schemas').createModels(mongoose);
 const { FileContext } = require('librechat-data-provider');
 require('module-alias')({ base: path.resolve(__dirname, '..', 'api') });
 const { askQuestion, silentExit } = require('./helpers');
@@ -509,6 +509,11 @@ function displayDetailedInfo(sampleData, cutoffDate) {
       conversationId: { $in: conversationIds }
     }) : 0;
 
+    // Count SharedLinks from conversations that will be deleted
+    const sharedLinkCount = conversationIds.length > 0 ? await SharedLink.countDocuments({
+      conversationId: { $in: conversationIds }
+    }) : 0;
+
     // Only count files that are safe to delete:
     // 1. Files older than cutoff date
     // 2. With context 'message_attachment' (user uploaded files)
@@ -532,7 +537,7 @@ function displayDetailedInfo(sampleData, cutoffDate) {
     const uploadsPath = path.join(__dirname, '..', 'uploads');
     const uploadsStats = await getDirectoryStats(uploadsPath);
 
-    if (conversationCount === 0 && fileCount === 0 && uploadsStats.count === 0) {
+    if (conversationCount === 0 && fileCount === 0 && uploadsStats.count === 0 && sharedLinkCount === 0) {
       console.green(`✔ No data older than ${days} days found for safe deletion.`);
       console.white('');
       console.cyan('📋 Safety Summary:');
@@ -549,7 +554,7 @@ function displayDetailedInfo(sampleData, cutoffDate) {
       try {
         await inteleLog('========================================');
         await inteleLog('Intelequia cleanup job completed - no data to delete');
-        await inteleLog(`STATS: Chats deleted: 0 | Messages deleted: 0 | Files deleted: 0`);
+        await inteleLog(`STATS: Chats deleted: 0 | Messages deleted: 0 | Shared links deleted: 0 | Files deleted: 0`);
         await inteleLog(`PROTECTED: Archived chats: ${archivedCount} (would be deleted but archived) | Protected files: ${protectedFilesCount} (would be deleted but in use by agents/assistants or in archived chats)`);
         await inteleLog(`CONFIG: Cleanup interval: ${days} days`);
         await inteleLog(`DETAILS: Cutoff date: ${cutoffDate.toISOString().split('T')[0]} | Files in use by agents/assistants: ${filesInUse.size} | Files in archived chats: ${filesInArchivedChats.size}`);
@@ -565,6 +570,7 @@ function displayDetailedInfo(sampleData, cutoffDate) {
     console.white(`  • Database:`);
     console.white(`    - Conversations: ${conversationCount.toLocaleString()}`);
     console.white(`    - Messages (in old conversations): ${messageCount.toLocaleString()}`);
+    console.white(`    - Shared links (from old conversations): ${sharedLinkCount.toLocaleString()}`);
     console.white(`    - User file records (message attachments): ${fileCount.toLocaleString()}`);
     console.white(`  • File system:`);
     console.white(`    - Upload files (total, will filter safely): ${uploadsStats.count.toLocaleString()} (${formatBytes(uploadsStats.size)})`);
@@ -602,6 +608,7 @@ function displayDetailedInfo(sampleData, cutoffDate) {
 ❌ WILL BE DELETED:
    • Conversations older than ${days} days (not archived)
    • Messages in old non-archived conversations
+   • Shared links from old non-archived conversations
    • User message attachment files older than ${days} days (not in use by agents/assistants and not in archived chats)
 
 Continue? (y/N)`;
@@ -653,6 +660,13 @@ Continue? (y/N)`;
     console.cyan('Deleting old conversations (excluding archived)...');
     const conversationResult = await Conversation.deleteMany(conversationQueryForDeletion);
     console.green(`✔ Deleted ${conversationResult.deletedCount.toLocaleString()} conversations (archived chats protected)`);
+
+    // Delete SharedLinks that belong to deleted conversations
+    console.cyan('Deleting shared links from old conversations...');
+    const sharedLinkResult = conversationIdsForDeletion.length > 0 ? await SharedLink.deleteMany({
+      conversationId: { $in: conversationIdsForDeletion }
+    }) : { deletedCount: 0 };
+    console.green(`✔ Deleted ${sharedLinkResult.deletedCount.toLocaleString()} shared links`);
 
     // Delete ONLY safe user file records (message attachments not in use by agents/assistants and not in archived chats)
     console.cyan('Deleting old user file records (message attachments only, not in archived chats)...');
@@ -722,6 +736,7 @@ Continue? (y/N)`;
     console.yellow('🗂️  Database Cleanup Results:');
     console.white(`   • Conversations deleted: ${conversationResult.deletedCount.toLocaleString()}`);
     console.white(`   • Messages deleted: ${messageResult.deletedCount.toLocaleString()}`);
+    console.white(`   • Shared links deleted: ${sharedLinkResult.deletedCount.toLocaleString()}`);
     console.white(`   • User file records deleted: ${fileResult.deletedCount.toLocaleString()}`);
     console.white('');
     console.yellow('💾 File System Cleanup Results:');
@@ -743,7 +758,7 @@ Continue? (y/N)`;
     console.white(`   • Only deleted: User message attachments older than ${days} days (not in use and not in archived chats)`);
     console.white('');
     console.yellow('📈 Total Impact:');
-    const totalItems = conversationResult.deletedCount + messageResult.deletedCount + fileResult.deletedCount + deletedFilesCount;
+    const totalItems = conversationResult.deletedCount + messageResult.deletedCount + sharedLinkResult.deletedCount + fileResult.deletedCount + deletedFilesCount;
     console.white(`   • Total items removed: ${totalItems.toLocaleString()}`);
     console.white(`   • Total space saved: ${formatBytes(deletedFilesSize)}`);
     console.white(`   • Auto-confirm mode: ${autoConfirm ? 'Enabled' : 'Disabled'}`);
@@ -754,7 +769,7 @@ Continue? (y/N)`;
     try {
       await inteleLog('========================================');
       await inteleLog('Intelequia cleanup job completed successfully');
-      await inteleLog(`STATS: Chats deleted: ${conversationResult.deletedCount} | Messages deleted: ${messageResult.deletedCount} | Files deleted: ${deletedFilesCount}`);
+      await inteleLog(`STATS: Chats deleted: ${conversationResult.deletedCount} | Messages deleted: ${messageResult.deletedCount} | Shared links deleted: ${sharedLinkResult.deletedCount} | Files deleted: ${deletedFilesCount}`);
       await inteleLog(`PROTECTED: Archived chats: ${archivedCount} (would be deleted but archived) | Protected files: ${finalProtectedFilesCount} (would be deleted but in use by agents/assistants or in archived chats)`);
       await inteleLog(`CONFIG: Cleanup interval: ${days} days`);
       await inteleLog(`DETAILS: Cutoff date: ${cutoffDate.toISOString().split('T')[0]} | Space freed: ${formatBytes(deletedFilesSize)} | Files in use by agents/assistants: ${filesInUseForDeletion.size} | Files in archived chats: ${filesInArchivedChatsForDeletion.size}`);
