@@ -25,6 +25,11 @@ export class ConnectionsRepository {
     this.oauthOpts = oauthOpts;
   }
 
+  /** Returns the number of active connections in this repository */
+  public getConnectionCount(): number {
+    return this.connections.size;
+  }
+
   /** Checks whether this repository can connect to a specific server */
   async has(serverName: string): Promise<boolean> {
     const config = await MCPServersRegistry.getInstance().getServerConfig(serverName, this.ownerId);
@@ -75,6 +80,7 @@ export class ConnectionsRepository {
       {
         serverName,
         serverConfig,
+        dbSourced: !!(serverConfig as t.ParsedServerConfig).dbId,
         useSSRFProtection: MCPServersRegistry.getInstance().shouldEnableSSRFProtection(),
       },
       this.oauthOpts,
@@ -134,6 +140,9 @@ export class ConnectionsRepository {
   }
 
   private isAllowedToConnectToServer(config: t.ParsedServerConfig) {
+    if (config.inspectionFailed) {
+      return false;
+    }
     //the repository is not allowed to be connected in case the Connection repository is shared (ownerId is undefined/null) and the server requires Auth or startup false.
     if (this.ownerId === undefined && (config.startup === false || config.requiresOAuth)) {
       return false;

@@ -1,5 +1,5 @@
 import { useState, memo, useRef } from 'react';
-import * as Select from '@ariakit/react/select';
+import * as Menu from '@ariakit/react/menu';
 import { FileText, LogOut, Shield } from 'lucide-react';
 import { LinkIcon, GearIcon, DropdownMenuSeparator, Avatar } from '@librechat/client';
 // Intelequia Admin Panel
@@ -22,8 +22,8 @@ function AccountSettings() {
   const accountSettingsButtonRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <Select.SelectProvider>
-      <Select.Select
+    <Menu.MenuProvider>
+      <Menu.MenuButton
         ref={accountSettingsButtonRef}
         aria-label={localize('com_nav_account_settings')}
         data-testid="nav-user"
@@ -40,8 +40,8 @@ function AccountSettings() {
         >
           {user?.name ?? user?.username ?? localize('com_nav_user')}
         </div>
-      </Select.Select>
-      <Select.SelectPopover
+      </Menu.MenuButton>
+      <Menu.Menu
         className="account-settings-popover popover-ui z-[125] w-[305px] rounded-lg md:w-[244px]"
         style={{
           transformOrigin: 'bottom',
@@ -61,54 +61,39 @@ function AccountSettings() {
             <DropdownMenuSeparator />
           </>
         )}
-        <Select.SelectItem
-          value=""
-          onClick={() => setShowFiles(true)}
-          className="select-item text-sm"
-        >
+        <Menu.MenuItem onClick={() => setShowFiles(true)} className="select-item text-sm">
           <FileText className="icon-md" aria-hidden="true" />
           {localize('com_nav_my_files')}
-        </Select.SelectItem>
+        </Menu.MenuItem>
         {startupConfig?.helpAndFaqURL !== '/' && (
-          <Select.SelectItem
-            value=""
+          <Menu.MenuItem
             onClick={() => window.open(startupConfig?.helpAndFaqURL, '_blank')}
             className="select-item text-sm"
           >
             <LinkIcon aria-hidden="true" />
             {localize('com_nav_help_faq')}
-          </Select.SelectItem>
+          </Menu.MenuItem>
         )}
         {/* Intelequia Admin Panel */}
         {user?.role === SystemRoles.ADMIN && (
-          <Select.SelectItem
-            value=""
+          <Menu.MenuItem
             onClick={() => window.open('/admin', '_blank')}
             className="select-item text-sm"
           >
             <Shield className="icon-md" aria-hidden="true" />
             {localize('com_nav_go_to_admin_panel')}
-          </Select.SelectItem>
+          </Menu.MenuItem>
         )}
-        <Select.SelectItem
-          value=""
-          onClick={() => setShowSettings(true)}
-          className="select-item text-sm"
-        >
+        <Menu.MenuItem onClick={() => setShowSettings(true)} className="select-item text-sm">
           <GearIcon className="icon-md" aria-hidden="true" />
           {localize('com_nav_settings')}
-        </Select.SelectItem>
+        </Menu.MenuItem>
         <DropdownMenuSeparator />
-        <Select.SelectItem
-          aria-selected={true}
-          onClick={() => logout()}
-          value="logout"
-          className="select-item text-sm"
-        >
+        <Menu.MenuItem onClick={() => logout()} className="select-item text-sm">
           <LogOut className="icon-md" aria-hidden="true" />
           {localize('com_nav_log_out')}
-        </Select.SelectItem>
-      </Select.SelectPopover>
+        </Menu.MenuItem>
+      </Menu.Menu>
       {showFiles && (
         <MyFilesModal
           open={showFiles}
@@ -117,7 +102,7 @@ function AccountSettings() {
         />
       )}
       {showSettings && <Settings open={showSettings} onOpenChange={setShowSettings} />}
-    </Select.SelectProvider>
+    </Menu.MenuProvider>
   );
 }
 
