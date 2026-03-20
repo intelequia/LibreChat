@@ -183,3 +183,6 @@ hive-mind-prompt-*.txt
 
 # Prometheus
 prometheus/
+
+# Grafana
+grafana/
