@@ -371,6 +371,7 @@ export default function DialogImage({
                     maxWidth: getImageMaxWidth(),
                   }}
                   draggable={false}
+                  referrerPolicy="no-referrer"
                 />
               </div>
             </div>
