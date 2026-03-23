@@ -38,7 +38,7 @@ export function FaviconImage({ domain, className = '' }: { domain: string; class
   return (
     <div className={cn('relative size-4 flex-shrink-0 overflow-hidden rounded-full', className)}>
       <div className="absolute inset-0 rounded-full bg-white" />
-      <img src={getFaviconUrl(domain)} alt={domain} className="relative size-full" />
+      <img src={getFaviconUrl(domain)} alt={domain} className="relative size-full" referrerPolicy="no-referrer" />
       <div className="border-border-light/10 absolute inset-0 rounded-full border dark:border-transparent"></div>
     </div>
   );
