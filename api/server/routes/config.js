@@ -150,6 +150,7 @@ router.get('/', async function (req, res) {
      * @Organization Intelequia
      */
     payload.businessChatTitle = process.env.BUSINESS_CHAT_TITLE || 'Intelewriter';
+    payload.businessChatTitleFont = process.env.BUSINESS_CHAT_TITLE_FONT || 'Inter, sans-serif';
     payload.businessChatTitleLight = process.env.BUSINESS_CHAT_TITLE_COLOR_LIGHT || "black";
     payload.businessChatTitleDark = process.env.BUSINESS_CHAT_TITLE_COLOR_DARK || "white";
     payload.businessChatLogo = process.env.BUSINESS_CHAT_LOGO || 'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';

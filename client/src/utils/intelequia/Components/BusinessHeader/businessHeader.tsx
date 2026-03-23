@@ -4,6 +4,7 @@ import { ThemeContext, isDark } from '@librechat/client';
 
 interface StartupConfig {
   businessChatTitle?: string;
+  businessChatTitleFont?: string;
   businessChatLogo?: string;
   businessChatLogoDark?: string
   businessChatBackgroundLight?: string;
@@ -22,6 +23,7 @@ const BusinessHeader: FC = () => {
   const [backgroundDark, setBackgroundDark] = useState<string>("");
   const [titleLight, setTitleLight] = useState<string>("");
   const [titleDark, setTitleDark] = useState<string>("");
+  const [titleFont, setTitleFont] = useState<string>("");
 
   // Actualizar darkMode cuando cambie el tema o la preferencia del sistema
   useEffect(() => {
@@ -76,14 +78,20 @@ const BusinessHeader: FC = () => {
       setBackgroundDark(data.businessChatBackgroundDark || "");
       setTitleLight(data.businessChatTitleLight || "");
       setTitleDark(data.businessChatTitleDark || "");
+      setTitleFont(data.businessChatTitleFont || "");
     }
   }, [data, darkMode]);
 
 
+  const titleStyle: React.CSSProperties = {
+    color: darkMode ? titleDark : titleLight,
+    ...(titleFont && { fontFamily: titleFont }),
+  };
+
   return (
     <div id="chat_title" className="business-title" style={{ backgroundColor: darkMode ? backgroundDark : backgroundLight }}>
       <img src={logoURL} className="chat-logo" alt="Logo" />
-      <p className="business-name text-text-primary" style={{ color: darkMode ? titleDark : titleLight }}>
+      <p className="business-name text-text-primary" style={titleStyle}>
         {businessName}
       </p>
     </div>
