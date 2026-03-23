@@ -121,6 +121,7 @@ function SourceItem({ source, expanded = false }: SourceItemProps) {
                     src={source.imageUrl}
                     alt={source.title || localize('com_sources_image_alt')}
                     className="h-full w-full object-cover"
+                    referrerPolicy="no-referrer"
                   />
                 </div>
               )}
@@ -147,6 +148,7 @@ function ImageItem({ image }: { image: ImageResult }) {
             src={image.imageUrl}
             alt={image.title || localize('com_sources_image_alt')}
             className="size-full object-cover"
+            referrerPolicy="no-referrer"
           />
           {image.title && (
             <div className="absolute bottom-0 left-0 right-0 w-full border-none bg-gray-900/80 p-1 text-xs font-medium text-white backdrop-blur-sm">
@@ -464,6 +466,7 @@ const SourcesGroup = React.memo(function SourcesGroup({
                         src={source.imageUrl}
                         alt={source.title || localize('com_sources_image_alt')}
                         className="h-full w-full object-cover"
+                        referrerPolicy="no-referrer"
                       />
                     </div>
                   )}
