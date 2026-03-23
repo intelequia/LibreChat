@@ -151,6 +151,8 @@ router.get('/', async function (req, res) {
      */
     payload.businessChatTitle = process.env.BUSINESS_CHAT_TITLE || 'Intelewriter';
     payload.businessChatTitleFont = process.env.BUSINESS_CHAT_TITLE_FONT || 'Inter, sans-serif';
+    payload.businessChatTitleFontWeight = process.env.BUSINESS_CHAT_TITLE_FONT_WEIGHT || 'bold';
+    payload.businessChatTitleFontSize = process.env.BUSINESS_CHAT_TITLE_FONT_SIZE || '16px';
     payload.businessChatTitleLight = process.env.BUSINESS_CHAT_TITLE_COLOR_LIGHT || "black";
     payload.businessChatTitleDark = process.env.BUSINESS_CHAT_TITLE_COLOR_DARK || "white";
     payload.businessChatLogo = process.env.BUSINESS_CHAT_LOGO || 'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';
@@ -158,8 +160,8 @@ router.get('/', async function (req, res) {
     payload.businessChatBackgroundLight = process.env.BUSINESS_CHAT_BACKGROUND_LIGHT || "#f3f3f3";
     payload.businessChatBackgroundDark = process.env.BUSINESS_CHAT_BACKGROUND_DARK || "#141414";
 
-    payload.balanceEnabled = process.env.CHECK_BALANCE == 'true'? true : false
-    payload.openidAutoRedirect = process.env.OPENID_AUTOREDIRECT== 'true'? true : false;
+    payload.balanceEnabled = process.env.CHECK_BALANCE == 'true' ? true : false
+    payload.openidAutoRedirect = process.env.OPENID_AUTOREDIRECT == 'true' ? true : false;
 
     await cache.set(CacheKeys.STARTUP_CONFIG, payload);
     return res.status(200).send(payload);

@@ -5,6 +5,8 @@ import { ThemeContext, isDark } from '@librechat/client';
 interface StartupConfig {
   businessChatTitle?: string;
   businessChatTitleFont?: string;
+  businessChatTitleFontWeight?: string;
+  businessChatTitleFontSize?: string;
   businessChatLogo?: string;
   businessChatLogoDark?: string
   businessChatBackgroundLight?: string;
@@ -24,6 +26,8 @@ const BusinessHeader: FC = () => {
   const [titleLight, setTitleLight] = useState<string>("");
   const [titleDark, setTitleDark] = useState<string>("");
   const [titleFont, setTitleFont] = useState<string>("");
+  const [titleFontWeight, setTitleFontWeight] = useState<string>("");
+  const [titleFontSize, setTitleFontSize] = useState<string>("");
 
   // Actualizar darkMode cuando cambie el tema o la preferencia del sistema
   useEffect(() => {
@@ -59,7 +63,6 @@ const BusinessHeader: FC = () => {
         }
 
         const result: StartupConfig = await response.json();
-        console.log(response);
         setData(result);
       } catch (error) {
         console.log(error);
@@ -79,13 +82,17 @@ const BusinessHeader: FC = () => {
       setTitleLight(data.businessChatTitleLight || "");
       setTitleDark(data.businessChatTitleDark || "");
       setTitleFont(data.businessChatTitleFont || "");
+      setTitleFontWeight(data.businessChatTitleFontWeight || "");
+      setTitleFontSize(data.businessChatTitleFontSize || "");
     }
   }, [data, darkMode]);
 
 
   const titleStyle: React.CSSProperties = {
     color: darkMode ? titleDark : titleLight,
-    ...(titleFont && { fontFamily: titleFont }),
+    fontFamily: titleFont || 'Inter, sans-serif',
+    fontWeight: titleFontWeight || 'bold',
+    fontSize: titleFontSize || '16px',
   };
 
   return (
