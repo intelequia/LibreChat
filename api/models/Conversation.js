@@ -142,6 +142,30 @@ module.exports = {
       return { message: 'Error saving conversation' };
     }
   },
+  /**
+   * Updates specific fields on a conversation without touching messages or other unrelated fields.
+   * Unlike saveConvo, this does NOT fetch messages and does NOT upsert.
+   * @param {string} userId - The authenticated user's ID.
+   * @param {string} conversationId - The conversation's ID.
+   * @param {Object} patch - The fields to set on the conversation.
+   * @returns {Promise<TConversation|null>} The updated conversation, or null if not found.
+   */
+  patchConvo: async (userId, conversationId, patch) => {
+    try {
+      const conversation = await Conversation.findOneAndUpdate(
+        { conversationId, user: userId },
+        { $set: patch },
+        { new: true },
+      );
+      if (!conversation) {
+        return null;
+      }
+      return conversation.toObject();
+    } catch (error) {
+      logger.error('[patchConvo] Error updating conversation', error);
+      throw error;
+    }
+  },
   bulkSaveConvos: async (conversations) => {
     try {
       const bulkOps = conversations.map((convo) => ({

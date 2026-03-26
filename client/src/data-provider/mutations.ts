@@ -161,6 +161,9 @@ export const usePinConvoMutation = (
     {
       onMutate,
       onSuccess: (_data, vars, context) => {
+        if (!_data?.conversationId) {
+          return;
+        }
         const isPinned = vars.isPinned === true;
 
         removeConvoFromAllQueries(queryClient, vars.conversationId);

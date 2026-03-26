@@ -10,7 +10,7 @@ const {
   createForkLimiters,
   configMiddleware,
 } = require('~/server/middleware');
-const { getConvosByCursor, deleteConvos, getConvo, saveConvo } = require('~/models/Conversation');
+const { getConvosByCursor, deleteConvos, getConvo, saveConvo, patchConvo } = require('~/models/Conversation');
 const { forkConversation, duplicateConversation } = require('~/server/utils/import/fork');
 const { storage, importFileFilter } = require('~/server/routes/files/multer');
 const { deleteAllSharedLinks, deleteConvoSharedLink } = require('~/models');
@@ -205,11 +205,10 @@ router.post('/pin', validateConvoAccess, async (req, res) => {
   }
 
   try {
-    const dbResponse = await saveConvo(
-      req,
-      { conversationId, isPinned },
-      { context: `POST /api/convos/pin ${conversationId}` },
-    );
+    const dbResponse = await patchConvo(req.user.id, conversationId, { isPinned });
+    if (!dbResponse) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
     res.status(200).json(dbResponse);
   } catch (error) {
     logger.error('Error pinning conversation', error);
