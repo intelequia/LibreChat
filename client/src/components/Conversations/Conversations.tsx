@@ -385,15 +385,7 @@ const Conversations: FC<ConversationsProps> = ({
       }
 
       if (item.type === 'header') {
-        // Compute index of first date header based on what sections are shown
-        let firstHeaderIndex = 0;
-        if (shouldShowFavorites) {
-          firstHeaderIndex++;
-        }
-        if (shouldShowPinnedChats) {
-          firstHeaderIndex += isPinnedChatsExpanded ? 1 + pinnedConversations.length : 1;
-        }
-        firstHeaderIndex++; // chats-header
+        const firstHeaderIndex = flattenedItems.findIndex((i) => i.type === 'header');
         return (
           <MeasuredRow key={key} {...rowProps}>
             <DateLabel groupName={item.groupName} isFirst={index === firstHeaderIndex} />
@@ -428,9 +420,6 @@ const Conversations: FC<ConversationsProps> = ({
       setIsChatsExpanded,
       isPinnedChatsExpanded,
       setIsPinnedChatsExpanded,
-      shouldShowFavorites,
-      shouldShowPinnedChats,
-      pinnedConversations.length,
       activeJobIds,
     ],
   );

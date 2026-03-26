@@ -182,9 +182,10 @@ module.exports = {
 
     if (isPinned === true) {
       filters.push({ isPinned: true });
-    } else if (isPinned === false || isPinned === undefined) {
+    } else if (isPinned === false) {
       filters.push({ $or: [{ isPinned: false }, { isPinned: { $exists: false } }] });
     }
+    // isPinned === undefined: no pin filter (show all)
 
     if (Array.isArray(tags) && tags.length > 0) {
       filters.push({ tags: { $in: tags } });
