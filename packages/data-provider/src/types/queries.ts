@@ -15,6 +15,7 @@ export type Conversation = {
 export type ConversationListParams = {
   cursor?: string;
   isArchived?: boolean;
+  isPinned?: boolean;
   sortBy?: 'title' | 'createdAt' | 'updatedAt';
   sortDirection?: 'asc' | 'desc';
   tags?: string[];
@@ -23,7 +24,7 @@ export type ConversationListParams = {
 
 export type MinimalConversation = Pick<
   s.TConversation,
-  'conversationId' | 'endpoint' | 'title' | 'createdAt' | 'updatedAt' | 'user'
+  'conversationId' | 'endpoint' | 'title' | 'createdAt' | 'updatedAt' | 'user' | 'isPinned'
 >;
 
 export type ConversationListResponse = {

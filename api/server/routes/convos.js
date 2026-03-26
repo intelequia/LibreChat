@@ -31,6 +31,8 @@ router.get('/', async (req, res) => {
   const limit = parseInt(req.query.limit, 10) || 25;
   const cursor = req.query.cursor;
   const isArchived = isEnabled(req.query.isArchived);
+  const isPinned =
+    req.query.isPinned !== undefined ? isEnabled(req.query.isPinned) : undefined;
   const search = req.query.search ? decodeURIComponent(req.query.search) : undefined;
   const sortBy = req.query.sortBy || 'updatedAt';
   const sortDirection = req.query.sortDirection || 'desc';
@@ -45,6 +47,7 @@ router.get('/', async (req, res) => {
       cursor,
       limit,
       isArchived,
+      isPinned,
       tags,
       search,
       sortBy,
@@ -180,6 +183,37 @@ router.post('/archive', validateConvoAccess, async (req, res) => {
   } catch (error) {
     logger.error('Error archiving conversation', error);
     res.status(500).send('Error archiving conversation');
+  }
+});
+
+/**
+ * Pins or unpins a conversation.
+ * @route POST /pin
+ * @param {string} req.body.arg.conversationId - The conversation ID to pin/unpin.
+ * @param {boolean} req.body.arg.isPinned - Whether to pin (true) or unpin (false).
+ * @returns {object} 200 - The updated conversation object.
+ */
+router.post('/pin', validateConvoAccess, async (req, res) => {
+  const { conversationId, isPinned } = req.body?.arg ?? {};
+
+  if (!conversationId) {
+    return res.status(400).json({ error: 'conversationId is required' });
+  }
+
+  if (typeof isPinned !== 'boolean') {
+    return res.status(400).json({ error: 'isPinned must be a boolean' });
+  }
+
+  try {
+    const dbResponse = await saveConvo(
+      req,
+      { conversationId, isPinned },
+      { context: `POST /api/convos/pin ${conversationId}` },
+    );
+    res.status(200).json(dbResponse);
+  } catch (error) {
+    logger.error('Error pinning conversation', error);
+    res.status(500).send('Error pinning conversation');
   }
 });
 

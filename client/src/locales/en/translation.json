@@ -1245,6 +1245,8 @@
   "com_ui_permissions_failed_update": "Failed to update permissions. Please try again.",
   "com_ui_permissions_updated_success": "Permissions updated successfully",
   "com_ui_pin": "Pin",
+  "com_ui_pin_error": "Failed to pin conversation",
+  "com_ui_pinned_chats": "Pinned",
   "com_ui_preferences_updated": "Preferences updated successfully",
   "com_ui_prev": "Prev",
   "com_ui_preview": "Preview",

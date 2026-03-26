@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
 import { DropdownPopup, Spinner, useToastContext } from '@librechat/client';
-import { Ellipsis, Share2, CopyPlus, Archive, Pen, Trash } from 'lucide-react';
+import { Ellipsis, Share2, CopyPlus, Archive, Pen, Trash, Pin, PinOff } from 'lucide-react';
 import type { MouseEvent } from 'react';
 import type { TMessage } from 'librechat-data-provider';
 import {
@@ -12,6 +12,7 @@ import {
   useDeleteConversationMutation,
   useGetStartupConfig,
   useArchiveConvoMutation,
+  usePinConvoMutation,
 } from '~/data-provider';
 import { useLocalize, useNavigateToConvo, useNewConvo } from '~/hooks';
 import { NotificationSeverity } from '~/common';
@@ -23,6 +24,7 @@ import { cn } from '~/utils';
 function ConvoOptions({
   conversationId,
   title,
+  isPinned,
   retainView,
   renameHandler,
   isPopoverActive,
@@ -32,6 +34,7 @@ function ConvoOptions({
 }: {
   conversationId: string | null;
   title: string | null;
+  isPinned?: boolean;
   retainView: () => void;
   renameHandler: (e: MouseEvent) => void;
   isPopoverActive: boolean;
@@ -58,6 +61,8 @@ function ConvoOptions({
   const [announcement, setAnnouncement] = useState('');
 
   const archiveConvoMutation = useArchiveConvoMutation();
+
+  const pinConvoMutation = usePinConvoMutation();
 
   const deleteMutation = useDeleteConversationMutation({
     onSuccess: () => {
@@ -106,6 +111,7 @@ function ConvoOptions({
 
   const isDuplicateLoading = duplicateConversation.isLoading;
   const isArchiveLoading = archiveConvoMutation.isLoading;
+  const isPinLoading = pinConvoMutation.isLoading;
   const isDeleteLoading = deleteMutation.isLoading;
 
   const shareHandler = useCallback(() => {
@@ -183,6 +189,32 @@ function ConvoOptions({
     });
   }, [conversationId, duplicateConversation]);
 
+  const handlePinClick = useCallback(
+    (e?: MouseEvent) => {
+      e?.stopPropagation();
+      const convoId = conversationId ?? '';
+      if (!convoId) {
+        return;
+      }
+      pinConvoMutation.mutate(
+        { conversationId: convoId, isPinned: !isPinned },
+        {
+          onSuccess: () => {
+            setIsPopoverActive(false);
+          },
+          onError: () => {
+            showToast({
+              message: localize('com_ui_pin_error'),
+              severity: NotificationSeverity.ERROR,
+              showIcon: true,
+            });
+          },
+        },
+      );
+    },
+    [conversationId, isPinned, pinConvoMutation, setIsPopoverActive, showToast, localize],
+  );
+
   const dropdownItems = useMemo(
     () => [
       {
@@ -223,6 +255,18 @@ function ConvoOptions({
         ),
       },
       {
+        label: isPinned ? localize('com_ui_unpin') : localize('com_ui_pin'),
+        onClick: handlePinClick,
+        hideOnClick: false,
+        icon: isPinLoading ? (
+          <Spinner className="size-4" />
+        ) : isPinned ? (
+          <PinOff className="icon-sm mr-2 text-text-primary" aria-hidden="true" />
+        ) : (
+          <Pin className="icon-sm mr-2 text-text-primary" aria-hidden="true" />
+        ),
+      },
+      {
         label: localize('com_ui_delete'),
         onClick: deleteHandler,
         icon: <Trash className="icon-sm mr-2 text-text-primary" aria-hidden="true" />,
@@ -242,8 +286,11 @@ function ConvoOptions({
       deleteHandler,
       isArchiveLoading,
       isDuplicateLoading,
+      isPinLoading,
+      isPinned,
       handleArchiveClick,
       handleDuplicateClick,
+      handlePinClick,
     ],
   );
 
@@ -350,6 +397,7 @@ export default memo(ConvoOptions, (prevProps, nextProps) => {
   return (
     prevProps.conversationId === nextProps.conversationId &&
     prevProps.title === nextProps.title &&
+    prevProps.isPinned === nextProps.isPinned &&
     prevProps.isPopoverActive === nextProps.isPopoverActive &&
     prevProps.isActiveConvo === nextProps.isActiveConvo &&
     prevProps.isShiftHeld === nextProps.isShiftHeld

@@ -166,6 +166,7 @@ module.exports = {
       cursor,
       limit = 25,
       isArchived = false,
+      isPinned,
       tags,
       search,
       sortBy = 'updatedAt',
@@ -177,6 +178,12 @@ module.exports = {
       filters.push({ isArchived: true });
     } else {
       filters.push({ $or: [{ isArchived: false }, { isArchived: { $exists: false } }] });
+    }
+
+    if (isPinned === true) {
+      filters.push({ isPinned: true });
+    } else if (isPinned === false || isPinned === undefined) {
+      filters.push({ $or: [{ isPinned: false }, { isPinned: { $exists: false } }] });
     }
 
     if (Array.isArray(tags) && tags.length > 0) {
@@ -248,7 +255,7 @@ module.exports = {
 
       const convos = await Conversation.find(query)
         .select(
-          'conversationId endpoint title createdAt updatedAt user model agent_id assistant_id spec iconURL',
+          'conversationId endpoint title createdAt updatedAt user model agent_id assistant_id spec iconURL isPinned',
         )
         .sort(sortObj)
         .limit(limit + 1)

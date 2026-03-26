@@ -14,7 +14,7 @@ import { motion } from 'framer-motion';
 import { Skeleton, useMediaQuery } from '@librechat/client';
 import { PermissionTypes, Permissions } from 'librechat-data-provider';
 import type { InfiniteQueryObserverResult } from '@tanstack/react-query';
-import type { ConversationListResponse } from 'librechat-data-provider';
+import type { ConversationListResponse, TConversation } from 'librechat-data-provider';
 import type { List } from 'react-virtualized';
 import {
   useLocalize,
@@ -81,6 +81,10 @@ const Nav = memo(
     const isSmallScreen = useMediaQuery('(max-width: 768px)');
     const [newUser, setNewUser] = useLocalStorage('newUser', true);
     const [isChatsExpanded, setIsChatsExpanded] = useLocalStorage('chatsExpanded', true);
+    const [isPinnedChatsExpanded, setIsPinnedChatsExpanded] = useLocalStorage(
+      'pinnedChatsExpanded',
+      true,
+    );
     const [showLoading, setShowLoading] = useState(false);
     const [tags, setTags] = useState<string[]>([]);
 
@@ -103,6 +107,22 @@ const Nav = memo(
           cacheTime: 300000,
         },
       );
+
+    const { data: pinnedData } = useConversationsInfiniteQuery(
+      { isPinned: true },
+      {
+        enabled: isAuthenticated,
+        staleTime: 30000,
+        cacheTime: 300000,
+      },
+    );
+
+    const pinnedConversations = useMemo<TConversation[]>(() => {
+      if (!pinnedData) {
+        return [];
+      }
+      return pinnedData.pages.flatMap((page) => page.conversations) as TConversation[];
+    }, [pinnedData]);
 
     const computedHasNextPage = useMemo(() => {
       if (data?.pages && data.pages.length > 0) {
@@ -237,6 +257,7 @@ const Nav = memo(
             <div className="flex min-h-0 flex-grow flex-col overflow-hidden">
               <Conversations
                 conversations={conversations}
+                pinnedConversations={pinnedConversations}
                 moveToTop={moveToTop}
                 toggleNav={itemToggleNav}
                 containerRef={conversationsRef}
@@ -245,6 +266,8 @@ const Nav = memo(
                 isSearchLoading={isSearchLoading}
                 isChatsExpanded={isChatsExpanded}
                 setIsChatsExpanded={setIsChatsExpanded}
+                isPinnedChatsExpanded={isPinnedChatsExpanded}
+                setIsPinnedChatsExpanded={setIsPinnedChatsExpanded}
               />
             </div>
           </div>

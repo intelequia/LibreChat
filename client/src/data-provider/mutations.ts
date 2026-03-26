@@ -73,6 +73,7 @@ export const useArchiveConvoMutation = (
   const archivedConvoQueryKey = [QueryKeys.archivedConversations];
   const { onMutate, onError, onSuccess, ..._options } = options || {};
 
+
   return useMutation(
     (payload: t.TArchiveConversationRequest) => dataService.archiveConversation(payload),
     {
@@ -134,6 +135,85 @@ export const useArchiveConvoMutation = (
         });
         queryClient.invalidateQueries({
           queryKey: archivedConvoQueryKey,
+          refetchPage: (_, index) => index === 0,
+        });
+      },
+      ..._options,
+    },
+  );
+};
+
+export const usePinConvoMutation = (
+  options?: t.PinConversationOptions,
+): UseMutationResult<
+  t.TPinConversationResponse,
+  unknown,
+  t.TPinConversationRequest,
+  unknown
+> => {
+  const queryClient = useQueryClient();
+  const convoQueryKey = [QueryKeys.allConversations];
+  const pinnedConvoQueryKey = [QueryKeys.pinnedConversations];
+  const { onMutate, onError, onSuccess, ..._options } = options || {};
+
+  return useMutation(
+    (payload: t.TPinConversationRequest) => dataService.pinConversation(payload),
+    {
+      onMutate,
+      onSuccess: (_data, vars, context) => {
+        const isPinned = vars.isPinned === true;
+
+        removeConvoFromAllQueries(queryClient, vars.conversationId);
+
+        const pinnedQueries = queryClient
+          .getQueryCache()
+          .findAll([QueryKeys.pinnedConversations], { exact: false });
+
+        for (const query of pinnedQueries) {
+          queryClient.setQueryData<InfiniteData<ConversationListResponse>>(
+            query.queryKey,
+            (oldData) => {
+              if (!oldData) {
+                return oldData;
+              }
+              if (isPinned) {
+                return {
+                  ...oldData,
+                  pages: [
+                    {
+                      ...oldData.pages[0],
+                      conversations: [_data, ...oldData.pages[0].conversations],
+                    },
+                    ...oldData.pages.slice(1),
+                  ],
+                };
+              } else {
+                return {
+                  ...oldData,
+                  pages: oldData.pages.map((page) => ({
+                    ...page,
+                    conversations: page.conversations.filter(
+                      (conv) => conv.conversationId !== vars.conversationId,
+                    ),
+                  })),
+                };
+              }
+            },
+          );
+        }
+
+        queryClient.setQueryData([QueryKeys.conversation, vars.conversationId], _data);
+
+        onSuccess?.(_data, vars, context);
+      },
+      onError,
+      onSettled: () => {
+        queryClient.invalidateQueries({
+          queryKey: convoQueryKey,
+          refetchPage: (_, index) => index === 0,
+        });
+        queryClient.invalidateQueries({
+          queryKey: pinnedConvoQueryKey,
           refetchPage: (_, index) => index === 0,
         });
       },
