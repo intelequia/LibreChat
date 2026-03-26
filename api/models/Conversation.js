@@ -183,7 +183,7 @@ module.exports = {
     if (isPinned === true) {
       filters.push({ isPinned: true });
     } else if (isPinned === false) {
-      filters.push({ $or: [{ isPinned: false }, { isPinned: { $exists: false } }] });
+      filters.push({ isPinned: { $ne: true } });
     }
     // isPinned === undefined: no pin filter (show all)
 
