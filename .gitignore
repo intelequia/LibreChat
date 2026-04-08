@@ -186,3 +186,8 @@ prometheus/
 
 # Grafana
 grafana/
+
+# Indexer
+indexer-sources.yml
+indexer.env
+indexer-data/
