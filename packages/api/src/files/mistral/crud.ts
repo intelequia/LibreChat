@@ -1,8 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import FormData from 'form-data';
+import { fetch, ProxyAgent } from 'undici';
 import { logger } from '@librechat/data-schemas';
-import { HttpsProxyAgent } from 'https-proxy-agent';
 import {
   FileSources,
   envVarRegex,
@@ -10,22 +10,17 @@ import {
   extractVariableName,
 } from 'librechat-data-provider';
 import type { TCustomConfig } from 'librechat-data-provider';
-import type { AxiosError, AxiosRequestConfig } from 'axios';
 import type {
   MistralFileUploadResponse,
   MistralSignedUrlResponse,
   MistralOCRUploadResult,
-  MistralOCRError,
   OCRResultPage,
   ServerRequest,
   OCRResult,
   OCRImage,
 } from '~/types';
-import { logAxiosError, createAxiosInstance } from '~/utils/axios';
 import { readFileAsBuffer } from '~/utils/files';
 import { loadServiceKey } from '~/utils/key';
-
-const axios = createAxiosInstance();
 const DEFAULT_MISTRAL_BASE_URL = 'https://api.mistral.ai/v1';
 const DEFAULT_MISTRAL_MODEL = 'mistral-ocr-latest';
 
@@ -79,25 +74,30 @@ export async function uploadDocumentToMistral({
   const fileStream = fs.createReadStream(filePath);
   form.append('file', fileStream, { filename: actualFileName });
 
-  const config: AxiosRequestConfig = {
+  const fetchOptions: Record<string, unknown> = {
+    method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       ...form.getHeaders(),
     },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
+    body: form,
   };
 
   if (process.env.PROXY) {
-    config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
   }
 
-  return axios
-    .post(`${baseURL}/files`, form, config)
-    .then((res) => res.data)
-    .catch((error) => {
-      throw error;
-    });
+  try {
+    const response = await fetch(`${baseURL}/files`, fetchOptions);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Upload failed with status ${response.status}: ${errorText}`);
+    }
+    return (await response.json()) as MistralFileUploadResponse;
+  } catch (error) {
+    logger.error('Error uploading document to Mistral:', error);
+    throw error;
+  }
 }
 
 export async function getSignedUrl({
@@ -111,23 +111,28 @@ export async function getSignedUrl({
   expiry?: number;
   baseURL?: string;
 }): Promise<MistralSignedUrlResponse> {
-  const config: AxiosRequestConfig = {
+  const fetchOptions: Record<string, unknown> = {
+    method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
   };
 
   if (process.env.PROXY) {
-    config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
   }
 
-  return axios
-    .get(`${baseURL}/files/${fileId}/url?expiry=${expiry}`, config)
-    .then((res) => res.data)
-    .catch((error) => {
-      logger.error('Error fetching signed URL:', error.message);
-      throw error;
-    });
+  try {
+    const response = await fetch(`${baseURL}/files/${fileId}/url?expiry=${expiry}`, fetchOptions);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Get signed URL failed with status ${response.status}: ${errorText}`);
+    }
+    return (await response.json()) as MistralSignedUrlResponse;
+  } catch (error) {
+    logger.error('Error fetching signed URL:', error);
+    throw error;
+  }
 }
 
 /**
@@ -154,38 +159,40 @@ export async function performOCR({
 }): Promise<OCRResult> {
   const documentKey = documentType === 'image_url' ? 'image_url' : 'document_url';
 
-  const config: AxiosRequestConfig = {
+  const fetchOptions: Record<string, unknown> = {
+    method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
+    body: JSON.stringify({
+      model,
+      image_limit: 0,
+      include_image_base64: false,
+      document: {
+        type: documentType,
+        [documentKey]: url,
+      },
+    }),
   };
 
   if (process.env.PROXY) {
-    config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
   }
 
   const ocrURL = baseURL.endsWith('/ocr') ? baseURL : `${baseURL}/ocr`;
 
-  return axios
-    .post(
-      ocrURL,
-      {
-        model,
-        image_limit: 0,
-        include_image_base64: false,
-        document: {
-          type: documentType,
-          [documentKey]: url,
-        },
-      },
-      config,
-    )
-    .then((res) => res.data)
-    .catch((error) => {
-      logger.error('Error performing OCR:', error.message);
-      throw error;
-    });
+  try {
+    const response = await fetch(ocrURL, fetchOptions);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OCR request failed with status ${response.status}: ${errorText}`);
+    }
+    return (await response.json()) as OCRResult;
+  } catch (error) {
+    logger.error('Error performing OCR:', error);
+    throw error;
+  }
 }
 
 /**
@@ -205,19 +212,25 @@ export async function deleteMistralFile({
   apiKey: string;
   baseURL?: string;
 }): Promise<void> {
-  const config: AxiosRequestConfig = {
+  const fetchOptions: Record<string, unknown> = {
+    method: 'DELETE',
     headers: {
       Authorization: `Bearer ${apiKey}`,
     },
   };
 
   if (process.env.PROXY) {
-    config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
   }
 
   try {
-    const result = await axios.delete(`${baseURL}/files/${fileId}`, config);
-    logger.debug(`Mistral file ${fileId} deleted successfully:`, result.data);
+    const response = await fetch(`${baseURL}/files/${fileId}`, fetchOptions);
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error(`Error deleting Mistral file ${fileId}:`, errorText);
+    } else {
+      logger.debug(`Mistral file ${fileId} deleted successfully`);
+    }
   } catch (error) {
     logger.error(`Error deleting Mistral file ${fileId}:`, error);
   }
@@ -363,14 +376,14 @@ function processOCRResult(ocrResult: OCRResult): { text: string; images: string[
  * Creates an error message for OCR operations
  */
 function createOCRError(error: unknown, baseMessage: string): Error {
-  const axiosError = error as AxiosError<MistralOCRError>;
-  const detail = axiosError?.response?.data?.detail;
-  const message = detail || baseMessage;
-
-  const responseMessage = axiosError?.response?.data?.message;
-  const errorLog = logAxiosError({ error: axiosError, message });
-  const fullMessage = responseMessage ? `${errorLog} - ${responseMessage}` : errorLog;
-
+  if (error instanceof Error) {
+    const fullMessage = `${baseMessage} ${error.message}`;
+    logger.error(fullMessage, { stack: error.stack });
+    return new Error(fullMessage);
+  }
+  
+  const fullMessage = `${baseMessage} ${String(error)}`;
+  logger.error(fullMessage);
   return new Error(fullMessage);
 }
 
@@ -574,30 +587,34 @@ async function createJWT(serviceKey: GoogleServiceAccount): Promise<string> {
  * Exchanges JWT for access token
  */
 async function exchangeJWTForAccessToken(jwt: string): Promise<string> {
-  const config: AxiosRequestConfig = {
+  const fetchOptions: Record<string, unknown> = {
+    method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }).toString(),
   };
 
   if (process.env.PROXY) {
-    config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
   }
 
-  const response = await axios.post(
-    'https://oauth2.googleapis.com/token',
-    new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion: jwt,
-    }),
-    config,
-  );
+  const response = await fetch('https://oauth2.googleapis.com/token', fetchOptions);
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Token exchange failed with status ${response.status}: ${errorText}`);
+  }
 
-  if (!response.data?.access_token) {
+  const data = (await response.json()) as { access_token?: string };
+  if (!data?.access_token) {
     throw new Error('No access token in response');
   }
 
-  return response.data.access_token;
+  return data.access_token;
 }
 
 /**
@@ -645,35 +662,33 @@ async function performGoogleVertexOCR({
     },
   });
 
-  const config: AxiosRequestConfig = {
+  const fetchOptions: Record<string, unknown> = {
+    method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json',
     },
+    body: JSON.stringify(requestBody),
   };
 
   if (process.env.PROXY) {
-    config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
   }
 
-  return axios
-    .post(baseURL, requestBody, config)
-    .then((res) => {
-      logger.debug('Google Vertex AI response received');
-      return res.data;
-    })
-    .catch((error) => {
-      if (error.response?.data) {
-        logger.error('Vertex AI error response: ' + JSON.stringify(error.response.data, null, 2));
-      }
-      throw new Error(
-        logAxiosError({
-          error: error as AxiosError,
-          message: 'Error calling Google Vertex AI Mistral OCR',
-        }),
-      );
-    });
+  try {
+    const response = await fetch(baseURL, fetchOptions);
+    if (!response.ok) {
+      const errorData = await response.text();
+      logger.error('Vertex AI error response:', errorData);
+      throw new Error(`Vertex AI request failed with status ${response.status}: ${errorData}`);
+    }
+    logger.debug('Google Vertex AI response received');
+    return (await response.json()) as OCRResult;
+  } catch (error) {
+    logger.error('Error calling Google Vertex AI Mistral OCR:', error);
+    throw error;
+  }
 }
 
 /**
