@@ -1,14 +1,15 @@
 const {
-  SystemRoles,
   EModelEndpoint,
   defaultOrderQuery,
   defaultAssistantsVersion,
 } = require('librechat-data-provider');
+const { logger, SystemCapabilities } = require('@librechat/data-schemas');
 const {
   initializeClient: initAzureClient,
 } = require('~/server/services/Endpoints/azureAssistants');
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
-const {checkGroupPermissions} = require('~/utils');
+const { hasCapability } = require('~/server/middleware/roles/capabilities');
+const { checkGroupPermissions } = require('~/utils');
 const { getEndpointsConfig } = require('~/server/services/Config');
 
 /**
@@ -202,7 +203,7 @@ async function getOpenAIClient({ req, res, endpointOption, initAppClient, overri
     result = await initializeClient({ req, res, version, endpointOption, initAppClient });
   } else if (endpoint === EModelEndpoint.azureAssistants) {
     result = await initAzureClient({ req, res, version, endpointOption, initAppClient });
-  } else if(endpoint === EModelEndpoint.azureAgents){
+  } else if (endpoint === EModelEndpoint.azureAgents) {
     throw new Error(`[${req.baseUrl}] Endpoint ${endpoint} is not supported for assistants.`);
   }
 
@@ -246,9 +247,19 @@ const fetchAssistants = async ({ req, res, overrideEndpoint }) => {
     throw new Error(`[${req.baseUrl}] Endpoint ${endpoint} is not supported for assistants.`);
   }
 
-  if (req.user.role === SystemRoles.ADMIN) {
+  if (!appConfig.endpoints?.[endpoint]) {
     return body;
-  } else if (!appConfig.endpoints?.[endpoint]) {
+  }
+
+  let canManageAssistants = false;
+  try {
+    canManageAssistants = await hasCapability(req.user, SystemCapabilities.MANAGE_ASSISTANTS);
+  } catch (err) {
+    logger.warn(`[fetchAssistants] capability check failed, denying bypass: ${err.message}`);
+  }
+
+  if (canManageAssistants) {
+    logger.debug(`[fetchAssistants] MANAGE_ASSISTANTS bypass for user ${req.user.id}`);
     return body;
   }
 
