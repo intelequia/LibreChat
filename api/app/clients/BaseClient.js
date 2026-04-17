@@ -517,27 +517,21 @@ class BaseClient {
       }
     }
 
-    /**
-     * Retrievign needed data to track token ussage
-     * @organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    const { trackQueryEvent } = require('~/models/spendTokens');
-
-    // Track query event
-    await trackQueryEvent(
-      {
-        conversationId: conversationId,
-        user: user,
-        model: this.modelOptions?.model ?? this.model,
-      },
-      {
-        endpoint: this.options.endpoint,
-        model: this.modelOptions?.model ?? this.model,
-        charactersLength: userMessage.text.length,
-        messageTokens: userMessage.tokenCount,
-      }
-    );
+    if (typeof db.trackQueryEvent === 'function') {
+      await db.trackQueryEvent(
+        {
+          conversationId,
+          user,
+          model: this.modelOptions?.model ?? this.model,
+        },
+        {
+          endpoint: this.options.endpoint,
+          model: this.modelOptions?.model ?? this.model,
+          charactersLength: userMessage.text.length,
+          messageTokens: userMessage.tokenCount,
+        },
+      );
+    }
 
     const balanceConfig = getBalanceConfig(appConfig);
 
@@ -569,25 +563,19 @@ class BaseClient {
       );
     }
 
-    /**
-       * Custom event to track when a completion query process is starting
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-    const { trackStartEvent } = require('~/models/spendTokens');
-
-    // Track start event
-    await trackStartEvent(
-      {
-        conversationId: conversationId,
-        user: user,
-        model: this.modelOptions?.model ?? this.model,
-      },
-      {
-        endpoint: this.options.endpoint,
-        model: this.modelOptions?.model ?? this.model,
-      }
-    );
+    if (typeof db.trackStartEvent === 'function') {
+      await db.trackStartEvent(
+        {
+          conversationId,
+          user,
+          model: this.modelOptions?.model ?? this.model,
+        },
+        {
+          endpoint: this.options.endpoint,
+          model: this.modelOptions?.model ?? this.model,
+        },
+      );
+    }
 
     /** @type {string|string[]|undefined} */
     const { completion, metadata } = await this.sendCompletion(payload, opts);

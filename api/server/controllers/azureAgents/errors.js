@@ -3,7 +3,7 @@ const { sendResponse } = require('~/server/utils');
 const { logger } = require('~/config');
 const getLogStores = require('~/cache/getLogStores');
 const { CacheKeys, ViolationTypes, ContentTypes } = require('librechat-data-provider');
-const { getConvo } = require('~/models/Conversation');
+const { getConvo } = require('~/models');
 const { recordUsage, checkMessageGaps } = require('~/server/services/Threads');
 
 /**
@@ -76,11 +76,10 @@ const createErrorHandler = ({ req, res, getContext, originPath = '/assistants/ch
     } else if (error.message === 'Request closed') {
       logger.debug(`[${originPath}] Request aborted on close`);
     } else if (/Files.*are invalid/.test(error.message)) {
-      const errorMessage = `Files are invalid, or may not have uploaded yet.${
-        endpoint === 'azureAssistants'
+      const errorMessage = `Files are invalid, or may not have uploaded yet.${endpoint === 'azureAssistants'
           ? ' If using Azure OpenAI, files are only available in the region of the assistant\'s model at the time of upload.'
           : ''
-      }`;
+        }`;
       return sendResponse(req, res, messageData, errorMessage);
     } else if (error?.message?.includes('string too long')) {
       return sendResponse(

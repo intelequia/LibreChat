@@ -11,7 +11,7 @@ const {
   AssistantStreamEvents,
 } = require('librechat-data-provider');
 
-const { sendEvent } = require('@librechat/api');
+const { sendEvent, checkBalance } = require('@librechat/api');
 
 const {
   initAzureAgentThread,
@@ -29,10 +29,15 @@ const { createAzureAgentRun, StreamRunManager } = require('~/server/services/Run
 const { addTitle } = require('~/server/services/Endpoints/azureAgents');
 const { sleep, countTokens } = require('~/server/utils');
 const { createRunBody } = require('~/server/services/createRunBody');
-const { getTransactions } = require('~/models/Transaction');
-const { checkBalance } = require('~/models/balanceMethods');
-const { getConvo } = require('~/models/Conversation');
-const getLogStores = require('~/cache/getLogStores');
+const {
+  getConvo,
+  getMultiplier,
+  getTransactions,
+  findBalanceByUser,
+  upsertBalanceFields,
+  createAutoRefillTransaction,
+} = require('~/models');
+const { logViolation, getLogStores } = require('~/cache');
 const { getModelMaxTokens, intelequiaCountTokens } = require('~/utils');
 const { getOpenAIClient } = require('./helpers');
 const { logger } = require('~/config');
@@ -170,16 +175,26 @@ const chatV2 = async (req, res) => {
       // Count tokens up to the current context window
       promptTokens = Math.min(promptTokens, getModelMaxTokens(model));
 
-      await checkBalance({
-        req,
-        res,
-        txData: {
-          model,
-          user: req.user.id,
-          tokenType: 'prompt',
-          amount: promptTokens,
+      await checkBalance(
+        {
+          req,
+          res,
+          txData: {
+            model,
+            user: req.user.id,
+            tokenType: 'prompt',
+            amount: promptTokens,
+          },
         },
-      });
+        {
+          findBalanceByUser,
+          getMultiplier,
+          createAutoRefillTransaction,
+          logViolation,
+          balanceConfig: req.app?.locals?.balance,
+          upsertBalanceFields,
+        },
+      );
     };
 
     azureAgentClient = await getOpenAIClient({
@@ -223,9 +238,8 @@ const chatV2 = async (req, res) => {
     }
 
     if (typeof endpointOption.artifactsPrompt === 'string' && endpointOption.artifactsPrompt) {
-      body.additional_instructions = `${body.additional_instructions ?? ''}\n${
-        endpointOption.artifactsPrompt
-      }`.trim();
+      body.additional_instructions = `${body.additional_instructions ?? ''}\n${endpointOption.artifactsPrompt
+        }`.trim();
     }
 
     if (instructions) {
@@ -382,7 +396,7 @@ const chatV2 = async (req, res) => {
 
     const processRun = async (retry = false) => {
 
-      body.model = model;        
+      body.model = model;
       azureAgentClient.attachedFileIds = attachedFileIds;
       if (retry) {
         response = await runAssistant({
@@ -411,14 +425,14 @@ const chatV2 = async (req, res) => {
       // todo: retry logic
       response = await runAssistant({ azureAgentClient, thread_id, run_id });
 
-      if (response.text =='' && response.messages.length == 0){
+      if (response.text == '' && response.messages.length == 0) {
         const listMessages = await azureAgentClient.messages.list(thread_id);
         const messages = [];
 
         for await (const message of listMessages) {
           messages.push(message);
         }
-        
+
         if (messages.length > 0) {
           response.messages.push(messages[0]);
           response.text = messages[0].content[0].text.value;
@@ -441,7 +455,7 @@ const chatV2 = async (req, res) => {
       return res.end();
     }
 
-    if (response.run.status === RunStatus.IN_PROGRESS || response.run.status === RunStatus.REQUIRES_ACTION ) {
+    if (response.run.status === RunStatus.IN_PROGRESS || response.run.status === RunStatus.REQUIRES_ACTION) {
       processRun(true);
     }
 
@@ -504,11 +518,11 @@ const chatV2 = async (req, res) => {
         });
       }
     } else {
-    /**
-       * Custom event to track when assistant completion query has ended
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
+      /**
+         * Custom event to track when assistant completion query has ended
+         * @Organization Intelequia
+         * @Author Enrique M. Pedroza Castillo
+         */
       global.appInsights.trackEvent({
         name: 'AzureAzureAgentAnswerEnded',
         properties: {

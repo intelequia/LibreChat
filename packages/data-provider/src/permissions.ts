@@ -83,6 +83,7 @@ export const PERMISSION_TYPE_INTERFACE_FIELDS: Record<PermissionTypes, string> =
   [PermissionTypes.MULTI_CONVO]: 'multiConvo',
   [PermissionTypes.TEMPORARY_CHAT]: 'temporaryChat',
   [PermissionTypes.RUN_CODE]: 'runCode',
+  [PermissionTypes.ASSISTANT_CREATOR]: 'assistantCreator',
   [PermissionTypes.WEB_SEARCH]: 'webSearch',
   [PermissionTypes.FILE_SEARCH]: 'fileSearch',
   [PermissionTypes.FILE_CITATIONS]: 'fileCitations',

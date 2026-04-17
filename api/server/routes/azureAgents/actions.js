@@ -3,8 +3,8 @@ const { nanoid } = require('nanoid');
 const { actionDelimiter, EModelEndpoint, removeNullishValues } = require('librechat-data-provider');
 const { encryptMetadata, domainParser } = require('~/server/services/ActionService');
 const { getOpenAIClient } = require('~/server/controllers/assistants/helpers');
-const { updateAction, getActions, deleteAction } = require('~/models/Action');
-const { updateAssistantDoc, getAssistant } = require('~/models/Assistant');
+const { updateAction, getActions, deleteAction, updateAssistantDoc, getAssistant } =
+  require('~/models');
 const { isActionDomainAllowed } = require('@librechat/api');
 const { logger } = require('~/config');
 
