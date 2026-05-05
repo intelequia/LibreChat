@@ -283,17 +283,21 @@ function getOpenIdEmail(userinfo) {
     if (typeof value === 'string' && value) {
       return value;
     }
+    if (Array.isArray(value) && typeof value[0] === 'string' && value[0]) {
+      return value[0];
+    }
     if (value !== undefined && value !== null) {
       logger.warn(
-        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" resolved to a non-string value (type: ${typeof value}). Falling back to: email -> preferred_username -> upn.`,
+        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" resolved to a non-string value (type: ${typeof value}). Falling back to: email -> emails[0] -> preferred_username -> upn.`,
       );
     } else {
       logger.warn(
-        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" not present in userinfo. Falling back to: email -> preferred_username -> upn.`,
+        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" not present in userinfo. Falling back to: email -> emails[0] -> preferred_username -> upn.`,
       );
     }
   }
-  const fallback = userinfo.email || userinfo.preferred_username || userinfo.upn;
+  const emailsArray = Array.isArray(userinfo.emails) ? userinfo.emails[0] : undefined;
+  const fallback = userinfo.email || emailsArray || userinfo.preferred_username || userinfo.upn;
   return typeof fallback === 'string' ? fallback : undefined;
 }
 

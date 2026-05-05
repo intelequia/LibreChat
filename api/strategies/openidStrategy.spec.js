@@ -144,6 +144,11 @@ describe('setupOpenId', () => {
     // Clear previous mock calls and reset implementations
     jest.clearAllMocks();
 
+    // Mock global.myCache used by Intelequia custom code
+    global.myCache = {
+      get: jest.fn(),
+      set: jest.fn().mockResolvedValue(true),
+    };
     // Reset environment variables needed by the strategy
     process.env.OPENID_ISSUER = 'https://fake-issuer.com';
     process.env.OPENID_CLIENT_ID = 'fake_client_id';
@@ -1820,6 +1825,26 @@ describe('setupOpenId', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         expect.stringContaining('OPENID_EMAIL_CLAIM="nonexistent_claim" not present in userinfo'),
       );
+    });
+
+    it('should extract first element when OPENID_EMAIL_CLAIM points to an array (Azure B2C emails claim)', async () => {
+      process.env.OPENID_EMAIL_CLAIM = 'emails';
+      const userinfo = { ...tokenset.claims(), emails: ['b2cuser@example.com'] };
+      delete userinfo.email;
+
+      const { user } = await validate({ ...tokenset, claims: () => userinfo });
+
+      expect(user.email).toBe('b2cuser@example.com');
+    });
+
+    it('should fall back to emails[0] when email is missing and OPENID_EMAIL_CLAIM is not set (Azure B2C)', async () => {
+      const userinfo = { ...tokenset.claims(), emails: ['b2cuser@example.com'] };
+      delete userinfo.email;
+      delete userinfo.preferred_username;
+
+      const { user } = await validate({ ...tokenset, claims: () => userinfo });
+
+      expect(user.email).toBe('b2cuser@example.com');
     });
   });
 
