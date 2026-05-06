@@ -1,6 +1,7 @@
 const { Tool } = require('@langchain/core/tools');
 const axios = require('axios');
 const intelequiaCountTokens = require('../../intelequiaTokenCount')
+const { trackEvent } = require('../../appInsights');
 const {
   createProjectCompletionQuery,
   handleProyectsfilter
@@ -135,20 +136,15 @@ class Dataverse extends Tool {
 
     const responseTokens = intelequiaCountTokens([response], model)
 
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'Plugin',
-        properties: {
-          toolName: "dataverse",
-          userEmail: userEmail,
-          assistantId: data.assistant ?? "",
-          queryTokens: queryTokens.prompt,
-          queryLength: query.length,
-          responseTokens: responseTokens.prompt,
-          pluginModel: model
-        },
-      });
-    }
+    trackEvent('Plugin', {
+      toolName: 'dataverse',
+      userEmail,
+      assistantId: data.assistant ?? '',
+      queryTokens: queryTokens.prompt,
+      queryLength: query.length,
+      responseTokens: responseTokens.prompt,
+      pluginModel: model,
+    });
 
     return response;
   }

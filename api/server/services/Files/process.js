@@ -30,6 +30,7 @@ const { addResourceFileId, deleteResourceFileId } = require('~/server/controller
 const { getOpenAIClient } = require('~/server/controllers/assistants/helpers');
 const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { getFileStrategy } = require('~/server/utils/getFileStrategy');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { checkCapability } = require('~/server/services/Config');
 const { LB_QueueAsyncCall } = require('~/server/utils/queue');
 const { getStrategyFunctions } = require('./strategies');
@@ -344,9 +345,8 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
       inputBuffer: buffer,
       desiredFormat: appConfig.imageOutputType,
     }));
-    filename = `${path.basename(req.file.originalname, path.extname(req.file.originalname))}.${
-      appConfig.imageOutputType
-    }`;
+    filename = `${path.basename(req.file.originalname, path.extname(req.file.originalname))}.${appConfig.imageOutputType
+      }`;
   }
   const fileName = `${file_id}-${filename}`;
   const filepath = await saveBuffer({ userId: req.user.id, fileName, buffer });
@@ -382,7 +382,7 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
 const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
   const isAssistantUpload = isAssistantsEndpoint(metadata.endpoint);
   const source = FileSources.azure;
-  const {handleFileUploadAzureAgent} = getStrategyFunctions(source);
+  const { handleFileUploadAzureAgent } = getStrategyFunctions(source);
   // const { handleFileUpload } = getStrategyFunctions(source);
   const { file_id, temp_file_id } = metadata;
 
@@ -407,10 +407,10 @@ const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
     file_id,
     client,
   });
-  if(metadata.knowledge == 'true'){
-    await handleKnowledge ({ fileId:id, assistantId:metadata.assistant_id }, client)
+  if (metadata.knowledge == 'true') {
+    await handleKnowledge({ fileId: id, assistantId: metadata.assistant_id }, client)
   }
-  else if ( isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
+  else if (isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
     await client.beta.assistants.files.create(metadata.assistant_id, {
       file_id: id,
     });
@@ -454,25 +454,15 @@ const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
     true,
   );
   const userId = result.user.toString();
-  const { email } = await findUser({ _id:userId });
-  
-  /**
-   * Custom event to track when a user uploads files 
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (global.appInsights) {
-    global.appInsights.trackEvent({
-      name: 'AzureUploadFile',
-      properties: {
-        userId: userId,
-        userEmail: email,
-        fileName: file.filename,
-        fileSize: file.size,
-        fileExtension: file.mimetype.split('/')[1],
-      },
-    });
-  }
+  const { email } = await findUser({ _id: userId });
+
+  trackEvent('AzureUploadFile', {
+    userId,
+    userEmail: email,
+    fileName: file.filename,
+    fileSize: file.size,
+    fileExtension: file.mimetype.split('/')[1],
+  });
   res.status(200).json({ message: 'File uploaded and processed successfully', ...result });
 };
 
@@ -491,7 +481,7 @@ const processFileUpload = async ({ req, res, metadata }) => {
   const appConfig = req.config;
   const isAssistantUpload = isAssistantsEndpoint(metadata.endpoint);
   const assistantSource =
-    metadata.endpoint === EModelEndpoint.azureAssistants || EModelEndpoint.azureAgents? FileSources.azure : FileSources.openai;
+    metadata.endpoint === EModelEndpoint.azureAssistants || EModelEndpoint.azureAgents ? FileSources.azure : FileSources.openai;
   const source = isAssistantUpload ? assistantSource : appConfig.fileStrategy;
   const { handleFileUpload } = getStrategyFunctions(source);
   const { file_id, temp_file_id = null } = metadata;
@@ -563,25 +553,15 @@ const processFileUpload = async ({ req, res, metadata }) => {
     true,
   );
   const userId = result.user.toString();
-  const { email } = await findUser({ _id:userId });
-  
-  /**
-   * Custom event to track when a user uploads files 
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (global.appInsights) {
-    global.appInsights.trackEvent({
-      name: 'AzureUploadFile',
-      properties: {
-        userId: userId,
-        userEmail: email,
-        fileName: file.filename,
-        fileSize: file.size,
-        fileExtension: file.mimetype.split('/')[1],
-      },
-    });
-  }
+  const { email } = await findUser({ _id: userId });
+
+  trackEvent('AzureUploadFile', {
+    userId,
+    userEmail: email,
+    fileName: file.filename,
+    fileSize: file.size,
+    fileExtension: file.mimetype.split('/')[1],
+  });
   res.status(200).json({ message: 'File uploaded and processed successfully', ...result });
 };
 
@@ -873,9 +853,8 @@ const processOpenAIFile = async ({
 }) => {
   const _file = await openai.files.retrieve(file_id);
   const originalName = filename ?? (_file.filename ? path.basename(_file.filename) : undefined);
-  const filepath = `${openai.baseURL}/files/${userId}/${file_id}${
-    originalName ? `/${originalName}` : ''
-  }`;
+  const filepath = `${openai.baseURL}/files/${userId}/${file_id}${originalName ? `/${originalName}` : ''
+    }`;
   const type = mime.getType(originalName ?? file_id);
   const source =
     openai.req.body.endpoint === EModelEndpoint.azureAssistants
@@ -1147,8 +1126,7 @@ function filterFile({ req, image, isAvatar }) {
 
   if (file.size > fileSizeLimit) {
     throw new Error(
-      `File size limit of ${fileSizeLimit / megabyte} MB exceeded for ${
-        isAvatar ? 'avatar upload' : `${endpoint} endpoint`
+      `File size limit of ${fileSizeLimit / megabyte} MB exceeded for ${isAvatar ? 'avatar upload' : `${endpoint} endpoint`
       }`,
     );
   }

@@ -1,5 +1,6 @@
 const { Tool } = require('@langchain/core/tools');
 const intelequiaCountTokens = require('../../intelequiaTokenCount')
+const { trackEvent } = require('../../appInsights');
 
 class BingSearch extends Tool {
 
@@ -51,17 +52,12 @@ class BingSearch extends Tool {
       throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
     }
     const searchResult = JSON.stringify(json)
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'Plugin',
-        properties: {
-          toolName: "bing-search",
-          userEmail: userEmail,
-          assistantId: data.assistant ?? "",
-          messageLength: searchResult.length
-        },
-      });
-    }
+    trackEvent('Plugin', {
+      toolName: 'bing-search',
+      userEmail,
+      assistantId: data.assistant ?? '',
+      messageLength: searchResult.length,
+    });
 
     return searchResult;
   }

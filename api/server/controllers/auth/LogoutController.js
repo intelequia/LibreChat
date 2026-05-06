@@ -1,6 +1,7 @@
 const cookies = require('cookie');
 const { isEnabled } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { logoutUser } = require('~/server/services/AuthService');
 const { getOpenIdConfig } = require('~/strategies');
 
@@ -36,17 +37,7 @@ const logoutController = async (req, res) => {
   idToken = idToken || parsedCookies.openid_id_token;
 
   try {
-    /**
-     * Custom event to track when a user logs out
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    global.appInsights.trackEvent({ 
-      name: 'Logout', 
-      properties: { 
-        userEmail: req.user.email 
-      } 
-    });
+    trackEvent('Logout', { userEmail: req.user.email });
 
     const logout = await logoutUser(req, refreshToken);
     const { status, message } = logout;
@@ -98,7 +89,7 @@ const logoutController = async (req, res) => {
               strategy = 'too_long';
               logger.debug(
                 `[logoutController] Logout URL too long (${projectedLength} chars, max ${maxLogoutUrlLength}), ` +
-                  'switching to logout_hint strategy',
+                'switching to logout_hint strategy',
               );
             } else {
               strategy = 'use_token';
@@ -120,14 +111,14 @@ const logoutController = async (req, res) => {
             } else if (strategy === 'too_long') {
               logger.warn(
                 '[logoutController] Logout URL exceeds max length and OPENID_CLIENT_ID is not set. ' +
-                  'The OIDC end-session request may be rejected. ' +
-                  'Consider setting OPENID_CLIENT_ID or increasing OPENID_MAX_LOGOUT_URL_LENGTH.',
+                'The OIDC end-session request may be rejected. ' +
+                'Consider setting OPENID_CLIENT_ID or increasing OPENID_MAX_LOGOUT_URL_LENGTH.',
               );
             } else {
               logger.warn(
                 '[logoutController] Neither id_token_hint nor OPENID_CLIENT_ID is available. ' +
-                  'To enable id_token_hint, set OPENID_REUSE_TOKENS=true. ' +
-                  'The OIDC end-session request may be rejected by the identity provider.',
+                'To enable id_token_hint, set OPENID_REUSE_TOKENS=true. ' +
+                'The OIDC end-session request may be rejected by the identity provider.',
               );
             }
           }

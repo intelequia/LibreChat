@@ -257,10 +257,10 @@ const OpenAIChatCompletionController = async (req, res) => {
     // Create handler config for OpenAI streaming (only used when streaming)
     const handlerConfig = isStreaming
       ? {
-          res,
-          context,
-          tracker,
-        }
+        res,
+        context,
+        tracker,
+      }
       : null;
 
     const collectedUsage = [];

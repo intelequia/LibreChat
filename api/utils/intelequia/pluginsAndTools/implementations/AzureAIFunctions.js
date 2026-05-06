@@ -1,4 +1,5 @@
 const { Tool } = require('@langchain/core/tools');
+const { trackEvent } = require('../../appInsights');
 
 class AzureAIFunctions extends Tool {
   constructor(fields = {}) {
@@ -66,17 +67,12 @@ class AzureAIFunctions extends Tool {
         throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
       }
 
-      if (global.appInsights) {
-        global.appInsights.trackEvent({
-          name: 'Plugin',
-          properties: {
-            toolName: "azure-ai-search",
-            userEmail: userEmail,
-            assistantId: data.assistant ?? "",
-            messageLength: JSON.stringify(json).length
-          },
-        });
-      }
+      trackEvent('Plugin', {
+        toolName: 'azure-ai-search',
+        userEmail,
+        assistantId: data.assistant ?? '',
+        messageLength: JSON.stringify(json).length,
+      });
 
       return JSON.stringify(json);
     }

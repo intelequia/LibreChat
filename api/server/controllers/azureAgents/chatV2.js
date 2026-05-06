@@ -39,6 +39,7 @@ const {
 } = require('~/models');
 const { logViolation, getLogStores } = require('~/cache');
 const { getModelMaxTokens, intelequiaCountTokens } = require('~/utils');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { getOpenAIClient } = require('./helpers');
 const { logger } = require('~/config');
 
@@ -117,23 +118,15 @@ const chatV2 = async (req, res) => {
   const handleError = createErrorHandler({ req, res, getContext });
 
   try {
-    /**
-     * Telemetry logs
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
     const messageTokens = intelequiaCountTokens([text], model);
-    global.appInsights.trackEvent({
-      name: 'AzureAgentsQuery',
-      properties: {
-        userId: req.user.id,
-        userEmail: req.user.email,
-        charactersLength: text.length,
-        messageTokens: messageTokens.completion,
-        model: model,
-        conversationId: conversationId,
-        assistantId: assistant_id,
-      },
+    trackEvent('AzureAgentsQuery', {
+      userId: req.user.id,
+      userEmail: req.user.email,
+      charactersLength: text.length,
+      messageTokens: messageTokens.completion,
+      model,
+      conversationId,
+      assistantId: assistant_id,
     });
     res.on('close', async () => {
       if (!completedRun) {
@@ -360,19 +353,11 @@ const chatV2 = async (req, res) => {
 
     const sendInitialResponse = () => {
 
-      /**
-       * Custom event to track when assistant completion query has started
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      global.appInsights.trackEvent({
-        name: 'AzureAgentsAnswerStarted',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          model: model,
-          assistantId: body.assistant_id,
-        },
+      trackEvent('AzureAgentsAnswerStarted', {
+        userId: req.user.id,
+        userEmail: req.user.email,
+        model,
+        assistantId: body.assistant_id,
       });
       sendEvent(res, {
         sync: true,
@@ -518,22 +503,14 @@ const chatV2 = async (req, res) => {
         });
       }
     } else {
-      /**
-         * Custom event to track when assistant completion query has ended
-         * @Organization Intelequia
-         * @Author Enrique M. Pedroza Castillo
-         */
-      global.appInsights.trackEvent({
-        name: 'AzureAzureAgentAnswerEnded',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          charactersLength: response.text.length,
-          messageTokens: response.run.usage.totalTokens,
-          promptTokens: response.run.usage.promptTokens,
-          completionTokens: response.run.usage.completionTokens,
-          model: model,
-        },
+      trackEvent('AzureAzureAgentAnswerEnded', {
+        userId: req.user.id,
+        userEmail: req.user.email,
+        charactersLength: response.text.length,
+        messageTokens: response.run.usage.totalTokens,
+        promptTokens: response.run.usage.promptTokens,
+        completionTokens: response.run.usage.completionTokens,
+        model,
       });
 
       await recordUsage({

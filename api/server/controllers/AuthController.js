@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const openIdClient = require('openid-client');
 const { logger } = require('@librechat/data-schemas');
 const { isEnabled, findOpenIDUser } = require('@librechat/api');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const {
   requestPasswordReset,
   setOpenIDAuthTokens,
@@ -73,20 +74,7 @@ const refreshController = async (req, res) => {
     const refreshToken = req.session?.openidTokens?.refreshToken || parsedCookies.refreshToken;
 
     if (!refreshToken) {
-      /**
-       * Custom event to track when refresh token is not provided
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      if (global.appInsights) {
-        global.appInsights.trackEvent({
-          name: 'Token Refresh',
-          properties: {
-            message: "Refresh token not provided",
-            refreshToken: refreshToken,
-          },
-        });
-      }
+      trackEvent('Token Refresh', { message: 'Refresh token not provided', refreshToken });
       return res.status(200).send('Refresh token not provided');
     }
 
@@ -151,21 +139,7 @@ const refreshController = async (req, res) => {
     const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await getUserById(payload.id, '-password -__v -totpSecret -backupCodes');
     if (!user) {
-      /**
-       * Custom event to track when a user is not found
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      if (global.appInsights) {
-        global.appInsights.trackEvent({
-          name: 'Token Refresh',
-          properties: {
-            message: "user not found",
-            refreshToken: refreshToken,
-            payload: payload
-          },
-        });
-      }
+      trackEvent('Token Refresh', { message: 'user not found', refreshToken, payload });
       return res.status(401).redirect('/login');
     }
 
@@ -192,77 +166,20 @@ const refreshController = async (req, res) => {
     } else if (req?.query?.retry) {
       // Retrying from a refresh token request that failed (401)
 
-      /**
-       * Custom event to track when a user is not found
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      if (global.appInsights) {
-        global.appInsights.trackEvent({
-          name: 'Token Refresh',
-          properties: {
-            message: "No session found",
-            refreshToken: refreshToken,
-            payload: payload,
-            user: userId,
-            session: session,
-          },
-        });
-      }
+      trackEvent('Token Refresh', { message: 'No session found', refreshToken, payload, user: userId, session });
       res.status(403).send('No session found');
     } else if (payload.exp < Date.now() / 1000) {
 
-      /**
-       * Custom event to track when a user is not found
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      if (global.appInsights) {
-        global.appInsights.trackEvent({
-          name: 'Token Refresh',
-          properties: {
-            message: "Expired refresh token",
-            refreshToken: refreshToken,
-            payload: payload,
-            user: userId,
-            session: session,
-          },
-        });
-      }
+      trackEvent('Token Refresh', { message: 'Expired refresh token', refreshToken, payload, user: userId, session });
       res.status(403).redirect('/login');
     } else {
 
-      /**
-       * Custom event to track when a user is not found
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      global.appInsights.trackEvent({
-        name: 'Token Refresh',
-        properties: {
-          message: "Refresh token expired or not found for this user",
-          refreshToken: refreshToken,
-          payload: payload,
-          user: userId,
-          session: session,
-        },
-      });
+      trackEvent('Token Refresh', { message: 'Refresh token expired or not found for this user', refreshToken, payload, user: userId, session });
       res.status(401).send('Refresh token expired or not found for this user');
     }
   } catch (err) {
     logger.error(`[refreshController] Refresh token: ${refreshToken}`, err);
-    /**
-       * Custom event to track when a user is not found
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-    global.appInsights.trackEvent({
-      name: 'Token Refresh',
-      properties: {
-        message: "Invalid refresh token",
-        error: err
-      },
-    });
+    trackEvent('Token Refresh', { message: 'Invalid refresh token', error: err });
     res.status(403).send('Invalid refresh token');
   }
 };

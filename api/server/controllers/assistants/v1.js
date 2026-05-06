@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const { logger } = require('@librechat/data-schemas');
 const { FileContext } = require('librechat-data-provider');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { deleteFileByFilter, updateAssistantDoc, getAssistants } = require('~/models');
 const { uploadImageBuffer, filterFile } = require('~/server/services/Files/process');
 const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
@@ -21,21 +22,7 @@ const createAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
 
-    /**
-     * Custom event to track when an assistant has been created
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'AssistantCreated',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          assistantName: req.body.name,
-        },
-      });
-    }
+    trackEvent('AssistantCreated', { userId: req.user.id, userEmail: req.user.email, assistantName: req.body.name });
 
     const {
       tools = [],
@@ -143,21 +130,7 @@ const patchAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
-    /**
-     * Custom event to track when an assistant has been updated
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'AssistantUpdated',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          assistantName: req.body.name,
-        },
-      });
-    }
+    trackEvent('AssistantUpdated', { userId: req.user.id, userEmail: req.user.email, assistantName: req.body.name });
 
     const assistant_id = req.params.id;
     const {
@@ -255,21 +228,7 @@ const deleteAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
-    /**
-     * Custom event to track when an assistant has been deleted
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'AssistantDeleted',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          assistantName: req.params.id,
-        },
-      });
-    }
+    trackEvent('AssistantDeleted', { userId: req.user.id, userEmail: req.user.email, assistantName: req.params.id });
 
     const assistant_id = req.params.id;
     const deletionStatus = await openai.beta.assistants.delete(assistant_id);

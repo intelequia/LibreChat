@@ -1,6 +1,7 @@
 const { Tool } = require('@langchain/core/tools');
 const qs = require('qs');
 const intelequiaCountTokens = require('../../intelequiaTokenCount')
+const { trackEvent } = require('../../appInsights');
 
 const axios = require('axios');
 
@@ -151,18 +152,13 @@ class MicrosoftGraph extends Tool {
     const search = await this.createClient(userEmail, response.url);
     const queryTokens = intelequiaCountTokens([query, search], model)
 
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'Plugin',
-        properties: {
-          toolName: "microsoft-graph",
-          userEmail: userEmail,
-          assistantId: data.assistant ?? "",
-          tokens: queryTokens.prompt,
-          pluginModel: model
-        },
-      });
-    }
+    trackEvent('Plugin', {
+      toolName: 'microsoft-graph',
+      userEmail,
+      assistantId: data.assistant ?? '',
+      tokens: queryTokens.prompt,
+      pluginModel: model,
+    });
     return search
   }
 }

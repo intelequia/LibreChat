@@ -146,12 +146,12 @@ async function abortMessage(req, res) {
     conversation,
     requestMessage: jobData?.userMessage
       ? sanitizeMessageForTransmit({
-          messageId: jobData.userMessage.messageId,
-          parentMessageId: jobData.userMessage.parentMessageId,
-          conversationId: jobData.userMessage.conversationId,
-          text: jobData.userMessage.text,
-          isCreatedByUser: true,
-        })
+        messageId: jobData.userMessage.messageId,
+        parentMessageId: jobData.userMessage.parentMessageId,
+        conversationId: jobData.userMessage.conversationId,
+        text: jobData.userMessage.text,
+        isCreatedByUser: true,
+      })
       : null,
     responseMessage,
   };

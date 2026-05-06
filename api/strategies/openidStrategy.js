@@ -8,6 +8,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const { hashToken, logger } = require('@librechat/data-schemas');
 const { Strategy: OpenIDStrategy } = require('openid-client/passport');
 const { CacheKeys, ErrorTypes, SystemRoles } = require('librechat-data-provider');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const {
   isEnabled,
   logHeaders,
@@ -465,19 +466,7 @@ async function resolveGroupsFromOverage(accessToken, sub) {
  */
 async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   const claims = tokenset.claims ? tokenset.claims() : tokenset;
-  /**
-   * Custom event to track when a user logs in
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (global.appInsights) {
-    global.appInsights.trackEvent({
-      name: 'Login',
-      properties: {
-        userEmail: claims.email
-      },
-    });
-  }
+  trackEvent('Login', { userEmail: claims.email });
   const userinfo = {
     ...claims,
   };

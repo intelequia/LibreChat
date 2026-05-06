@@ -65,6 +65,7 @@ const { createContextHandlers } = require('~/app/clients/prompts');
 const { resolveConfigServers } = require('~/server/services/MCP');
 const { getMCPServerTools } = require('~/server/services/Config');
 const BaseClient = require('~/app/clients/BaseClient');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { getMCPManager } = require('~/config');
 const db = require('~/models');
 
@@ -680,6 +681,7 @@ class AgentClient extends BaseClient {
         model: model ?? this.model ?? this.options.agent.model_parameters.model,
         context,
         messageId: this.responseMessageId,
+        endpoint: this.options.endpoint,
         balance,
         transactions,
         endpointTokenConfig: this.options.endpointTokenConfig,
@@ -688,6 +690,23 @@ class AgentClient extends BaseClient {
 
     if (result) {
       this.usage = result;
+      // Track App Insights event (bulk mode bypasses wrapper)
+      if (collectedUsage && collectedUsage.length > 0 && (context === 'message' || context === 'title')) {
+        const isAzure = this.options.endpoint === 'azureOpenAI';
+        const eventName = context === 'title'
+          ? (isAzure ? 'AzureTitleGenerated' : 'AgentTitleGenerated')
+          : (isAzure ? 'AzureAnswerEnded' : 'AgentAnswerEnded');
+        trackEvent(eventName, {
+          userId: this.user ?? this.options.req.user?.id,
+          model: model ?? this.model ?? this.options.agent.model_parameters.model,
+          conversationId: this.conversationId,
+          endpoint: this.options.endpoint || 'unknown',
+          promptTokens: result.input_tokens,
+          completionTokens: result.output_tokens,
+          messageTokens: result.input_tokens + result.output_tokens,
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
   }
 

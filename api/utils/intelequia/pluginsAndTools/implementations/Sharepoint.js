@@ -1,4 +1,5 @@
 const { Tool } = require('@langchain/core/tools');
+const { trackEvent } = require('../../appInsights');
 
 const axios = require('axios');
 
@@ -69,18 +70,13 @@ class Sharepoint extends Tool {
     const userQuery = data.query ?? data;
     const search = await this.createClient(userEmail, userQuery);
 
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'Plugin',
-        properties: {
-          toolName: "sharepoint",
-          userEmail: userEmail,
-          assistantId: data.assistant ?? "",
-          tokens: 0,
-          siteURL: this.sharepointSiteURL
-        },
-      });
-    }
+    trackEvent('Plugin', {
+      toolName: 'sharepoint',
+      userEmail,
+      assistantId: data.assistant ?? '',
+      tokens: 0,
+      siteURL: this.sharepointSiteURL,
+    });
     return search
   }
 }

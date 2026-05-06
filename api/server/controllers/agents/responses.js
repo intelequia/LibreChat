@@ -39,6 +39,7 @@ const {
 } = require('~/server/controllers/agents/callbacks');
 const { loadAgentTools, loadToolsForExecution } = require('~/server/services/ToolService');
 const { findAccessibleResources } = require('~/server/services/PermissionService');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const db = require('~/models');
 
 /** @type {import('@librechat/api').AppConfig | null} */
@@ -469,11 +470,11 @@ const createResponse = async (req, res) => {
           },
         },
         on_tool_end: new ToolEndHandler(toolEndCallback, logger),
-        on_run_step_completed: { handle: () => {} },
-        on_chain_stream: { handle: () => {} },
-        on_chain_end: { handle: () => {} },
-        on_agent_update: { handle: () => {} },
-        on_custom_event: { handle: () => {} },
+        on_run_step_completed: { handle: () => { } },
+        on_chain_stream: { handle: () => { } },
+        on_chain_end: { handle: () => { } },
+        on_agent_update: { handle: () => { } },
+        on_custom_event: { handle: () => { } },
         on_tool_execute: createToolExecuteHandler(toolExecuteOptions),
         on_agent_log: agentLogHandlerObj,
         ...(summarizationConfig?.enabled !== false
@@ -534,26 +535,43 @@ const createResponse = async (req, res) => {
       // Record token usage against balance
       const balanceConfig = getBalanceConfig(req.config);
       const transactionsConfig = getTransactionsConfig(req.config);
-      recordCollectedUsage(
-        {
-          spendTokens: db.spendTokens,
-          spendStructuredTokens: db.spendStructuredTokens,
-          pricing: { getMultiplier: db.getMultiplier, getCacheMultiplier: db.getCacheMultiplier },
-          bulkWriteOps: { insertMany: db.bulkInsertTransactions, updateBalance: db.updateBalance },
-        },
-        {
-          user: userId,
-          conversationId,
-          collectedUsage,
-          context: 'message',
-          messageId: responseId,
-          balance: balanceConfig,
-          transactions: transactionsConfig,
-          model: primaryConfig.model || agent.model_parameters?.model,
-        },
-      ).catch((err) => {
+      try {
+        const usageResult = await recordCollectedUsage(
+          {
+            spendTokens: db.spendTokens,
+            spendStructuredTokens: db.spendStructuredTokens,
+            pricing: { getMultiplier: db.getMultiplier, getCacheMultiplier: db.getCacheMultiplier },
+            bulkWriteOps: { insertMany: db.bulkInsertTransactions, updateBalance: db.updateBalance },
+          },
+          {
+            user: userId,
+            conversationId,
+            collectedUsage,
+            context: 'message',
+            messageId: responseId,
+            endpoint: agent.provider,
+            balance: balanceConfig,
+            transactions: transactionsConfig,
+            model: primaryConfig.model || agent.model_parameters?.model,
+          },
+        );
+        // Track App Insights event (bulk mode bypasses wrapper)
+        if (usageResult && collectedUsage && collectedUsage.length > 0) {
+          const isAzure = agent.provider === 'azureOpenAI';
+          trackEvent(isAzure ? 'AzureAnswerEnded' : 'AgentAnswerEnded', {
+            userId,
+            model: primaryConfig.model || agent.model_parameters?.model,
+            conversationId,
+            endpoint: agent.provider || 'unknown',
+            promptTokens: usageResult.input_tokens,
+            completionTokens: usageResult.output_tokens,
+            messageTokens: usageResult.input_tokens + usageResult.output_tokens,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
         logger.error('[Responses API] Error recording usage:', err);
-      });
+      }
 
       // Finalize the stream
       finalizeStream();
@@ -633,11 +651,11 @@ const createResponse = async (req, res) => {
           },
         },
         on_tool_end: new ToolEndHandler(toolEndCallback, logger),
-        on_run_step_completed: { handle: () => {} },
-        on_chain_stream: { handle: () => {} },
-        on_chain_end: { handle: () => {} },
-        on_agent_update: { handle: () => {} },
-        on_custom_event: { handle: () => {} },
+        on_run_step_completed: { handle: () => { } },
+        on_chain_stream: { handle: () => { } },
+        on_chain_end: { handle: () => { } },
+        on_agent_update: { handle: () => { } },
+        on_custom_event: { handle: () => { } },
         on_tool_execute: createToolExecuteHandler(toolExecuteOptions),
         on_agent_log: agentLogHandlerObj,
         ...(summarizationConfig?.enabled !== false
@@ -696,26 +714,43 @@ const createResponse = async (req, res) => {
       // Record token usage against balance
       const balanceConfig = getBalanceConfig(req.config);
       const transactionsConfig = getTransactionsConfig(req.config);
-      recordCollectedUsage(
-        {
-          spendTokens: db.spendTokens,
-          spendStructuredTokens: db.spendStructuredTokens,
-          pricing: { getMultiplier: db.getMultiplier, getCacheMultiplier: db.getCacheMultiplier },
-          bulkWriteOps: { insertMany: db.bulkInsertTransactions, updateBalance: db.updateBalance },
-        },
-        {
-          user: userId,
-          conversationId,
-          collectedUsage,
-          context: 'message',
-          messageId: responseId,
-          balance: balanceConfig,
-          transactions: transactionsConfig,
-          model: primaryConfig.model || agent.model_parameters?.model,
-        },
-      ).catch((err) => {
+      try {
+        const usageResult = await recordCollectedUsage(
+          {
+            spendTokens: db.spendTokens,
+            spendStructuredTokens: db.spendStructuredTokens,
+            pricing: { getMultiplier: db.getMultiplier, getCacheMultiplier: db.getCacheMultiplier },
+            bulkWriteOps: { insertMany: db.bulkInsertTransactions, updateBalance: db.updateBalance },
+          },
+          {
+            user: userId,
+            conversationId,
+            collectedUsage,
+            context: 'message',
+            messageId: responseId,
+            endpoint: agent.provider,
+            balance: balanceConfig,
+            transactions: transactionsConfig,
+            model: primaryConfig.model || agent.model_parameters?.model,
+          },
+        );
+        // Track App Insights event (bulk mode bypasses wrapper)
+        if (usageResult && collectedUsage && collectedUsage.length > 0) {
+          const isAzure = agent.provider === 'azureOpenAI';
+          trackEvent(isAzure ? 'AzureAnswerEnded' : 'AgentAnswerEnded', {
+            userId,
+            model: primaryConfig.model || agent.model_parameters?.model,
+            conversationId,
+            endpoint: agent.provider || 'unknown',
+            promptTokens: usageResult.input_tokens,
+            completionTokens: usageResult.output_tokens,
+            messageTokens: usageResult.input_tokens + usageResult.output_tokens,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
         logger.error('[Responses API] Error recording usage:', err);
-      });
+      }
 
       if (artifactPromises.length > 0) {
         try {
@@ -908,10 +943,10 @@ const getResponse = async (req, res) => {
       user: userId,
       usage: lastAssistantMessage?.tokenCount
         ? {
-            input_tokens: 0,
-            output_tokens: lastAssistantMessage.tokenCount,
-            total_tokens: lastAssistantMessage.tokenCount,
-          }
+          input_tokens: 0,
+          output_tokens: lastAssistantMessage.tokenCount,
+          total_tokens: lastAssistantMessage.tokenCount,
+        }
         : null,
       max_output_tokens: null,
       max_tool_calls: null,
