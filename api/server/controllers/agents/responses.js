@@ -375,6 +375,17 @@ const createResponse = async (req, res) => {
     // Determine if streaming is enabled (check both request and agent config)
     const streamingDisabled = !!primaryConfig.model_parameters?.disableStreaming;
     const actuallyStreaming = isStreaming && !streamingDisabled;
+    const agentModel = primaryConfig.model || agent.model_parameters?.model;
+    const isAzureEndpoint = agent.provider === 'azureOpenAI';
+
+    // Track Query event as soon as the request is accepted
+    trackEvent(isAzureEndpoint ? 'AzureApiAgentQuery' : 'ApiAgentQuery', {
+      userId: req.user?.id ?? 'api-user',
+      model: agentModel,
+      conversationId,
+      endpoint: agent.provider || 'unknown',
+      timestamp: new Date().toISOString(),
+    });
 
     // Load previous messages if previous_response_id is provided
     let previousMessages = [];
@@ -524,6 +535,15 @@ const createResponse = async (req, res) => {
         version: 'v2',
       };
 
+      // Track AnswerStarted event before processing
+      trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerStarted' : 'ApiAgentAnswerStarted', {
+        userId,
+        model: agentModel,
+        conversationId,
+        endpoint: agent.provider || 'unknown',
+        timestamp: new Date().toISOString(),
+      });
+
       await run.processStream({ messages: formattedMessages }, config, {
         callbacks: {
           [Callback.TOOL_ERROR]: (graph, error, toolId) => {
@@ -549,26 +569,22 @@ const createResponse = async (req, res) => {
             collectedUsage,
             context: 'message',
             messageId: responseId,
-            endpoint: agent.provider,
             balance: balanceConfig,
             transactions: transactionsConfig,
-            model: primaryConfig.model || agent.model_parameters?.model,
+            model: agentModel,
           },
         );
-        // Track App Insights event (bulk mode bypasses wrapper)
-        if (usageResult && collectedUsage && collectedUsage.length > 0) {
-          const isAzure = agent.provider === 'azureOpenAI';
-          trackEvent(isAzure ? 'AzureAnswerEnded' : 'AgentAnswerEnded', {
-            userId,
-            model: primaryConfig.model || agent.model_parameters?.model,
-            conversationId,
-            endpoint: agent.provider || 'unknown',
-            promptTokens: usageResult.input_tokens,
-            completionTokens: usageResult.output_tokens,
-            messageTokens: usageResult.input_tokens + usageResult.output_tokens,
-            timestamp: new Date().toISOString(),
-          });
-        }
+        // Track AnswerEnded event (always fire, bulk mode bypasses wrapper)
+        trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
+          userId,
+          model: agentModel,
+          conversationId,
+          endpoint: agent.provider || 'unknown',
+          promptTokens: usageResult?.input_tokens ?? 0,
+          completionTokens: usageResult?.output_tokens ?? 0,
+          messageTokens: (usageResult?.input_tokens ?? 0) + (usageResult?.output_tokens ?? 0),
+          timestamp: new Date().toISOString(),
+        });
       } catch (err) {
         logger.error('[Responses API] Error recording usage:', err);
       }
@@ -703,6 +719,15 @@ const createResponse = async (req, res) => {
         version: 'v2',
       };
 
+      // Track AnswerStarted event before processing
+      trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerStarted' : 'ApiAgentAnswerStarted', {
+        userId,
+        model: agentModel,
+        conversationId,
+        endpoint: agent.provider || 'unknown',
+        timestamp: new Date().toISOString(),
+      });
+
       await run.processStream({ messages: formattedMessages }, config, {
         callbacks: {
           [Callback.TOOL_ERROR]: (graph, error, toolId) => {
@@ -728,26 +753,22 @@ const createResponse = async (req, res) => {
             collectedUsage,
             context: 'message',
             messageId: responseId,
-            endpoint: agent.provider,
             balance: balanceConfig,
             transactions: transactionsConfig,
-            model: primaryConfig.model || agent.model_parameters?.model,
+            model: agentModel,
           },
         );
-        // Track App Insights event (bulk mode bypasses wrapper)
-        if (usageResult && collectedUsage && collectedUsage.length > 0) {
-          const isAzure = agent.provider === 'azureOpenAI';
-          trackEvent(isAzure ? 'AzureAnswerEnded' : 'AgentAnswerEnded', {
-            userId,
-            model: primaryConfig.model || agent.model_parameters?.model,
-            conversationId,
-            endpoint: agent.provider || 'unknown',
-            promptTokens: usageResult.input_tokens,
-            completionTokens: usageResult.output_tokens,
-            messageTokens: usageResult.input_tokens + usageResult.output_tokens,
-            timestamp: new Date().toISOString(),
-          });
-        }
+        // Track AnswerEnded event (always fire, bulk mode bypasses wrapper)
+        trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
+          userId,
+          model: agentModel,
+          conversationId,
+          endpoint: agent.provider || 'unknown',
+          promptTokens: usageResult?.input_tokens ?? 0,
+          completionTokens: usageResult?.output_tokens ?? 0,
+          messageTokens: (usageResult?.input_tokens ?? 0) + (usageResult?.output_tokens ?? 0),
+          timestamp: new Date().toISOString(),
+        });
       } catch (err) {
         logger.error('[Responses API] Error recording usage:', err);
       }

@@ -467,6 +467,17 @@ const OpenAIChatCompletionController = async (req, res) => {
 
     // Create and run the agent
     const userId = req.user?.id ?? 'api-user';
+    const agentModel = primaryConfig.model || agent.model_parameters?.model;
+    const isAzureEndpoint = agent.provider === 'azureOpenAI';
+
+    // Track Query event
+    trackEvent(isAzureEndpoint ? 'AzureApiAgentQuery' : 'ApiAgentQuery', {
+      userId,
+      model: agentModel,
+      conversationId,
+      endpoint: agent.provider || 'unknown',
+      timestamp: new Date().toISOString(),
+    });
 
     // Extract userMCPAuthMap from primaryConfig (needed for MCP tool connections)
     const userMCPAuthMap = primaryConfig.userMCPAuthMap;
@@ -509,6 +520,15 @@ const OpenAIChatCompletionController = async (req, res) => {
       version: 'v2',
     };
 
+    // Track AnswerStarted event
+    trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerStarted' : 'ApiAgentAnswerStarted', {
+      userId,
+      model: agentModel,
+      conversationId,
+      endpoint: agent.provider || 'unknown',
+      timestamp: new Date().toISOString(),
+    });
+
     await run.processStream({ messages: formattedMessages }, config, {
       callbacks: {
         [Callback.TOOL_ERROR]: (graph, error, toolId) => {
@@ -539,20 +559,17 @@ const OpenAIChatCompletionController = async (req, res) => {
           model: primaryConfig.model || agent.model_parameters?.model,
         },
       );
-      // Track App Insights event (bulk mode bypasses wrapper)
-      if (usageResult && collectedUsage && collectedUsage.length > 0) {
-        const isAzure = agent.provider === 'azureOpenAI';
-        trackEvent(isAzure ? 'AzureAnswerEnded' : 'AgentAnswerEnded', {
-          userId,
-          model: primaryConfig.model || agent.model_parameters?.model,
-          conversationId,
-          endpoint: agent.provider || 'unknown',
-          promptTokens: usageResult.input_tokens,
-          completionTokens: usageResult.output_tokens,
-          messageTokens: usageResult.input_tokens + usageResult.output_tokens,
-          timestamp: new Date().toISOString(),
-        });
-      }
+      // Track AnswerEnded event (bulk mode bypasses wrapper, always fire)
+      trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
+        userId,
+        model: agentModel,
+        conversationId,
+        endpoint: agent.provider || 'unknown',
+        promptTokens: usageResult?.input_tokens ?? 0,
+        completionTokens: usageResult?.output_tokens ?? 0,
+        messageTokens: (usageResult?.input_tokens ?? 0) + (usageResult?.output_tokens ?? 0),
+        timestamp: new Date().toISOString(),
+      });
     } catch (err) {
       logger.error('[OpenAI API] Error recording usage:', err);
     }
