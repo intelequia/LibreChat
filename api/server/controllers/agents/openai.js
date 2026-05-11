@@ -473,6 +473,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     // Track Query event
     trackEvent(isAzureEndpoint ? 'AzureApiAgentQuery' : 'ApiAgentQuery', {
       userId,
+      agentId,
       model: agentModel,
       conversationId,
       endpoint: agent.provider || 'unknown',
@@ -523,6 +524,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     // Track AnswerStarted event
     trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerStarted' : 'ApiAgentAnswerStarted', {
       userId,
+      agentId,
       model: agentModel,
       conversationId,
       endpoint: agent.provider || 'unknown',
@@ -541,7 +543,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     const balanceConfig = getBalanceConfig(appConfig);
     const transactionsConfig = getTransactionsConfig(appConfig);
     try {
-      const usageResult = await recordCollectedUsage(
+      await recordCollectedUsage(
         {
           spendTokens: db.spendTokens,
           spendStructuredTokens: db.spendStructuredTokens,
@@ -556,18 +558,25 @@ const OpenAIChatCompletionController = async (req, res) => {
           messageId: responseId,
           balance: balanceConfig,
           transactions: transactionsConfig,
-          model: primaryConfig.model || agent.model_parameters?.model,
+          model: agentModel,
         },
       );
-      // Track AnswerEnded event (bulk mode bypasses wrapper, always fire)
+      // Tokens from collectedUsage directly (usageResult.input_tokens includes cache tokens, causing inflation)
+      const promptTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_tokens) || 0), 0);
+      const cacheCreationTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_creation) || Number(u?.cache_creation_input_tokens) || 0), 0);
+      const cacheReadTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_read) || Number(u?.cache_read_input_tokens) || 0), 0);
+      const completionTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.output_tokens) || 0), 0);
       trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
         userId,
+        agentId,
         model: agentModel,
         conversationId,
         endpoint: agent.provider || 'unknown',
-        promptTokens: usageResult?.input_tokens ?? 0,
-        completionTokens: usageResult?.output_tokens ?? 0,
-        messageTokens: (usageResult?.input_tokens ?? 0) + (usageResult?.output_tokens ?? 0),
+        promptTokens,
+        cacheCreationTokens,
+        cacheReadTokens,
+        completionTokens,
+        messageTokens: promptTokens + cacheCreationTokens + cacheReadTokens + completionTokens,
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
