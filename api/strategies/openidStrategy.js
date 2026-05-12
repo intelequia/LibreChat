@@ -289,35 +289,17 @@ function getOpenIdEmail(userinfo) {
     }
     if (value !== undefined && value !== null) {
       logger.warn(
-        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" resolved to a non-string value (type: ${typeof value}). Falling back to: email -> emails[0] -> preferred_username -> upn -> sub.`,
+        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" resolved to a non-string value (type: ${typeof value}). Falling back to: email -> emails[0] -> preferred_username -> upn.`,
       );
     } else {
       logger.warn(
-        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" not present in userinfo. Falling back to: email -> emails[0] -> preferred_username -> upn -> sub.`,
+        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" not present in userinfo. Falling back to: email -> emails[0] -> preferred_username -> upn.`,
       );
     }
   }
   const emailsArray = Array.isArray(userinfo.emails) ? userinfo.emails[0] : undefined;
   const fallback = userinfo.email || emailsArray || userinfo.preferred_username || userinfo.upn;
-  if (typeof fallback === 'string' && fallback) {
-    return fallback;
-  }
-  if (userinfo.sub) {
-    const issuer = process.env.OPENID_ISSUER || '';
-    let domain = 'openid.user';
-    try {
-      const url = new URL(issuer);
-      domain = url.hostname;
-    } catch {
-      // use default domain
-    }
-    const synthetic = `${userinfo.sub}@${domain}`;
-    logger.warn(
-      `[openidStrategy] No email-like claim found in userinfo. Using synthetic identifier: ${synthetic}`,
-    );
-    return synthetic;
-  }
-  return undefined;
+  return typeof fallback === 'string' ? fallback : undefined;
 }
 
 /**

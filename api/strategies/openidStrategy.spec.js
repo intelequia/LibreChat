@@ -1846,17 +1846,6 @@ describe('setupOpenId', () => {
 
       expect(user.email).toBe('b2cuser@example.com');
     });
-
-    it('should generate synthetic email from sub when no email claims are available (Azure B2C empty profile)', async () => {
-      const userinfo = { ...tokenset.claims() };
-      delete userinfo.email;
-      delete userinfo.preferred_username;
-      delete userinfo.username;
-
-      const { user } = await validate({ ...tokenset, claims: () => userinfo });
-
-      expect(user.email).toBe('1234@fake-issuer.com');
-    });
   });
 
   describe('Tenant-scoped config', () => {
