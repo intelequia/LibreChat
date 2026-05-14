@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const fetch = require('node-fetch');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const { logger } = require('@librechat/data-schemas');
 const { getFirebaseStorage, deleteRagFile } = require('@librechat/api');
 const { ref, uploadBytes, getDownloadURL, deleteObject } = require('firebase/storage');
@@ -238,11 +239,18 @@ async function getFirebaseFileStream(_req, filepath) {
       throw new Error('Firebase is not initialized');
     }
 
-    const response = await axios({
+    const config = {
       method: 'get',
       url: filepath,
       responseType: 'stream',
-    });
+    };
+
+    if (process.env.PROXY) {
+      config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+      config.proxy = false;
+    }
+
+    const response = await axios(config);
 
     return response.data;
   } catch (error) {

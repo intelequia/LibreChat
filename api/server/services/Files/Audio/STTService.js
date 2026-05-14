@@ -304,6 +304,7 @@ class STTService {
 
     if (process.env.PROXY) {
       options.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+      options.proxy = false;
     }
 
     try {

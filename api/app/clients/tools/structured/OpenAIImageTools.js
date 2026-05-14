@@ -351,6 +351,7 @@ Error Message: ${error.message}`);
 
         if (process.env.PROXY) {
           axiosConfig.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+          axiosConfig.proxy = false;
         }
 
         if (process.env.IMAGE_GEN_OAI_AZURE_API_VERSION && process.env.IMAGE_GEN_OAI_BASEURL) {

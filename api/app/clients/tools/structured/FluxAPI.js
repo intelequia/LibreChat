@@ -149,6 +149,7 @@ class FluxAPI extends Tool {
     const config = {};
     if (process.env.PROXY) {
       config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+      config.proxy = false;
     }
     return config;
   }

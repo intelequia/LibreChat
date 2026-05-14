@@ -66,9 +66,9 @@ export const logAxiosError = ({
 export function createAxiosInstance(): AxiosInstance {
   const instance = axios.create();
 
-  if (process.env.proxy) {
+  if (process.env.PROXY) {
     try {
-      const url = new URL(process.env.proxy);
+      const url = new URL(process.env.PROXY);
 
       const proxyConfig: Partial<AxiosProxyConfig> = {
         host: url.hostname.replace(/^\[|\]$/g, ''),
@@ -82,7 +82,7 @@ export function createAxiosInstance(): AxiosInstance {
       instance.defaults.proxy = proxyConfig as AxiosProxyConfig;
     } catch (error) {
       console.error('Error parsing proxy URL:', error);
-      throw new Error(`Invalid proxy URL: ${process.env.proxy}`);
+      throw new Error(`Invalid proxy URL: ${process.env.PROXY}`);
     }
   }
 
