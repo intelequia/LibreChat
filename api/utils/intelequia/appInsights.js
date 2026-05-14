@@ -75,7 +75,7 @@ const getTrackingInfo = (context) => {
 };
 
 const buildSpendProperties = (baseProps, eventType, tokenUsage, additionalData) => {
-    const { promptTokens = 0, completionTokens = 0 } = tokenUsage;
+    const { promptTokens = 0, completionTokens = 0, cacheCreationTokens = 0, cacheReadTokens = 0 } = tokenUsage;
     const core = {
         ...baseProps,
         timestamp: new Date().toISOString(),
@@ -89,9 +89,9 @@ const buildSpendProperties = (baseProps, eventType, tokenUsage, additionalData) 
         case EVENT_TYPES.START:
             return core;
         case EVENT_TYPES.END:
-            return { ...core, charactersLength: additionalData.charactersLength || 0, promptTokens, completionTokens, messageTokens: promptTokens + completionTokens };
+            return { ...core, charactersLength: additionalData.charactersLength || 0, promptTokens, cacheCreationTokens, cacheReadTokens, completionTokens, messageTokens: promptTokens + cacheCreationTokens + cacheReadTokens + completionTokens };
         case EVENT_TYPES.TITLE:
-            return { ...core, promptTokens, completionTokens, messageTokens: promptTokens + completionTokens };
+            return { ...core, promptTokens, cacheCreationTokens, cacheReadTokens, completionTokens, messageTokens: promptTokens + cacheCreationTokens + cacheReadTokens + completionTokens };
         case EVENT_TYPES.REASONING:
             return { ...core, reasoningTokens: completionTokens, messageTokens: completionTokens };
         default:
@@ -161,13 +161,13 @@ const createGlobalTrackingSpendTokens = (spendTokensFn) => {
 const createGlobalTrackingSpendStructuredTokens = (spendStructuredTokensFn) => {
     return async (txData, tokenUsage, trackingData = {}) => {
         const { promptTokens, completionTokens = 0 } = tokenUsage;
-        const totalPrompt = promptTokens
-            ? (promptTokens.input || 0) + (promptTokens.write || 0) + (promptTokens.read || 0)
-            : 0;
-        if (totalPrompt > 0 || completionTokens > 0) {
+        const inputTokens = promptTokens ? (promptTokens.input || 0) : 0;
+        const cacheCreationTokens = promptTokens ? (promptTokens.write || 0) : 0;
+        const cacheReadTokens = promptTokens ? (promptTokens.read || 0) : 0;
+        if (inputTokens > 0 || cacheCreationTokens > 0 || cacheReadTokens > 0 || completionTokens > 0) {
             const { shouldTrack, eventType } = getTrackingInfo(txData.context);
             if (shouldTrack) {
-                await trackTokenUsage(txData, { promptTokens: totalPrompt, completionTokens }, eventType, {
+                await trackTokenUsage(txData, { promptTokens: inputTokens, cacheCreationTokens, cacheReadTokens, completionTokens }, eventType, {
                     endpoint: trackingData.endpoint || txData.endpoint,
                     model: trackingData.model || txData.model,
                     charactersLength: trackingData.completionLength || trackingData.charactersLength || 0,
