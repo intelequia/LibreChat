@@ -1,5 +1,6 @@
 import { logger } from '@librechat/data-schemas';
 import { ErrorTypes } from 'librechat-data-provider';
+import { isEnabled } from '~/utils';
 import type { IUser, UserMethods } from '@librechat/data-schemas';
 
 /**
@@ -48,6 +49,12 @@ export async function findOpenIDUser({
     }
 
     if (user?.openidId && user.openidId !== openidId) {
+      if (isEnabled(process.env.OPENID_ALLOW_MULTI_ISSUER)) {
+        logger.info(
+          `[${strategyName}] openidId mismatch for ${user.email} allowed by OPENID_ALLOW_MULTI_ISSUER (stored: ${user.openidId}, token: ${openidId})`,
+        );
+        return { user, error: null, migration: false };
+      }
       logger.warn(
         `[${strategyName}] Rejected email fallback for ${user.email}: stored openidId does not match token sub`,
       );
