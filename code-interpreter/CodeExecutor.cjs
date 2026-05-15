@@ -81,13 +81,21 @@ const CodeExecutionToolDefinition = {
     description: CodeExecutionToolDescription,
     schema: CodeExecutionToolSchema,
 };
-function createCodeExecutionTool(params = {}) {
-    const apiKey = params[_enum.EnvVar.CODE_API_KEY] ?? params.apiKey ?? env.getEnvironmentVariable(_enum.EnvVar.CODE_API_KEY) ?? '';
-    const userEmail = params.user_email || '';
-    const userId = params.user_id || '';
-    if (!apiKey) {
-        throw new Error('No API key provided for code execution tool.');
+async function resolveCodeApiAuthHeaders(authHeaders) {
+    if (authHeaders == null) {
+        return {};
     }
+    if (typeof authHeaders === 'function') {
+        return authHeaders();
+    }
+    return authHeaders;
+}
+
+function createCodeExecutionTool(params = {}) {
+    const { authHeaders, ...executionParams } = params;
+    const userEmail = executionParams.user_email || '';
+    const userId = executionParams.user_id || '';
+    const apiKey = env.getEnvironmentVariable('LIBRECHAT_CODE_API_KEY') || '';
     const execEndpoint = `${getCodeBaseURL()}/run`;
     return tools.tool(async ({ lang, code, ...rest }) => {
         const postData = {
@@ -98,13 +106,18 @@ function createCodeExecutionTool(params = {}) {
             ...rest,
         };
         try {
+            const resolvedAuthHeaders = await resolveCodeApiAuthHeaders(authHeaders);
+            const headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'LibreChat/1.0',
+                ...resolvedAuthHeaders,
+            };
+            if (apiKey) {
+                headers['X-API-Key'] = apiKey;
+            }
             const response = await fetch(execEndpoint, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'User-Agent': 'LibreChat/1.0',
-                    'X-API-Key': apiKey,
-                },
+                headers,
                 body: JSON.stringify(postData),
             });
             if (!response.ok) {
@@ -162,7 +175,21 @@ exports.CodeExecutionToolDefinition = CodeExecutionToolDefinition;
 exports.CodeExecutionToolDescription = CodeExecutionToolDescription;
 exports.CodeExecutionToolName = CodeExecutionToolName;
 exports.CodeExecutionToolSchema = CodeExecutionToolSchema;
+exports.buildCodeApiHttpErrorMessage = async function buildCodeApiHttpErrorMessage(method, endpoint, response) {
+    let responseBody = '';
+    try {
+        responseBody = await response.text();
+    }
+    catch {
+        responseBody = '';
+    }
+    const body = responseBody.trim();
+    const bodySuffix = body === '' ? '' : `, body: ${body.slice(0, 1000)}`;
+    return `CodeAPI request failed: ${method} ${endpoint} returned ${response.status}${bodySuffix}`;
+};
 exports.createCodeExecutionTool = createCodeExecutionTool;
+exports.emptyOutputMessage = 'stdout: Empty. Ensure you\'re writing output explicitly.\n';
 exports.getCodeBaseURL = getCodeBaseURL;
 exports.imageExtRegex = imageExtRegex;
+exports.resolveCodeApiAuthHeaders = resolveCodeApiAuthHeaders;
 //# sourceMappingURL=CodeExecutor.cjs.map

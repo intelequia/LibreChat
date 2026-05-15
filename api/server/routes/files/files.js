@@ -527,6 +527,19 @@ router.get('/download/:userId/:file_id', fileAccess, async (req, res) => {
     // Access already validated by fileAccess middleware
     const file = req.fileAccess.file;
 
+    if (file.source === FileSources.text) {
+      const [fullFile] = await db.getFiles({ file_id }, undefined, { text: 1, filename: 1, type: 1, source: 1, bytes: 1, width: 1, height: 1 });
+      if (fullFile && fullFile.text) {
+        res.setHeader('Content-Disposition', getContentDisposition(file.filename));
+        res.setHeader('Content-Type', file.type || 'text/plain');
+        res.setHeader(
+          'X-File-Metadata',
+          encodeURIComponent(JSON.stringify(getDownloadFileMetadata(file))),
+        );
+        return res.send(fullFile.text);
+      }
+    }
+
     if (checkOpenAIStorage(file.source) && !file.model) {
       logger.warn(`File download requested by user ${userId} has no associated model: ${file_id}`);
       return res.status(400).send('The model used when creating this file is not available');
