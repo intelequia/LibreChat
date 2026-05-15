@@ -1,5 +1,5 @@
 const cookies = require('cookie');
-const { isEnabled } = require('@librechat/api');
+const { isEnabled, clearCloudFrontCookies } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { logoutUser } = require('~/server/services/AuthService');
@@ -47,6 +47,10 @@ const logoutController = async (req, res) => {
     res.clearCookie('openid_id_token');
     res.clearCookie('openid_user_id');
     res.clearCookie('token_provider');
+    clearCloudFrontCookies(res, {
+      userId: req.user?.id ?? req.user?._id?.toString?.(),
+      tenantId: req.user?.tenantId,
+    });
     const response = { message };
     if (
       isOpenIdUser &&

@@ -5,6 +5,7 @@ import {
   Brain,
   Bookmark,
   NotebookPen,
+  ScrollText,
   ArrowRightToLine,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -18,6 +19,12 @@ import {
 } from 'librechat-data-provider';
 import type { TInterfaceConfig, TEndpointsConfig } from 'librechat-data-provider';
 import type { NavLink } from '~/common';
+import {
+  useAgentCapabilities,
+  useMCPServerManager,
+  useGetAgentsConfig,
+  useHasAccess,
+} from '~/hooks';
 import MCPBuilderPanel from '~/components/SidePanel/MCPBuilder/MCPBuilderPanel';
 import AgentPanelSwitch from '~/components/SidePanel/Agents/AgentPanelSwitch';
 import BookmarkPanel from '~/components/SidePanel/Bookmarks/BookmarkPanel';
@@ -25,8 +32,8 @@ import PanelSwitch from '~/components/SidePanel/Builder/PanelSwitch';
 import Parameters from '~/components/SidePanel/Parameters/Panel';
 import { MemoryPanel } from '~/components/SidePanel/Memories';
 import FilesPanel from '~/components/SidePanel/Files/Panel';
-import { useHasAccess, useMCPServerManager } from '~/hooks';
 import { PromptsAccordion } from '~/components/Prompts';
+import { SkillsAccordion } from '~/components/Skills';
 
 export default function useSideNavLinks({
   hidePanel,
@@ -59,6 +66,10 @@ export default function useSideNavLinks({
     permissionType: PermissionTypes.PROMPTS,
     permission: Permissions.USE,
   });
+  const hasAccessToSkills = useHasAccess({
+    permissionType: PermissionTypes.SKILLS,
+    permission: Permissions.USE,
+  });
   const hasAccessToBookmarks = useHasAccess({
     permissionType: PermissionTypes.BOOKMARKS,
     permission: Permissions.USE,
@@ -88,6 +99,9 @@ export default function useSideNavLinks({
     permission: Permissions.CREATE,
   });
   const { availableMCPServers } = useMCPServerManager();
+
+  const { agentsConfig } = useGetAgentsConfig({ endpointsConfig });
+  const { skillsEnabled } = useAgentCapabilities(agentsConfig?.capabilities);
 
   const Links = useMemo(() => {
     const links: NavLink[] = [];
@@ -127,6 +141,16 @@ export default function useSideNavLinks({
         icon: OpenAIMinimalIcon,
         id: EModelEndpoint.assistants,
         Component: PanelSwitch,
+      });
+    }
+
+    if (hasAccessToSkills && skillsEnabled) {
+      links.push({
+        title: 'com_ui_skills',
+        label: '',
+        icon: ScrollText,
+        id: 'skills',
+        Component: SkillsAccordion,
       });
     }
 
@@ -214,6 +238,8 @@ export default function useSideNavLinks({
     hasAccessToAgents,
     hasAccessToCreateAgents,
     hasAccessToPrompts,
+    hasAccessToSkills,
+    skillsEnabled,
     hasAccessToMemories,
     hasAccessToReadMemories,
     interfaceConfig.parameters,

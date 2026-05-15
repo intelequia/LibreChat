@@ -17,6 +17,7 @@ const {
 } = process.env ?? {};
 
 const userProvidedOpenAI = isUserProvided(openAIApiKey);
+const anthropicUsesVertex = isEnabled(process.env.ANTHROPIC_USE_VERTEX);
 
 module.exports = {
   config: {
@@ -24,9 +25,7 @@ module.exports = {
     openAIApiKey,
     azureOpenAIApiKey,
     userProvidedOpenAI,
-    [EModelEndpoint.anthropic]: generateConfig(
-      anthropicApiKey || isEnabled(process.env.ANTHROPIC_USE_VERTEX),
-    ),
+    [EModelEndpoint.anthropic]: generateConfig(anthropicUsesVertex ? 'true' : anthropicApiKey),
     [EModelEndpoint.openAI]: generateConfig(openAIApiKey, OPENAI_REVERSE_PROXY),
     [EModelEndpoint.azureOpenAI]: generateConfig(azureOpenAIApiKey, AZURE_OPENAI_BASEURL),
     [EModelEndpoint.assistants]: generateConfig(
