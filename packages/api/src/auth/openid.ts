@@ -222,6 +222,16 @@ export async function findOpenIDUser({
       return { user: null, error: ErrorTypes.AUTH_FAILED, migration: false };
     }
 
+    if (user?.openidId && user.openidId === openidId && !isUserIssuerAllowed(user, normalizedIssuer)) {
+      if (isEnabled(process.env.OPENID_ALLOW_MULTI_ISSUER)) {
+        logger.info(
+          `[${strategyName}] Issuer mismatch for ${user.email} allowed by OPENID_ALLOW_MULTI_ISSUER (same openidId: ${openidId}, updating issuer)`,
+        );
+        if (normalizedIssuer) user.openidIssuer = normalizedIssuer;
+        return { user, error: null, migration: true };
+      }
+    }
+
     const emailIssuerResolution = resolveIssuerBoundUser(
       user,
       normalizedIssuer,
