@@ -41,6 +41,15 @@ function getStringClaim(claims: OpenIdEmailClaims, claim: string): string | unde
   return typeof value === 'string' && value ? value : undefined;
 }
 
+function getFirstStringFromArray(claims: OpenIdEmailClaims, claim: string): string | undefined {
+  const value = claims[claim];
+  if (Array.isArray(value)) {
+    const first = value.find((item): item is string => typeof item === 'string' && item.length > 0);
+    return first;
+  }
+  return undefined;
+}
+
 export function getOpenIdIssuer(
   ...sources: Array<OpenIdIssuerSource | null | undefined>
 ): string | undefined {
@@ -123,13 +132,19 @@ export function getOpenIdEmail(
   if (claimKey) {
     const value = claims[claimKey];
     if (typeof value === 'string' && value) return value;
+    if (Array.isArray(value)) {
+      const first = value.find(
+        (item): item is string => typeof item === 'string' && item.length > 0,
+      );
+      if (first) return first;
+    }
     if (value != null) {
       logger.warn(
-        `[${strategyName}] OPENID_EMAIL_CLAIM="${claimKey}" resolved to a non-string value (type: ${typeof value}). Falling back to: email -> preferred_username -> upn.`,
+        `[${strategyName}] OPENID_EMAIL_CLAIM="${claimKey}" resolved to a non-string value (type: ${typeof value}). Falling back to: email -> preferred_username -> upn -> emails[0].`,
       );
     } else {
       logger.warn(
-        `[${strategyName}] OPENID_EMAIL_CLAIM="${claimKey}" not present in userinfo. Falling back to: email -> preferred_username -> upn.`,
+        `[${strategyName}] OPENID_EMAIL_CLAIM="${claimKey}" not present in userinfo. Falling back to: email -> preferred_username -> upn -> emails[0].`,
       );
     }
   }
@@ -137,7 +152,8 @@ export function getOpenIdEmail(
   return (
     getStringClaim(claims, 'email') ??
     getStringClaim(claims, 'preferred_username') ??
-    getStringClaim(claims, 'upn')
+    getStringClaim(claims, 'upn') ??
+    getFirstStringFromArray(claims, 'emails')
   );
 }
 

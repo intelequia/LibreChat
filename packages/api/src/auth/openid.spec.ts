@@ -825,14 +825,27 @@ describe('getOpenIdEmail', () => {
     );
   });
 
-  it('falls back with a warning when OPENID_EMAIL_CLAIM is not a string', () => {
+  it('extracts first element when OPENID_EMAIL_CLAIM points to an array', () => {
+    process.env.OPENID_EMAIL_CLAIM = 'emails';
+
+    expect(getOpenIdEmail({ email: 'user@example.com', emails: ['b2c@example.com'] })).toBe(
+      'b2c@example.com',
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('falls back with a warning when OPENID_EMAIL_CLAIM resolves to an empty array', () => {
     process.env.OPENID_EMAIL_CLAIM = 'groups';
 
-    expect(getOpenIdEmail({ email: 'user@example.com', groups: ['a'] })).toBe('user@example.com');
+    expect(getOpenIdEmail({ email: 'user@example.com', groups: [] })).toBe('user@example.com');
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining(
         'OPENID_EMAIL_CLAIM="groups" resolved to a non-string value (type: object)',
       ),
     );
+  });
+
+  it('falls back to emails[0] when no standard claims are present (Azure B2C)', () => {
+    expect(getOpenIdEmail({ emails: ['b2cuser@example.com'] })).toBe('b2cuser@example.com');
   });
 });
