@@ -82,11 +82,11 @@ class JinaReranker extends BaseReranker {
 class CohereReranker extends BaseReranker {
     apiUrl;
     model;
-    constructor({ apiKey = process.env.CUSTOM_RERANKER_API_KEY || process.env.COHERE_API_KEY, apiUrl = process.env.CUSTOM_RERANKER_URL || 'https://api.cohere.com/v2/rerank', model = process.env.CUSTOM_RERANKER_MODEL || 'rerank-v3.5', logger, }) {
+    constructor({ apiKey, apiUrl, model, logger, }) {
         super(logger);
-        this.apiKey = apiKey;
-        this.apiUrl = apiUrl;
-        this.model = model;
+        this.apiKey = process.env.CUSTOM_RERANKER_API_KEY || apiKey || process.env.COHERE_API_KEY;
+        this.apiUrl = process.env.CUSTOM_RERANKER_URL || apiUrl || 'https://api.cohere.com/v2/rerank';
+        this.model = process.env.CUSTOM_RERANKER_MODEL || model || 'rerank-v3.5';
     }
     async rerank(query, documents, topK = 5) {
         this.logger.debug(`Reranking ${documents.length} chunks with Cohere using URL: ${this.apiUrl}`);
