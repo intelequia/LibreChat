@@ -66,6 +66,8 @@ COPY ./code-interpreter/CodeExecutor.cjs /app/api/node_modules/@librechat/agents
 
 COPY ./code-interpreter/CodeExecutor.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
 
+COPY ./patches/rerankers.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/search/rerankers.cjs
+
 # Node API setup
 EXPOSE 3080
 ENV HOST=0.0.0.0
