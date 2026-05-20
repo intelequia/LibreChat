@@ -358,16 +358,8 @@ const loadTools = async ({
         );
         return createSearchTool({
           ...result.authResult,
-          onSearchResults: async (results, runnableConfig) => {
+          onSearchResults: (results, runnableConfig) => {
             logger.info('[onSearchResults] scraper results:', results);
-            const { query } = runnableConfig.toolCall.args; // runnableConfig.configurable;
-            results.documents = results.data?.organic || [];
-            if (!results.documents) {
-              logger.warn('[onSearchResults] results.documents is missing. Creating empty array.');
-              results.documents = [];
-            }
-            const rerankedDocs = await applyReranking(query, results.documents, result.authResult.rerankerType, result.authResult);
-            results.data.organic = rerankedDocs;
             if (onSearchResults) {
               onSearchResults(results, runnableConfig);
             }
