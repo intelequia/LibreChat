@@ -245,29 +245,26 @@ export async function storeAndStripChallenge(
 }
 
 /**
- * Checks if the redirect URI is for the admin panel (cross-origin).
- * Uses proper URL parsing to compare origins, handling edge cases where
- * both URLs might share the same prefix (e.g., localhost:3000 vs localhost:3001).
+ * Checks if the redirect URI is for the admin panel.
+ * Handles both cross-origin deployments (admin panel on a different host/port)
+ * and same-origin subpath deployments (admin panel at e.g. /adminpanel).
  *
  * @param redirectUri - The redirect URI to check.
- * @param adminPanelUrl - The admin panel URL (defaults to ADMIN_PANEL_URL env var)
+ * @param adminPanelUrl - The admin panel URL (from ADMIN_PANEL_URL env var)
  * @param domainClient - The main client domain
- * @returns True if redirecting to admin panel (different origin from main client).
+ * @returns True if redirecting to admin panel (separate from main client).
  */
 export function isAdminPanelRedirect(
   redirectUri: string,
   adminPanelUrl: string,
   domainClient: string,
 ): boolean {
+  if (!adminPanelUrl || adminPanelUrl === domainClient) {
+    return false;
+  }
   try {
-    const redirectOrigin = new URL(redirectUri).origin;
-    const adminOrigin = new URL(adminPanelUrl).origin;
-    const clientOrigin = new URL(domainClient).origin;
-
-    /** Redirect is for admin panel if it matches admin origin but not main client origin */
-    return redirectOrigin === adminOrigin && redirectOrigin !== clientOrigin;
+    return redirectUri.startsWith(adminPanelUrl);
   } catch {
-    /** If URL parsing fails, fall back to simple string comparison */
-    return redirectUri.startsWith(adminPanelUrl) && !redirectUri.startsWith(domainClient);
+    return false;
   }
 }
