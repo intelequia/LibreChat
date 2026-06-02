@@ -129,6 +129,7 @@ const Image = ({
               ? 'size-full object-contain'
               : cn('h-auto w-auto max-w-full', IMAGE_MAX_H),
           )}
+          referrerPolicy="no-referrer"
         />
       </button>
       <DialogImage

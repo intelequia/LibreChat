@@ -158,6 +158,9 @@ export default defineConfig(({ command }) => ({
             if (normalizedId.includes('@codesandbox/sandpack')) {
               return 'sandpack';
             }
+            if (normalizedId.includes('react-vtree')) {
+              return 'react-vtree';
+            }
             if (normalizedId.includes('react-virtualized')) {
               return 'virtualization';
             }
@@ -272,6 +275,10 @@ export default defineConfig(({ command }) => ({
             }
             if (normalizedId.includes('@headlessui')) {
               return 'headlessui';
+            }
+
+            if (normalizedId.includes('@icons-pack/react-simple-icons/icons/')) {
+              return;
             }
 
             // Everything else falls into a generic vendor chunk.

@@ -11,7 +11,7 @@ const {
   AssistantStreamEvents,
 } = require('librechat-data-provider');
 
-const { sendEvent } = require('@librechat/api');
+const { sendEvent, checkBalance } = require('@librechat/api');
 
 const {
   initAzureAgentThread,
@@ -29,11 +29,17 @@ const { createAzureAgentRun, StreamRunManager } = require('~/server/services/Run
 const { addTitle } = require('~/server/services/Endpoints/azureAgents');
 const { sleep, countTokens } = require('~/server/utils');
 const { createRunBody } = require('~/server/services/createRunBody');
-const { getTransactions } = require('~/models/Transaction');
-const { checkBalance } = require('~/models/balanceMethods');
-const { getConvo } = require('~/models/Conversation');
-const getLogStores = require('~/cache/getLogStores');
+const {
+  getConvo,
+  getMultiplier,
+  getTransactions,
+  findBalanceByUser,
+  upsertBalanceFields,
+  createAutoRefillTransaction,
+} = require('~/models');
+const { logViolation, getLogStores } = require('~/cache');
 const { getModelMaxTokens, intelequiaCountTokens } = require('~/utils');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { getOpenAIClient } = require('./helpers');
 const { logger } = require('~/config');
 
@@ -112,23 +118,15 @@ const chatV2 = async (req, res) => {
   const handleError = createErrorHandler({ req, res, getContext });
 
   try {
-    /**
-     * Telemetry logs
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
     const messageTokens = intelequiaCountTokens([text], model);
-    global.appInsights.trackEvent({
-      name: 'AzureAgentsQuery',
-      properties: {
-        userId: req.user.id,
-        userEmail: req.user.email,
-        charactersLength: text.length,
-        messageTokens: messageTokens.completion,
-        model: model,
-        conversationId: conversationId,
-        assistantId: assistant_id,
-      },
+    trackEvent('AzureAgentsQuery', {
+      userId: req.user.id,
+      userEmail: req.user.email,
+      charactersLength: text.length,
+      messageTokens: messageTokens.completion,
+      model,
+      conversationId,
+      assistantId: assistant_id,
     });
     res.on('close', async () => {
       if (!completedRun) {
@@ -170,16 +168,26 @@ const chatV2 = async (req, res) => {
       // Count tokens up to the current context window
       promptTokens = Math.min(promptTokens, getModelMaxTokens(model));
 
-      await checkBalance({
-        req,
-        res,
-        txData: {
-          model,
-          user: req.user.id,
-          tokenType: 'prompt',
-          amount: promptTokens,
+      await checkBalance(
+        {
+          req,
+          res,
+          txData: {
+            model,
+            user: req.user.id,
+            tokenType: 'prompt',
+            amount: promptTokens,
+          },
         },
-      });
+        {
+          findBalanceByUser,
+          getMultiplier,
+          createAutoRefillTransaction,
+          logViolation,
+          balanceConfig: req.app?.locals?.balance,
+          upsertBalanceFields,
+        },
+      );
     };
 
     azureAgentClient = await getOpenAIClient({
@@ -223,9 +231,8 @@ const chatV2 = async (req, res) => {
     }
 
     if (typeof endpointOption.artifactsPrompt === 'string' && endpointOption.artifactsPrompt) {
-      body.additional_instructions = `${body.additional_instructions ?? ''}\n${
-        endpointOption.artifactsPrompt
-      }`.trim();
+      body.additional_instructions = `${body.additional_instructions ?? ''}\n${endpointOption.artifactsPrompt
+        }`.trim();
     }
 
     if (instructions) {
@@ -346,19 +353,11 @@ const chatV2 = async (req, res) => {
 
     const sendInitialResponse = () => {
 
-      /**
-       * Custom event to track when assistant completion query has started
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      global.appInsights.trackEvent({
-        name: 'AzureAgentsAnswerStarted',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          model: model,
-          assistantId: body.assistant_id,
-        },
+      trackEvent('AzureAgentsAnswerStarted', {
+        userId: req.user.id,
+        userEmail: req.user.email,
+        model,
+        assistantId: body.assistant_id,
       });
       sendEvent(res, {
         sync: true,
@@ -382,7 +381,7 @@ const chatV2 = async (req, res) => {
 
     const processRun = async (retry = false) => {
 
-      body.model = model;        
+      body.model = model;
       azureAgentClient.attachedFileIds = attachedFileIds;
       if (retry) {
         response = await runAssistant({
@@ -411,14 +410,14 @@ const chatV2 = async (req, res) => {
       // todo: retry logic
       response = await runAssistant({ azureAgentClient, thread_id, run_id });
 
-      if (response.text =='' && response.messages.length == 0){
+      if (response.text == '' && response.messages.length == 0) {
         const listMessages = await azureAgentClient.messages.list(thread_id);
         const messages = [];
 
         for await (const message of listMessages) {
           messages.push(message);
         }
-        
+
         if (messages.length > 0) {
           response.messages.push(messages[0]);
           response.text = messages[0].content[0].text.value;
@@ -441,7 +440,7 @@ const chatV2 = async (req, res) => {
       return res.end();
     }
 
-    if (response.run.status === RunStatus.IN_PROGRESS || response.run.status === RunStatus.REQUIRES_ACTION ) {
+    if (response.run.status === RunStatus.IN_PROGRESS || response.run.status === RunStatus.REQUIRES_ACTION) {
       processRun(true);
     }
 
@@ -504,22 +503,14 @@ const chatV2 = async (req, res) => {
         });
       }
     } else {
-    /**
-       * Custom event to track when assistant completion query has ended
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      global.appInsights.trackEvent({
-        name: 'AzureAzureAgentAnswerEnded',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          charactersLength: response.text.length,
-          messageTokens: response.run.usage.totalTokens,
-          promptTokens: response.run.usage.promptTokens,
-          completionTokens: response.run.usage.completionTokens,
-          model: model,
-        },
+      trackEvent('AzureAzureAgentAnswerEnded', {
+        userId: req.user.id,
+        userEmail: req.user.email,
+        charactersLength: response.text.length,
+        messageTokens: response.run.usage.totalTokens,
+        promptTokens: response.run.usage.promptTokens,
+        completionTokens: response.run.usage.completionTokens,
+        model,
       });
 
       await recordUsage({

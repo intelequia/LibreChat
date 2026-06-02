@@ -3,6 +3,7 @@ const path = require('path');
 const mime = require('mime');
 const axios = require('axios');
 const fetch = require('node-fetch');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const { logger } = require('@librechat/data-schemas');
 const { getAzureContainerClient, deleteRagFile } = require('@librechat/api');
 
@@ -233,11 +234,18 @@ async function uploadFileToAzure({
  */
 async function getAzureFileStream(_req, fileURL) {
   try {
-    const response = await axios({
+    const config = {
       method: 'get',
       url: fileURL,
       responseType: 'stream',
-    });
+    };
+
+    if (process.env.PROXY) {
+      config.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+      config.proxy = false;
+    }
+
+    const response = await axios(config);
     return response.data;
   } catch (error) {
     logger.error('[getAzureFileStream] Error getting blob stream:', error);

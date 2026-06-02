@@ -1,5 +1,6 @@
-const {AIProjectClient} = require ('@azure/ai-projects')
-const { AgentsClient } = require ("@azure/ai-agents");
+const { AIProjectClient } = require('@azure/ai-projects')
+const { AgentsClient } = require("@azure/ai-agents");
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 
 const {
   EModelEndpoint,
@@ -51,7 +52,7 @@ class Files {
 const initializeClient = async ({ req, res, initAppClient = false }) => {
 
 
-  const {AZURE_AI_PROJECT_ENDPOINT} = process.env;
+  const { AZURE_AI_PROJECT_ENDPOINT } = process.env;
 
   const usersProvidesProjectConnectionString = isUserProvided(AZURE_AI_PROJECT_ENDPOINT);
 
@@ -70,7 +71,7 @@ const initializeClient = async ({ req, res, initAppClient = false }) => {
     userValues = await getUserKeyValues({
       userId: req.user.id,
       name: EModelEndpoint.azureAgents,
-    });  
+    });
   }
   // Prefer explicit client credentials from environment; fallback to DefaultAzureCredential
   const { AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET } = process.env;
@@ -95,18 +96,18 @@ const initializeClient = async ({ req, res, initAppClient = false }) => {
   const azureConfig = req.app.locals[EModelEndpoint.azureOpenAI];
 
   const client = new AgentsClient(AZURE_AI_PROJECT_ENDPOINT, credentials);
-  
+
   client.options = {}
 
-  if(azureConfig && azureConfig.assistants){
-    
+  if (azureConfig && azureConfig.assistants) {
+
     if (initAppClient) {
       client.options.titleConvo = azureConfig.titleConvo;
       client.options.titleModel = azureConfig.titleModel;
       client.options.titleMethod = azureConfig.titleMethod ?? 'completion';
     }
   }
-  
+
   // client.files = new Files(client)
 
   client.req = req;
@@ -115,14 +116,14 @@ const initializeClient = async ({ req, res, initAppClient = false }) => {
   return client
 };
 
-const titleConvo = async ({ text, conversationId, responseText = '', model, req })=>{
+const titleConvo = async ({ text, conversationId, responseText = '', model, req }) => {
 
   const convo = `||>User:
     "${truncateText(text)}"
     ||>Response:
     "${JSON.stringify(truncateText(responseText))}"`;
 
-  const body ={   
+  const body = {
     messages: [
       {
         role: 'system',
@@ -146,8 +147,8 @@ const titleConvo = async ({ text, conversationId, responseText = '', model, req 
   const apiVersion = process.env.AZURE_ASSISTANTS_BASE_URL_API_VERSION;
   const apiKey = process.env.AZURE_ASSISTANTS_API_KEY;
   const url = `https://${endpoint}.openai.azure.com/openai/deployments/${deploymentName}/chat/completions?api-version=${apiVersion}`;
-  try{
-    const response = await fetch(url,{
+  try {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -158,23 +159,18 @@ const titleConvo = async ({ text, conversationId, responseText = '', model, req 
     const data = await response.json();
     const result = data.choices[0].message.content;
 
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'Azure Agent Title Generation',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          charactersLength: result.length,
-          messageTokens: data.usage.total_tokens,
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          model: model,
-        },
-      });
-    }
+    trackEvent('Azure Agent Title Generation', {
+      userId: req.user.id,
+      userEmail: req.user.email,
+      charactersLength: result.length,
+      messageTokens: data.usage.total_tokens,
+      promptTokens: data.usage.prompt_tokens,
+      completionTokens: data.usage.completion_tokens,
+      model,
+    });
 
     return result
-  }catch(e){
+  } catch (e) {
     console.error('Error in titleConvo:', e);
   }
 

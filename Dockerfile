@@ -1,9 +1,9 @@
-# v0.8.3
+# v0.8.6-rc1
 
 # Base node image
 FROM node:20-alpine AS node
 
-# Install jemalloc
+RUN apk upgrade --no-cache
 RUN apk add --no-cache jemalloc
 RUN apk add --no-cache python3 py3-pip uv
 
@@ -16,6 +16,8 @@ RUN uv --version
 
 # Set configurable max-old-space-size with default
 ARG NODE_MAX_OLD_SPACE_SIZE=6144
+ARG NPM_CI_TIMEOUT_SECONDS=1500
+ARG NPM_CI_ATTEMPTS=2
 
 RUN mkdir -p /app && chown node:node /app
 WORKDIR /app
@@ -38,7 +40,17 @@ RUN \
     npm config set fetch-retries 5 ; \
     npm config set fetch-retry-mintimeout 15000 ; \
     npm install --force --no-audit; \
-    npm ci --no-audit
+    attempt=1 ; \
+    until timeout "$NPM_CI_TIMEOUT_SECONDS" npm ci --no-audit ; do \
+        status=$? ; \
+        if [ "$attempt" -ge "$NPM_CI_ATTEMPTS" ]; then \
+            exit "$status" ; \
+        fi ; \
+        echo "npm ci --no-audit failed with exit code $status; retrying attempt $((attempt + 1))/$NPM_CI_ATTEMPTS" ; \
+        attempt=$((attempt + 1)) ; \
+        npm cache clean --force || true ; \
+        sleep 10 ; \
+    done
 
 COPY --chown=node:node . .
 
@@ -50,9 +62,31 @@ RUN \
 
 RUN mkdir -p /app/client/public/images /app/api/logs
 
-COPY ./code-interpreter/CodeExecutor.cjs /app/api/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
+# =============================================================================
+# Intelequia Patches (@librechat/agents overrides)
+# These replace specific modules from the @librechat/agents npm package to add
+# custom functionality without forking the package.
+# Source: ./intelequia-patches/
+# =============================================================================
 
-COPY ./code-interpreter/CodeExecutor.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
+# CodeExecutor.cjs — Adds support for remote code-interpreter-manager service
+# instead of local Docker-based execution. Allows per-user containers and
+# external workspace management via LIBRECHAT_CODE_API_URL env var.
+COPY ./intelequia-patches/CodeExecutor.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
+COPY ./intelequia-patches/CodeExecutor.cjs /app/api/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
+
+# BashExecutor.cjs — Same remote execution support for bash/shell commands,
+# routing through code-interpreter-manager instead of local Docker.
+COPY ./intelequia-patches/BashExecutor.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/BashExecutor.cjs
+COPY ./intelequia-patches/BashExecutor.cjs /app/api/node_modules/@librechat/agents/dist/cjs/tools/BashExecutor.cjs
+
+# rerankers.cjs — Supports Azure AI Foundry as Cohere reranker backend.
+# Env vars CUSTOM_RERANKER_API_KEY, CUSTOM_RERANKER_URL, CUSTOM_RERANKER_MODEL
+# always take priority over values passed from librechat.yaml config,
+# enabling Azure AI Foundry endpoints without modifying app config.
+COPY ./intelequia-patches/rerankers.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/search/rerankers.cjs
+
+# =============================================================================
 
 # Node API setup
 EXPOSE 3080

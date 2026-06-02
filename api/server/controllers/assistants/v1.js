@@ -1,15 +1,15 @@
 const fs = require('fs').promises;
 const { logger } = require('@librechat/data-schemas');
 const { FileContext } = require('librechat-data-provider');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
+const { deleteFileByFilter, updateAssistantDoc, getAssistants } = require('~/models');
 const { uploadImageBuffer, filterFile } = require('~/server/services/Files/process');
 const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { deleteAssistantActions } = require('~/server/services/ActionService');
-const { updateAssistantDoc, getAssistants } = require('~/models/Assistant');
 const { getOpenAIClient, fetchAssistants } = require('./helpers');
 const { getCachedTools } = require('~/server/services/Config');
 const { manifestToolMap } = require('~/app/clients/tools');
-const { deleteFileByFilter } = require('~/models');
 const { IsToolAFunction, SaveFunctionsInCache, GetFunctionSpecification, isToolEnabled, GetToolSpecification } = require('~/utils');
 
 /**
@@ -22,21 +22,7 @@ const createAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
 
-    /**
-     * Custom event to track when an assistant has been created
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'AssistantCreated',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          assistantName: req.body.name,
-        },
-      });
-    }
+    trackEvent('AssistantCreated', { userId: req.user.id, userEmail: req.user.email, assistantName: req.body.name });
 
     const {
       tools = [],
@@ -144,21 +130,7 @@ const patchAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
-    /**
-     * Custom event to track when an assistant has been updated
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'AssistantUpdated',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          assistantName: req.body.name,
-        },
-      });
-    }
+    trackEvent('AssistantUpdated', { userId: req.user.id, userEmail: req.user.email, assistantName: req.body.name });
 
     const assistant_id = req.params.id;
     const {
@@ -256,21 +228,7 @@ const deleteAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
-    /**
-     * Custom event to track when an assistant has been deleted
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    if (global.appInsights) {
-      global.appInsights.trackEvent({
-        name: 'AssistantDeleted',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          assistantName: req.params.id,
-        },
-      });
-    }
+    trackEvent('AssistantDeleted', { userId: req.user.id, userEmail: req.user.email, assistantName: req.params.id });
 
     const assistant_id = req.params.id;
     const deletionStatus = await openai.beta.assistants.delete(assistant_id);
@@ -413,7 +371,11 @@ const uploadAssistantAvatar = async (req, res) => {
     if (_metadata.avatar && _metadata.avatar_source) {
       const { deleteFile } = getStrategyFunctions(_metadata.avatar_source);
       try {
-        await deleteFile(req, { filepath: _metadata.avatar });
+        await deleteFile(req, {
+          filepath: _metadata.avatar,
+          user: req.user.id,
+          tenantId: req.user.tenantId,
+        });
         await deleteFileByFilter({ user: req.user.id, filepath: _metadata.avatar });
       } catch (error) {
         logger.error('[/:assistant_id/avatar] Error deleting old avatar', error);

@@ -1,7 +1,13 @@
 const { v4 } = require('uuid');
 const { sleep } = require('@librechat/agents');
 const { logger } = require('@librechat/data-schemas');
-const { sendEvent, getBalanceConfig, getModelMaxTokens, countTokens } = require('@librechat/api');
+const {
+  sendEvent,
+  countTokens,
+  checkBalance,
+  getBalanceConfig,
+  getModelMaxTokens,
+} = require('@librechat/api');
 const {
   Time,
   Constants,
@@ -31,11 +37,17 @@ const { createRun, StreamRunManager } = require('~/server/services/Runs');
 const { addTitle } = require('~/server/services/Endpoints/assistants');
 const { createRunBody } = require('~/server/services/createRunBody');
 const { sendResponse } = require('~/server/middleware/error');
-const { getTransactions } = require('~/models/Transaction');
-const { checkBalance } = require('~/models/balanceMethods');
-const { getConvo } = require('~/models/Conversation');
-const getLogStores = require('~/cache/getLogStores');
+const {
+  createAutoRefillTransaction,
+  findBalanceByUser,
+  upsertBalanceFields,
+  getTransactions,
+  getMultiplier,
+  getConvo,
+} = require('~/models');
+const { logViolation, getLogStores } = require('~/cache');
 const { intelequiaCountTokens } = require('~/utils');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { getOpenAIClient } = require('./helpers');
 
 const ten_minutes = 1000 * 60 * 10;
@@ -68,22 +80,14 @@ async function sendResponseTelemetry(req, conversationId, response, model) {
   }
 
   const { completion, prompt } = intelequiaCountTokens(messagesHistory, model);
-  /**
-   * Custom event to track when assistant completion query has ended
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  global.appInsights.trackEvent({
-    name: 'AzureAssistantsAnswerEnded',
-    properties: {
-      userId: req.user.id,
-      userEmail: req.user.email,
-      charactersLength: response.text.length,
-      messageTokens: completion + prompt,
-      promptTokens: prompt,
-      completionTokens: completion,
-      model: model,
-    },
+  trackEvent('AzureAssistantsAnswerEnded', {
+    userId: req.user.id,
+    userEmail: req.user.email,
+    charactersLength: response.text.length,
+    messageTokens: completion + prompt,
+    promptTokens: prompt,
+    completionTokens: completion,
+    model,
   });
 }
 
@@ -284,23 +288,15 @@ const chatV1 = async (req, res) => {
   };
 
   try {
-    /**
-     * Telemetry logs
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
     const messageTokens = intelequiaCountTokens([text], model);
-    global.appInsights.trackEvent({
-      name: 'AzureAssistantsQuery',
-      properties: {
-        userId: req.user.id,
-        userEmail: req.user.email,
-        charactersLength: text.length,
-        messageTokens: messageTokens.completion,
-        model: model,
-        conversationId: conversationId,
-        assistantId: assistant_id,
-      },
+    trackEvent('AzureAssistantsQuery', {
+      userId: req.user.id,
+      userEmail: req.user.email,
+      charactersLength: text.length,
+      messageTokens: messageTokens.completion,
+      model,
+      conversationId,
+      assistantId: assistant_id,
     });
     res.on('close', async () => {
       if (!completedRun) {
@@ -342,16 +338,26 @@ const chatV1 = async (req, res) => {
       // Count tokens up to the current context window
       promptTokens = Math.min(promptTokens, getModelMaxTokens(model));
 
-      await checkBalance({
-        req,
-        res,
-        txData: {
-          model,
-          user: req.user.id,
-          tokenType: 'prompt',
-          amount: promptTokens,
+      await checkBalance(
+        {
+          req,
+          res,
+          txData: {
+            model,
+            user: req.user.id,
+            tokenType: 'prompt',
+            amount: promptTokens,
+          },
         },
-      });
+        {
+          findBalanceByUser,
+          getMultiplier,
+          createAutoRefillTransaction,
+          logViolation,
+          balanceConfig,
+          upsertBalanceFields,
+        },
+      );
     };
 
     const { openai: _openai } = await getOpenAIClient({
@@ -546,19 +552,11 @@ const chatV1 = async (req, res) => {
     await Promise.all(promises);
 
     const sendInitialResponse = () => {
-      /**
-       * Custom event to track when assistant completion query has started
-       * @Organization Intelequia
-       * @Author Enrique M. Pedroza Castillo
-       */
-      global.appInsights.trackEvent({
-        name: 'AzureAssistantsAnswerStarted',
-        properties: {
-          userId: req.user.id,
-          userEmail: req.user.email,
-          model: model,
-          assistantId: body.assistant_id,
-        },
+      trackEvent('AzureAssistantsAnswerStarted', {
+        userId: req.user.id,
+        userEmail: req.user.email,
+        model,
+        assistantId: body.assistant_id,
       });
 
       sendEvent(res, {

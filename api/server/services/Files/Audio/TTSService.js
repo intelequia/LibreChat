@@ -269,6 +269,7 @@ class TTSService {
 
     if (process.env.PROXY) {
       options.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+      options.proxy = false;
     }
 
     try {
@@ -297,6 +298,7 @@ class TTSService {
       req.config ??
       (await getAppConfig({
         role: req.user?.role,
+        tenantId: req.user?.tenantId,
       }));
     try {
       res.setHeader('Content-Type', 'audio/mpeg');
@@ -365,6 +367,7 @@ class TTSService {
       req.config ??
       (await getAppConfig({
         role: req.user?.role,
+        tenantId: req.user?.tenantId,
       }));
     const provider = this.getProvider(appConfig);
     const ttsSchema = appConfig?.speech?.tts?.[provider];

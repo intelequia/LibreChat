@@ -1,16 +1,15 @@
 const path = require('path');
 const { v4 } = require('uuid');
-const { countTokens, escapeRegExp } = require('@librechat/api');
+const { countTokens } = require('@librechat/api');
+const { escapeRegExp } = require('@librechat/data-schemas');
 const {
   Constants,
   ContentTypes,
   AnnotationTypes,
   defaultOrderQuery,
 } = require('librechat-data-provider');
+const { recordMessage, getMessages, spendTokens, saveConvo } = require('~/models');
 const { retrieveAndProcessFile } = require('~/server/services/Files/process');
-const { recordMessage, getMessages } = require('~/models/Message');
-const { spendTokens } = require('~/models/spendTokens');
-const { saveConvo } = require('~/models/Conversation');
 const { getUniqueItems } = require('~/utils');
 
 /**
@@ -81,7 +80,7 @@ async function initAzureAgentThread({ azureAgentClient, body, thread_id: _thread
    */
   body.messages.forEach(message => {
 
-    
+
     if (message.file_ids) {
       message.attachments = []
       message.file_ids.forEach(fileId => {
@@ -133,24 +132,6 @@ async function initAzureAgentThread({ azureAgentClient, body, thread_id: _thread
 async function saveUserMessage(req, params) {
   const tokenCount = await countTokens(params.text);
 
-  // todo: do this on the frontend
-  // const { file_ids = [] } = params;
-  // let content;
-  // if (file_ids.length) {
-  //   content = [
-  //     {
-  //       value: params.text,
-  //     },
-  //     ...(
-  //       file_ids
-  //         .filter(f => f)
-  //         .map((file_id) => ({
-  //           file_id,
-  //         }))
-  //     ),
-  //   ];
-  // }
-
   const userMessage = {
     user: params.user,
     endpoint: params.endpoint,
@@ -181,9 +162,15 @@ async function saveUserMessage(req, params) {
   }
 
   const message = await recordMessage(userMessage);
-  await saveConvo(req, convo, {
-    context: 'api/server/services/Threads/manage.js #saveUserMessage',
-  });
+  await saveConvo(
+    {
+      userId: req?.user?.id,
+      isTemporary: req?.body?.isTemporary,
+      interfaceConfig: req?.config?.interfaceConfig,
+    },
+    convo,
+    { context: 'api/server/services/Threads/manage.js #saveUserMessage' },
+  );
   return message;
 }
 
@@ -232,7 +219,11 @@ async function saveAssistantMessage(req, params) {
   });
 
   await saveConvo(
-    req,
+    {
+      userId: req?.user?.id,
+      isTemporary: req?.body?.isTemporary,
+      interfaceConfig: req?.config?.interfaceConfig,
+    },
     {
       endpoint: params.endpoint,
       conversationId: params.conversationId,
@@ -450,7 +441,11 @@ async function syncMessages({
   await Promise.all(recordPromises);
 
   await saveConvo(
-    openai.req,
+    {
+      userId: openai.req?.user?.id,
+      isTemporary: openai.req?.body?.isTemporary,
+      interfaceConfig: openai.req?.config?.interfaceConfig,
+    },
     {
       conversationId,
       file_ids: attached_file_ids,
@@ -734,24 +729,24 @@ async function processMessages({ openai, client, messages = [] }) {
 
       await Promise.all(annotationPromises);
 
-    /**
-     * Additional work on replacements array to fix weird letters on citations response
-     * @Organization Intelequia
-     * @Author Pablo Suarez Romero
-     */
-      const uniqueItems = getUniqueItems(replacements);
+      // /**
+      //  * Additional work on replacements array to fix weird letters on citations response
+      //  * @Organization Intelequia
+      //  * @Author Pablo Suarez Romero
+      //  */
+      //   const uniqueItems = getUniqueItems(replacements);
 
-      //Apply replacements in reverse order
-      uniqueItems.sort((a, b) => b.start - a.start);
-      for (const { start, end, text } of uniqueItems) {
-        let citation = "";
-        text.forEach(element => {
-          citation += ' ' + element
-        });
-        currentText = currentText.slice(0, start) + citation + currentText.slice(end);
-      }
+      //   //Apply replacements in reverse order
+      //   uniqueItems.sort((a, b) => b.start - a.start);
+      //   for (const { start, end, text } of uniqueItems) {
+      //     let citation = "";
+      //     text.forEach(element => {
+      //       citation += ' ' + element
+      //     });
+      //     currentText = currentText.slice(0, start) + citation + currentText.slice(end);
+      //   }
 
-      text += currentText;
+      //   text += currentText;
     }
   }
 

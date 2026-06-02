@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Business Header</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap"
+        rel="stylesheet">
+
+    <link rel="stylesheet" href="./styles.css">
+</head>
+
+<body style="margin:0; padding:0;">
+    <div id="business-header-container" class="business-header">
+        <img src="{{BUSINESS_CHAT_LOGO}}" alt="Logo" class="logo-image" id="business-logo" />
+        <h1 class="business-title" id="business-title">{{BUSINESS_CHAT_TITLE}}</h1>
+    </div>
+
+    <script>
+        (function () {
+            const config = window.__LIBRECHAT_CONFIG__ || {};
+            const titleEl = document.getElementById('business-title');
+            const logoEl = document.getElementById('business-logo');
+
+            // Actualizar título dinámico
+            if (titleEl && config.businessChatTitle) {
+                titleEl.textContent = config.businessChatTitle;
+            }
+
+            // Función para actualizar logo según tema
+            const updateLogo = () => {
+                if (logoEl) {
+                    const htmlEl = document.documentElement;
+                    const isDark = htmlEl.classList.contains('dark') ||
+                        htmlEl.getAttribute('data-theme') === 'dark' ||
+                        window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    const logo = isDark ? config.businessChatLogoDark : config.businessChatLogo;
+                    if (logo) logoEl.src = logo;
+                }
+            };
+
+            // Actualizar logo inicialmente
+            updateLogo();
+
+            // Escuchar cambios en las clases del html (para temas de LibreChat)
+            const observer = new MutationObserver(updateLogo);
+            observer.observe(document.documentElement, {
+                attributes: true,
+                attributeFilter: ['class', 'data-theme']
+            });
+
+            // También escuchar cambios en prefers-color-scheme (para tema del sistema)
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateLogo);
+        })();
+    </script>
+</body>
+
+</html>

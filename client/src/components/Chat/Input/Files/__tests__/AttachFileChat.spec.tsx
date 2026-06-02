@@ -13,13 +13,15 @@ const mockEndpointsConfig: TEndpointsConfig = {
   Moonshot: { type: EModelEndpoint.custom, userProvide: false, order: 9999 },
 };
 
-const mockFileConfig = mergeFileConfig({
+const defaultFileConfig = mergeFileConfig({
   endpoints: {
     Moonshot: { fileLimit: 5 },
     [EModelEndpoint.agents]: { fileLimit: 20 },
     default: { fileLimit: 10 },
   },
 });
+
+let mockFileConfig = defaultFileConfig;
 
 let mockAgentsMap: Record<string, Partial<Agent>> = {};
 let mockAgentQueryData: Partial<Agent> | undefined;
@@ -57,7 +59,13 @@ function renderComponent(conversation: Record<string, unknown> | null, disableIn
   return render(
     <QueryClientProvider client={queryClient}>
       <RecoilRoot>
-        <AttachFileChat conversation={conversation as never} disableInputs={disableInputs} />
+        <AttachFileChat
+          conversation={conversation as never}
+          disableInputs={disableInputs}
+          files={new Map()}
+          setFiles={() => {}}
+          setFilesLoading={() => {}}
+        />
       </RecoilRoot>
     </QueryClientProvider>,
   );
@@ -65,6 +73,7 @@ function renderComponent(conversation: Record<string, unknown> | null, disableIn
 
 describe('AttachFileChat', () => {
   beforeEach(() => {
+    mockFileConfig = defaultFileConfig;
     mockAgentsMap = {};
     mockAgentQueryData = undefined;
     mockAttachFileMenuProps = {};
@@ -119,6 +128,51 @@ describe('AttachFileChat', () => {
       renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-2' });
       expect(mockAttachFileMenuProps.endpointType).toBe(EModelEndpoint.custom);
     });
+
+    it('falls back to agentsMap provider when fetched agent omits provider', () => {
+      mockAgentsMap = {
+        'agent-1': { provider: EModelEndpoint.openAI, model_parameters: {} } as Partial<Agent>,
+      };
+      mockAgentQueryData = {} as Partial<Agent>;
+      renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
+      expect(mockAttachFileMenuProps.endpointType).toBe(EModelEndpoint.openAI);
+    });
+  });
+
+  describe('useResponsesApi resolution for agents', () => {
+    it('passes useResponsesApi from fetched agent model parameters', () => {
+      mockAgentQueryData = {
+        provider: EModelEndpoint.azureOpenAI,
+        model_parameters: { useResponsesApi: true },
+      } as Partial<Agent>;
+      renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
+      expect(mockAttachFileMenuProps.useResponsesApi).toBe(true);
+    });
+
+    it('falls back to agentsMap model parameters when fetched agent omits them', () => {
+      mockAgentsMap = {
+        'agent-1': {
+          provider: EModelEndpoint.azureOpenAI,
+          model_parameters: { useResponsesApi: true },
+        } as Partial<Agent>,
+      };
+      mockAgentQueryData = { provider: EModelEndpoint.azureOpenAI } as Partial<Agent>;
+      renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
+      expect(mockAttachFileMenuProps.useResponsesApi).toBe(true);
+    });
+
+    it('preserves an explicit conversation useResponsesApi false override', () => {
+      mockAgentQueryData = {
+        provider: EModelEndpoint.azureOpenAI,
+        model_parameters: { useResponsesApi: true },
+      } as Partial<Agent>;
+      renderComponent({
+        endpoint: EModelEndpoint.agents,
+        agent_id: 'agent-1',
+        useResponsesApi: false,
+      });
+      expect(mockAttachFileMenuProps.useResponsesApi).toBe(false);
+    });
   });
 
   describe('endpointType resolution for non-agents', () => {
@@ -145,6 +199,60 @@ describe('AttachFileChat', () => {
       const agentType = mockAttachFileMenuProps.endpointType;
 
       expect(directType).toBe(agentType);
+    });
+  });
+
+  describe('upload disabled rendering', () => {
+    it('renders null for agents endpoint when fileConfig.agents.disabled is true', () => {
+      mockFileConfig = mergeFileConfig({
+        endpoints: {
+          [EModelEndpoint.agents]: { disabled: true },
+        },
+      });
+      const { container } = renderComponent({
+        endpoint: EModelEndpoint.agents,
+        agent_id: 'agent-1',
+      });
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('renders null for agents endpoint when disableInputs is true', () => {
+      const { container } = renderComponent(
+        { endpoint: EModelEndpoint.agents, agent_id: 'agent-1' },
+        true,
+      );
+      expect(container.innerHTML).toBe('');
+    });
+
+    it('renders AttachFile for assistants endpoint when not disabled', () => {
+      renderComponent({ endpoint: EModelEndpoint.assistants });
+      expect(screen.getByTestId('attach-file')).toBeInTheDocument();
+    });
+
+    it('renders AttachFileMenu when provider-specific config overrides agents disabled', () => {
+      mockFileConfig = mergeFileConfig({
+        endpoints: {
+          Moonshot: { disabled: false, fileLimit: 5 },
+          [EModelEndpoint.agents]: { disabled: true },
+        },
+      });
+      mockAgentsMap = {
+        'agent-1': { provider: 'Moonshot', model_parameters: {} } as Partial<Agent>,
+      };
+      renderComponent({ endpoint: EModelEndpoint.agents, agent_id: 'agent-1' });
+      expect(screen.getByTestId('attach-file-menu')).toBeInTheDocument();
+    });
+
+    it('renders null for assistants endpoint when fileConfig.assistants.disabled is true', () => {
+      mockFileConfig = mergeFileConfig({
+        endpoints: {
+          [EModelEndpoint.assistants]: { disabled: true },
+        },
+      });
+      const { container } = renderComponent({
+        endpoint: EModelEndpoint.assistants,
+      });
+      expect(container.innerHTML).toBe('');
     });
   });
 

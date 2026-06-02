@@ -1,8 +1,9 @@
 const fs = require('fs').promises;
 const { ToolCallTypes, FileContext } = require('librechat-data-provider');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const validateAuthor = require('~/server/middleware/assistants/validateAuthor');
-const { validateAndUpdateTool,deleteAssistantActions } = require('~/server/services/ActionService');
-const { updateAssistantDoc } = require('~/models/Assistant');
+const { validateAndUpdateTool, deleteAssistantActions } = require('~/server/services/ActionService');
+const { updateAssistantDoc, deleteFileByFilter } = require('~/models');
 const { manifestToolMap } = require('~/app/clients/tools');
 const { getOpenAIClient, fetchAssistants } = require('./helpers');
 const { logger } = require('~/config');
@@ -63,7 +64,7 @@ const createAzureAgent = async (req, res) => {
       endpoint,
     };
 
-    const azureAgent = await azureAgentClient.createAgent(assistantData.model,assistantData);
+    const azureAgent = await azureAgentClient.createAgent(assistantData.model, assistantData);
     const createData = { user: req.user.id };
     if (conversation_starters) {
       createData.conversation_starters = conversation_starters;
@@ -106,8 +107,8 @@ const updateAzureAgent = async ({ req, azureAgentClient, assistant_id, updateDat
   await validateAuthor({ req, azureAgentClient });
   const tools = [];
   let conversation_starters = null;
-  
-  updateData.toolResources = updateData.tool_resources ;
+
+  updateData.toolResources = updateData.tool_resources;
   delete updateData.tool_resources;
 
   if (updateData?.conversation_starters) {
@@ -140,7 +141,7 @@ const updateAzureAgent = async ({ req, azureAgentClient, assistant_id, updateDat
     } else if (!actualTool) {
       continue;
     }
-    if (await isToolEnabled(tool)){
+    if (await isToolEnabled(tool)) {
       actualTool = await GetToolSpecification(tool);
     }
 
@@ -307,19 +308,7 @@ const deleteAzureAgent = async (req, res) => {
   try {
     const azureAgentClient = await getOpenAIClient({ req, res });
     await validateAuthor({ req, azureAgentClient });
-    /**
-     * Custom event to track when an assistant has been deleted
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    global.appInsights.trackEvent({
-      name: 'AzureAgentDeleted',
-      properties: {
-        userId: req.user.id,
-        userEmail: req.user.email,
-        assistantName: req.params.id,
-      },
-    });
+    trackEvent('AzureAgentDeleted', { userId: req.user.id, userEmail: req.user.email, assistantName: req.params.id });
 
     const assistant_id = req.params.id;
     const deletionStatus = await azureAgentClient.deleteAgent(assistant_id);

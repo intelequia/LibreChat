@@ -1,5 +1,5 @@
 const { CacheKeys } = require('librechat-data-provider');
-const { saveConvo } = require('~/models/Conversation');
+const { saveConvo } = require('~/models');
 const getLogStores = require('~/cache/getLogStores');
 const { isEnabled } = require('~/server/utils');
 
@@ -21,7 +21,11 @@ const addTitle = async (req, { text, responseText, conversationId, azureAgentCli
   await titleCache.set(key, title, 120000);
 
   await saveConvo(
-    req,
+    {
+      userId: req?.user?.id,
+      isTemporary: req?.body?.isTemporary,
+      interfaceConfig: req?.config?.interfaceConfig,
+    },
     {
       conversationId,
       title,

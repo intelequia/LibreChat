@@ -1,0 +1,84 @@
+/* Business Header Styles */
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+/* Modo claro (default) */
+.business-header {
+  width: 100%;
+  height: 3em;
+  background-color: rgb(243, 243, 243);
+  color: #000;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #e0e0e0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  overflow: hidden;
+  font-family: inherit;
+  box-sizing: border-box;
+  margin: 0;
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Modo oscuro */
+html.dark .business-header,
+html[data-theme="dark"] .business-header,
+:root[class~="dark"] .business-header {
+  background-color: #141414;
+  color: #fff;
+  border-bottom-color: #333;
+}
+
+.business-header .logo-image {
+  flex-shrink: 0;
+  max-height: 2.4em;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: inline-block;
+}
+
+.business-header .business-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  display: inline-block;
+}
+
+.business-header h1,
+.business-header h2,
+.business-header h3,
+.business-header h4,
+.business-header h5,
+.business-header h6 {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  display: inline-block;
+  margin: 0;
+}
+
+.business-header img {
+  flex-shrink: 0;
+  max-height: 2.4em;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: inline-block;
+}
+

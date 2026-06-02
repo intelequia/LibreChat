@@ -8,13 +8,19 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const { hashToken, logger } = require('@librechat/data-schemas');
 const { Strategy: OpenIDStrategy } = require('openid-client/passport');
 const { CacheKeys, ErrorTypes, SystemRoles } = require('librechat-data-provider');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 const {
   isEnabled,
   logHeaders,
   safeStringify,
   findOpenIDUser,
+  getOpenIdEmail,
+  getOpenIdIssuer,
   getBalanceConfig,
   isEmailDomainAllowed,
+  getAvatarFileStrategy,
+  getAvatarSaveParams,
+  resolveAppConfigForUser,
 } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { updateUserGroupsAndRole, updateDynamicsInCache, saveGraphToken } = require('~/utils');
@@ -269,34 +275,6 @@ function getFullName(userinfo) {
 }
 
 /**
- * Resolves the user identifier from OpenID claims.
- * Configurable via OPENID_EMAIL_CLAIM; defaults to: email -> preferred_username -> upn.
- *
- * @param {Object} userinfo - The user information object from OpenID Connect
- * @returns {string|undefined} The resolved identifier string
- */
-function getOpenIdEmail(userinfo) {
-  const claimKey = process.env.OPENID_EMAIL_CLAIM?.trim();
-  if (claimKey) {
-    const value = userinfo[claimKey];
-    if (typeof value === 'string' && value) {
-      return value;
-    }
-    if (value !== undefined && value !== null) {
-      logger.warn(
-        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" resolved to a non-string value (type: ${typeof value}). Falling back to: email -> preferred_username -> upn.`,
-      );
-    } else {
-      logger.warn(
-        `[openidStrategy] OPENID_EMAIL_CLAIM="${claimKey}" not present in userinfo. Falling back to: email -> preferred_username -> upn.`,
-      );
-    }
-  }
-  const fallback = userinfo.email || userinfo.preferred_username || userinfo.upn;
-  return typeof fallback === 'string' ? fallback : undefined;
-}
-
-/**
  * Converts an input into a string suitable for a username.
  * If the input is a string, it will be returned as is.
  * If the input is an array, elements will be joined with underscores.
@@ -317,22 +295,83 @@ function convertToUsername(input, defaultValue = '') {
 }
 
 /**
+ * Exchange the access token for a Graph-scoped token using the On-Behalf-Of (OBO) flow.
+ *
+ * The original access token has the app's own audience (api://<client-id>), which Microsoft Graph
+ * rejects. This exchange produces a token with audience https://graph.microsoft.com and the
+ * minimum delegated scope (User.Read) required by /me/getMemberObjects.
+ *
+ * Uses a dedicated cache key (`${sub}:overage`) to avoid collisions with other OBO exchanges
+ * in the codebase (userinfo, Graph principal search).
+ *
+ * @param {string} accessToken - The original access token from the OpenID tokenset
+ * @param {string} sub - The subject identifier for cache keying
+ * @returns {Promise<string>} A Graph-scoped access token
+ * @see https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow
+ */
+async function exchangeTokenForOverage(accessToken, sub) {
+  if (!openidConfig) {
+    throw new Error('[openidStrategy] OpenID config not initialized; cannot exchange OBO token');
+  }
+
+  const tokensCache = getLogStores(CacheKeys.OPENID_EXCHANGED_TOKENS);
+  const cacheKey = `${sub}:overage`;
+
+  const cached = await tokensCache.get(cacheKey);
+  if (cached?.access_token) {
+    logger.debug('[openidStrategy] Using cached Graph token for overage resolution');
+    return cached.access_token;
+  }
+
+  const grantResponse = await client.genericGrantRequest(
+    openidConfig,
+    'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    {
+      scope: 'https://graph.microsoft.com/User.Read',
+      assertion: accessToken,
+      requested_token_use: 'on_behalf_of',
+    },
+  );
+
+  if (!grantResponse.access_token) {
+    throw new Error(
+      '[openidStrategy] OBO exchange succeeded but returned no access_token; cannot call Graph API',
+    );
+  }
+
+  const ttlMs =
+    Number.isFinite(grantResponse.expires_in) && grantResponse.expires_in > 0
+      ? grantResponse.expires_in * 1000
+      : 3600 * 1000;
+
+  await tokensCache.set(cacheKey, { access_token: grantResponse.access_token }, ttlMs);
+
+  return grantResponse.access_token;
+}
+
+/**
  * Resolve Azure AD groups when group overage is in effect (groups moved to _claim_names/_claim_sources).
  *
  * NOTE: Microsoft recommends treating _claim_names/_claim_sources as a signal only and using Microsoft Graph
  * to resolve group membership instead of calling the endpoint in _claim_sources directly.
  *
- * @param {string} accessToken - Access token with Microsoft Graph permissions
+ * Before calling Graph, the access token is exchanged via the OBO flow to obtain a token with the
+ * correct audience (https://graph.microsoft.com) and User.Read scope.
+ *
+ * @param {string} accessToken - Access token from the OpenID tokenset (app audience)
+ * @param {string} sub - The subject identifier of the user (for OBO exchange and cache keying)
  * @returns {Promise<string[] | null>} Resolved group IDs or null on failure
  * @see https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference#groups-overage-claim
  * @see https://learn.microsoft.com/en-us/graph/api/directoryobject-getmemberobjects
  */
-async function resolveGroupsFromOverage(accessToken) {
+async function resolveGroupsFromOverage(accessToken, sub) {
   try {
     if (!accessToken) {
       logger.error('[openidStrategy] Access token missing; cannot resolve group overage');
       return null;
     }
+
+    const graphToken = await exchangeTokenForOverage(accessToken, sub);
 
     // Use /me/getMemberObjects so least-privileged delegated permission User.Read is sufficient
     // when resolving the signed-in user's group membership.
@@ -345,7 +384,7 @@ async function resolveGroupsFromOverage(accessToken) {
     const fetchOptions = {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${graphToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ securityEnabledOnly: false }),
@@ -365,6 +404,7 @@ async function resolveGroupsFromOverage(accessToken) {
     }
 
     const data = await response.json();
+
     const values = Array.isArray(data?.value) ? data.value : null;
     if (!values) {
       logger.error(
@@ -398,19 +438,7 @@ async function resolveGroupsFromOverage(accessToken) {
  */
 async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   const claims = tokenset.claims ? tokenset.claims() : tokenset;
-  /**
-   * Custom event to track when a user logs in
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (global.appInsights) {
-    global.appInsights.trackEvent({
-      name: 'Login',
-      properties: {
-        userEmail: claims.email
-      },
-    });
-  }
+  trackEvent('Login', { userEmail: claims.email });
   const userinfo = {
     ...claims,
   };
@@ -420,9 +448,11 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     Object.assign(userinfo, providerUserinfo);
   }
 
-  const appConfig = await getAppConfig();
   const email = getOpenIdEmail(userinfo);
-  if (!isEmailDomainAllowed(email, appConfig?.registration?.allowedDomains)) {
+  const openidIssuer = getOpenIdIssuer(claims, openidConfig);
+
+  const baseConfig = await getAppConfig({ baseOnly: true });
+  if (!isEmailDomainAllowed(email, baseConfig?.registration?.allowedDomains)) {
     logger.error(
       `[OpenID Strategy] Authentication blocked - email domain not allowed [Identifier: ${email}]`,
     );
@@ -433,6 +463,7 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     findUser,
     email: email,
     openidId: claims.sub || userinfo.sub,
+    openidIssuer,
     idOnTheSource: claims.oid || userinfo.oid,
     strategyName: 'openidStrategy',
   });
@@ -443,9 +474,20 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
     throw new Error(ErrorTypes.AUTH_FAILED);
   }
 
+  const appConfig = user?.tenantId ? await resolveAppConfigForUser(getAppConfig, user) : baseConfig;
+
+  if (!isEmailDomainAllowed(email, appConfig?.registration?.allowedDomains)) {
+    logger.error(
+      `[OpenID Strategy] Authentication blocked - email domain not allowed [Identifier: ${email}]`,
+    );
+    throw new Error('Email domain not allowed');
+  }
+
   const fullName = getFullName(userinfo);
 
   const requiredRole = process.env.OPENID_REQUIRED_ROLE;
+  let resolvedOverageGroups = null;
+
   if (requiredRole) {
     const requiredRoles = requiredRole
       .split(',')
@@ -465,19 +507,21 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
 
     // Handle Azure AD group overage for ID token groups: when hasgroups or _claim_* indicate overage,
     // resolve groups via Microsoft Graph instead of relying on token group values.
+    const hasOverage =
+      decodedToken?.hasgroups ||
+      (decodedToken?._claim_names?.groups &&
+        decodedToken?._claim_sources?.[decodedToken._claim_names.groups]);
+
     if (
-      !Array.isArray(roles) &&
-      typeof roles !== 'string' &&
       requiredRoleTokenKind === 'id' &&
       requiredRoleParameterPath === 'groups' &&
       decodedToken &&
-      (decodedToken.hasgroups ||
-        (decodedToken._claim_names?.groups &&
-          decodedToken._claim_sources?.[decodedToken._claim_names.groups]))
+      hasOverage
     ) {
-      const overageGroups = await resolveGroupsFromOverage(tokenset.access_token);
+      const overageGroups = await resolveGroupsFromOverage(tokenset.access_token, claims.sub);
       if (overageGroups) {
         roles = overageGroups;
+        resolvedOverageGroups = overageGroups;
       }
     }
 
@@ -525,6 +569,7 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
       emailVerified: userinfo.email_verified || false,
       name: fullName,
       idOnTheSource: userinfo.oid,
+      openidIssuer,
     };
 
     const balanceConfig = getBalanceConfig(appConfig);
@@ -532,6 +577,9 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   } else {
     user.provider = 'openid';
     user.openidId = userinfo.sub;
+    if (openidIssuer) {
+      user.openidIssuer = openidIssuer;
+    }
     user.username = username;
     user.name = fullName;
     user.idOnTheSource = userinfo.oid;
@@ -601,7 +649,25 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
         throw new Error('Invalid admin role token kind');
     }
 
-    const adminRoles = get(adminRoleObject, adminRoleParameterPath);
+    let adminRoles = get(adminRoleObject, adminRoleParameterPath);
+
+    // Handle Azure AD group overage for admin role when using ID token groups
+    if (adminRoleTokenKind === 'id' && adminRoleParameterPath === 'groups' && adminRoleObject) {
+      const hasAdminOverage =
+        adminRoleObject.hasgroups ||
+        (adminRoleObject._claim_names?.groups &&
+          adminRoleObject._claim_sources?.[adminRoleObject._claim_names.groups]);
+
+      if (hasAdminOverage) {
+        const overageGroups =
+          resolvedOverageGroups ||
+          (await resolveGroupsFromOverage(tokenset.access_token, claims.sub));
+        if (overageGroups) {
+          adminRoles = overageGroups;
+        }
+      }
+    }
+
     let adminRoleValues = [];
     if (Array.isArray(adminRoles)) {
       adminRoleValues = adminRoles;
@@ -638,14 +704,16 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
       userinfo.sub,
     );
     if (imageBuffer) {
-      const { saveBuffer } = getStrategyFunctions(
-        appConfig?.fileStrategy ?? process.env.CDN_PROVIDER,
+      const fileStrategy = getAvatarFileStrategy(appConfig, process.env.CDN_PROVIDER);
+      const { saveBuffer } = getStrategyFunctions(fileStrategy);
+      const imagePath = await saveBuffer(
+        getAvatarSaveParams(fileStrategy, {
+          fileName,
+          userId: user._id.toString(),
+          buffer: imageBuffer,
+          tenantId: user.tenantId,
+        }),
       );
-      const imagePath = await saveBuffer({
-        fileName,
-        userId: user._id.toString(),
-        buffer: imageBuffer,
-      });
       user.avatar = imagePath ?? '';
     }
   }

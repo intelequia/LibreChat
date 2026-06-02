@@ -1,5 +1,6 @@
 const { logger } = require('@librechat/data-schemas');
 const { ToolCallTypes } = require('librechat-data-provider');
+const { trackEvent } = require('~/utils/intelequia/appInsights');
 
 /**
  * @typedef {import('openai').OpenAI} OpenAI
@@ -147,26 +148,16 @@ class RunManager {
         await currentStepPromise;
 
 
-        /**
-         * Custom event to track when assistant tool_calls query has ended
-         * @Organization Intelequia
-         * @Author Pablo Suarez Romero
-         */
         const detailsArray = detailsSignature.split('-');
-        if(detailsArray.length > 4 && runStatus === 'completed'){
-          if (global.appInsights) {
-            global.appInsights.trackEvent({
-              name: 'ToolCall',
-              properties: {
-                toolName: detailsArray[2] ?? "",
-                userEmail: openai.req.user.email ,
-                promptTokens: detailsArray[3] ?? "",
-                completionTokens: detailsArray[4] ?? "",
-                thread_id: thread_id,
-                run_id: run_id,
-              },
-            });
-          }
+        if (detailsArray.length > 4 && runStatus === 'completed') {
+          trackEvent('ToolCall', {
+            toolName: detailsArray[2] ?? '',
+            userEmail: openai.req.user.email,
+            promptTokens: detailsArray[3] ?? '',
+            completionTokens: detailsArray[4] ?? '',
+            thread_id,
+            run_id,
+          });
         }
       }
       if (step.type === 'message_creation' && step.status === 'completed') {
@@ -187,9 +178,9 @@ class RunManager {
    * @param {boolean} [params.final] - The end of the run polling loop, due to `requires_action`, `cancelling`, `cancelled`, `failed`, `completed`, or `expired` statuses.
    */
   async fetchAzureAgentRunSteps({ azureAgentClient, thread_id, run_id, runStatus, final = false }) {
-    try{
+    try {
       let _steps = []
-      for await (const step of azureAgentClient.runSteps.list(thread_id, run_id)){
+      for await (const step of azureAgentClient.runSteps.list(thread_id, run_id)) {
         _steps.push(step);
       }
 
@@ -204,13 +195,13 @@ class RunManager {
         const isLast = i === steps.length - 1;
         this.seenSteps.add(stepKey);
         this.stepsByStatus[runStatus] = this.stepsByStatus[runStatus] || [];
-  
+
         const currentStepPromise = (async () => {
           await (this.lastStepPromiseByStatus[runStatus] || Promise.resolve());
           return this.handleStep({ step, runStatus, final, isLast });
         })();
 
-        
+
         if (final && isLast) {
           return await currentStepPromise;
         }
@@ -218,36 +209,26 @@ class RunManager {
         if (step.type === 'tool_calls') {
           await currentStepPromise;
         }
-        /**
-         * Custom event to track when assistant tool_calls query has ended
-         * @Organization Intelequia
-         * @Author Pablo Suarez Romero
-         */
         const detailsArray = detailsSignature.split('-');
-        if(detailsArray.length > 4 && runStatus === 'completed'){
-          if (global.appInsights) {
-            global.appInsights.trackEvent({
-              name: 'ToolCall',
-              properties: {
-                toolName: detailsArray[2] ?? "",
-                userEmail: azureAgentClient.req.user.email ,
-                promptTokens: detailsArray[3] ?? "",
-                completionTokens: detailsArray[4] ?? "",
-                thread_id: thread_id,
-                run_id: run_id,
-              },
-            });
-          }
+        if (detailsArray.length > 4 && runStatus === 'completed') {
+          trackEvent('ToolCall', {
+            toolName: detailsArray[2] ?? '',
+            userEmail: azureAgentClient.req.user.email,
+            promptTokens: detailsArray[3] ?? '',
+            completionTokens: detailsArray[4] ?? '',
+            thread_id,
+            run_id,
+          });
         }
-      
+
         if (step.type === 'message_creation' && step.status === 'completed') {
           await currentStepPromise;
-        } 
+        }
 
         this.lastStepPromiseByStatus[runStatus] = currentStepPromise;
         this.stepsByStatus[runStatus].push(currentStepPromise);
       }
-    }catch (error) {
+    } catch (error) {
       logger.error(`[RunManager] Error fetching Azure agent run steps: ${error.message}`)
       return;
     }

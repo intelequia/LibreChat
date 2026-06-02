@@ -3,9 +3,9 @@ const { v4 } = require('uuid');
 const OpenAI = require('openai');
 const FormData = require('form-data');
 const { ProxyAgent } = require('undici');
-const { tool } = require('@langchain/core/tools');
 const { logger } = require('@librechat/data-schemas');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { tool } = require('@librechat/agents/langchain/tools');
 const { ContentTypes, EImageOutputType } = require('librechat-data-provider');
 const { logAxiosError, oaiToolkit, extractBaseURL } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
@@ -351,6 +351,7 @@ Error Message: ${error.message}`);
 
         if (process.env.PROXY) {
           axiosConfig.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
+          axiosConfig.proxy = false;
         }
 
         if (process.env.IMAGE_GEN_OAI_AZURE_API_VERSION && process.env.IMAGE_GEN_OAI_BASEURL) {
