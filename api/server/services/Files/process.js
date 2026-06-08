@@ -513,7 +513,7 @@ const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
   const userId = result.user.toString();
   const { email } = await findUser({ _id: userId });
 
-  trackEvent('AzureUploadFile', {
+  await trackEvent('AzureUploadFile', {
     userId,
     userEmail: email,
     fileName: file.filename,
@@ -628,7 +628,7 @@ const processFileUpload = async ({ req, res, metadata }) => {
   const userId = result.user.toString();
   const { email } = await findUser({ _id: userId });
 
-  trackEvent('AzureUploadFile', {
+  await trackEvent('AzureUploadFile', {
     userId,
     userEmail: email,
     fileName: file.filename,

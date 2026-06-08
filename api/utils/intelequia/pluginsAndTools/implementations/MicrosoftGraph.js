@@ -152,7 +152,7 @@ class MicrosoftGraph extends Tool {
     const search = await this.createClient(userEmail, response.url);
     const queryTokens = intelequiaCountTokens([query, search], model)
 
-    trackEvent('Plugin', {
+    await trackEvent('Plugin', {
       toolName: 'microsoft-graph',
       userEmail,
       assistantId: data.assistant ?? '',
