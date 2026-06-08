@@ -67,7 +67,7 @@ class AzureAIFunctions extends Tool {
         throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
       }
 
-      trackEvent('Plugin', {
+      await trackEvent('Plugin', {
         toolName: 'azure-ai-search',
         userEmail,
         assistantId: data.assistant ?? '',

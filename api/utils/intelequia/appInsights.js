@@ -18,15 +18,46 @@ const { logger } = require('@librechat/data-schemas');
  * @param {string} name - Event name (e.g. 'Login', 'Plugin', 'AzureQuery')
  * @param {Record<string, unknown>} [properties] - Event properties
  */
-const trackEvent = (name, properties = {}) => {
+const trackEvent = async (name, properties = {}) => {
     if (!global.appInsights) {
         return;
     }
     try {
-        global.appInsights.trackEvent({ name, properties });
+        // Enrich with userEmail if userId present but email missing
+        const enrichedProps = await enrichPropertiesWithUserEmail(properties);
+        global.appInsights.trackEvent({ name, properties: enrichedProps });
     } catch (err) {
         logger.error(`[appInsights] Error emitting "${name}":`, err);
     }
+};
+
+/**
+ * Enrich properties with userEmail if userId is present but email is missing.
+ * Resolves user email from database.
+ * @param {Record<string, unknown>} properties - Event properties
+ * @returns {Promise<Record<string, unknown>>} Properties with userEmail added
+ */
+const enrichPropertiesWithUserEmail = async (properties) => {
+    if (!properties || typeof properties !== 'object') {
+        return properties;
+    }
+
+    // If email already present or no userId, return as-is
+    if (properties.userEmail || !properties.userId) {
+        return properties;
+    }
+
+    try {
+        const { findUser } = require('~/models');
+        const user = await findUser({ _id: properties.userId });
+        if (user && user.email) {
+            return { ...properties, userEmail: user.email };
+        }
+    } catch (err) {
+        logger.warn(`[appInsights] Could not resolve email for userId ${properties.userId}:`, err);
+    }
+
+    return properties;
 };
 
 /* ─────────────────────────────────────────────
@@ -127,7 +158,7 @@ const trackTokenUsage = async (txData, tokenUsage, eventType, additionalData = {
             tokenUsage,
             { ...additionalData, endpoint },
         );
-        trackEvent(eventName, properties);
+        await trackEvent(eventName, properties);
     } catch (err) {
         logger.error('[appInsights] trackTokenUsage error:', err);
     }

@@ -52,7 +52,7 @@ class BingSearch extends Tool {
       throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
     }
     const searchResult = JSON.stringify(json)
-    trackEvent('Plugin', {
+    await trackEvent('Plugin', {
       toolName: 'bing-search',
       userEmail,
       assistantId: data.assistant ?? '',

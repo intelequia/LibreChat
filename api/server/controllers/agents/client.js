@@ -796,7 +796,7 @@ class AgentClient extends BaseClient {
         const cacheCreationTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_creation) || Number(u?.cache_creation_input_tokens) || 0), 0);
         const cacheReadTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_read) || Number(u?.cache_read_input_tokens) || 0), 0);
         const completionTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.output_tokens) || 0), 0);
-        trackEvent(eventName, {
+        await trackEvent(eventName, {
           userId: this.user ?? this.options.req.user?.id,
           model: model ?? this.model ?? this.options.agent.model_parameters.model,
           conversationId: this.conversationId,

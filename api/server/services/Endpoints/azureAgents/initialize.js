@@ -159,7 +159,7 @@ const titleConvo = async ({ text, conversationId, responseText = '', model, req 
     const data = await response.json();
     const result = data.choices[0].message.content;
 
-    trackEvent('Azure Agent Title Generation', {
+    await trackEvent('Azure Agent Title Generation', {
       userId: req.user.id,
       userEmail: req.user.email,
       charactersLength: result.length,

@@ -70,7 +70,7 @@ class Sharepoint extends Tool {
     const userQuery = data.query ?? data;
     const search = await this.createClient(userEmail, userQuery);
 
-    trackEvent('Plugin', {
+    await trackEvent('Plugin', {
       toolName: 'sharepoint',
       userEmail,
       assistantId: data.assistant ?? '',

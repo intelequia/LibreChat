@@ -150,7 +150,7 @@ class RunManager {
 
         const detailsArray = detailsSignature.split('-');
         if (detailsArray.length > 4 && runStatus === 'completed') {
-          trackEvent('ToolCall', {
+          await trackEvent('ToolCall', {
             toolName: detailsArray[2] ?? '',
             userEmail: openai.req.user.email,
             promptTokens: detailsArray[3] ?? '',
@@ -211,7 +211,7 @@ class RunManager {
         }
         const detailsArray = detailsSignature.split('-');
         if (detailsArray.length > 4 && runStatus === 'completed') {
-          trackEvent('ToolCall', {
+          await trackEvent('ToolCall', {
             toolName: detailsArray[2] ?? '',
             userEmail: azureAgentClient.req.user.email,
             promptTokens: detailsArray[3] ?? '',

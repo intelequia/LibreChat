@@ -438,7 +438,7 @@ async function resolveGroupsFromOverage(accessToken, sub) {
  */
 async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   const claims = tokenset.claims ? tokenset.claims() : tokenset;
-  trackEvent('Login', { userEmail: claims.email });
+  await trackEvent('Login', { userEmail: claims.email });
   const userinfo = {
     ...claims,
   };

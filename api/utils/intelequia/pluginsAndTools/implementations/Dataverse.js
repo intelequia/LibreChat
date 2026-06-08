@@ -136,7 +136,7 @@ class Dataverse extends Tool {
 
     const responseTokens = intelequiaCountTokens([response], model)
 
-    trackEvent('Plugin', {
+    await trackEvent('Plugin', {
       toolName: 'dataverse',
       userEmail,
       assistantId: data.assistant ?? '',

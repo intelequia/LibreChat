@@ -674,7 +674,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     const isAzureEndpoint = agent.provider === 'azureOpenAI';
 
     // Track Query event
-    trackEvent(isAzureEndpoint ? 'AzureApiAgentQuery' : 'ApiAgentQuery', {
+    await trackEvent(isAzureEndpoint ? 'AzureApiAgentQuery' : 'ApiAgentQuery', {
       userId,
       agentId,
       model: agentModel,
@@ -729,7 +729,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     };
 
     // Track AnswerStarted event
-    trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerStarted' : 'ApiAgentAnswerStarted', {
+    await trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerStarted' : 'ApiAgentAnswerStarted', {
       userId,
       agentId,
       model: agentModel,
@@ -773,7 +773,7 @@ const OpenAIChatCompletionController = async (req, res) => {
       const cacheCreationTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_creation) || Number(u?.cache_creation_input_tokens) || 0), 0);
       const cacheReadTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_read) || Number(u?.cache_read_input_tokens) || 0), 0);
       const completionTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.output_tokens) || 0), 0);
-      trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
+      await trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
         userId,
         agentId,
         model: agentModel,
