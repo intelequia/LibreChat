@@ -43,6 +43,7 @@ async function getCodeOutputDownloadStream(fileIdentifier, identity, req) {
       },
       httpAgent: codeServerHttpAgent,
       httpsAgent: codeServerHttpsAgent,
+      proxy: false,
       timeout: 15000,
     };
 
@@ -100,6 +101,7 @@ async function uploadCodeEnvFile({ req, stream, filename, kind, id, version }) {
       },
       httpAgent: codeServerHttpAgent,
       httpsAgent: codeServerHttpsAgent,
+      proxy: false,
       timeout: 120000,
       maxContentLength: MAX_FILE_SIZE,
       maxBodyLength: MAX_FILE_SIZE,
@@ -172,6 +174,7 @@ async function batchUploadCodeEnvFiles({ req, files, kind, id, version, read_onl
     },
     httpAgent: codeServerHttpAgent,
     httpsAgent: codeServerHttpsAgent,
+    proxy: false,
     timeout: 120000,
     maxContentLength: MAX_FILE_SIZE,
     maxBodyLength: MAX_FILE_SIZE,

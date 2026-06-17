@@ -353,6 +353,7 @@ const processCodeOutput = async ({
       },
       httpAgent: codeServerHttpAgent,
       httpsAgent: codeServerHttpsAgent,
+      proxy: false,
       timeout: 15000,
     });
 
@@ -702,6 +703,7 @@ async function getSessionInfo(ref, req) {
       },
       httpAgent: codeServerHttpAgent,
       httpsAgent: codeServerHttpsAgent,
+      proxy: false,
       timeout: 5000,
     });
 
@@ -1020,6 +1022,7 @@ async function readSandboxFile({ file_path, session_id, files, req }) {
       },
       httpAgent: codeServerHttpAgent,
       httpsAgent: codeServerHttpsAgent,
+      proxy: false,
       timeout: 15000,
     });
     const result = response?.data ?? {};
