@@ -195,6 +195,11 @@ export type ArchiveConversationOptions = MutationOptions<
   types.TArchiveConversationRequest
 >;
 
+export type PinConversationOptions = MutationOptions<
+  types.TPinConversationResponse,
+  types.TPinConversationRequest
+>;
+
 export type DuplicateConvoOptions = MutationOptions<
   types.TDuplicateConvoResponse,
   types.TDuplicateConvoRequest
@@ -446,6 +451,7 @@ export type ToolParams<T extends ToolId> = ToolParamsMap[T] & {
   partIndex?: number;
   blockIndex?: number;
   conversationId: string;
+  isTemporary?: boolean;
 };
 export type ToolCallResponse = { result: unknown; attachments?: types.TAttachment[] };
 export type ToolCallMutationOptions<T extends ToolId> = MutationOptions<

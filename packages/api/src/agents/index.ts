@@ -1,4 +1,5 @@
 export * from './avatars';
+export * from './attachments';
 export * from './chain';
 export * from './client';
 export * from './config';
@@ -21,6 +22,7 @@ export * from './skillConfigurable';
 export * from './skillFiles';
 export * from './codeFilesSession';
 export * from './run';
+export * from './testHook';
 export * from './tools';
 export * from './validation';
 export * from './added';

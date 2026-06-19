@@ -1,7 +1,8 @@
 import { useState, memo, useRef } from 'react';
 import * as Menu from '@ariakit/react/menu';
-import { FileText, LogOut, Shield } from 'lucide-react';
+import { FileText, Archive, LogOut, Shield } from 'lucide-react';
 import { LinkIcon, GearIcon, DropdownMenuSeparator, Avatar } from '@librechat/client';
+import { ArchivedChatsModal } from '~/components/Nav/SettingsTabs/General/ArchivedChatsModal';
 // Intelequia Admin Panel
 import { SystemRoles } from 'librechat-data-provider';
 import { MyFilesModal } from '~/components/Chat/Input/Files/MyFilesModal';
@@ -19,10 +20,11 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showFiles, setShowFiles] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const accountSettingsButtonRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <Menu.MenuProvider>
+    <Menu.MenuProvider placement={collapsed ? 'right-end' : undefined}>
       <Menu.MenuButton
         ref={accountSettingsButtonRef}
         aria-label={localize('com_nav_account_settings')}
@@ -52,7 +54,6 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
       <Menu.Menu
         portal
         className="account-settings-popover popover-ui z-[125] w-[305px] rounded-lg md:w-[244px]"
-        placement={collapsed ? 'right-end' : undefined}
         style={{
           transformOrigin: collapsed ? 'left bottom' : 'bottom',
           translate: collapsed ? '4px 0' : '0 -4px',
@@ -74,6 +75,10 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
         <Menu.MenuItem onClick={() => setShowFiles(true)} className="select-item text-sm">
           <FileText className="icon-md" aria-hidden="true" />
           {localize('com_nav_my_files')}
+        </Menu.MenuItem>
+        <Menu.MenuItem onClick={() => setShowArchived(true)} className="select-item text-sm">
+          <Archive className="icon-md" aria-hidden="true" />
+          {localize('com_nav_archived_chats')}
         </Menu.MenuItem>
         {startupConfig?.helpAndFaqURL !== '/' && (
           <Menu.MenuItem
@@ -108,6 +113,13 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
         <MyFilesModal
           open={showFiles}
           onOpenChange={setShowFiles}
+          triggerRef={accountSettingsButtonRef}
+        />
+      )}
+      {showArchived && (
+        <ArchivedChatsModal
+          open={showArchived}
+          onOpenChange={setShowArchived}
           triggerRef={accountSettingsButtonRef}
         />
       )}

@@ -23,7 +23,7 @@ const BackupCodeSchema = new Schema(
   { _id: false },
 );
 
-const userSchema = new Schema<IUser>(
+const userSchema: Schema<IUser> = new Schema<IUser>(
   {
     name: {
       type: String,
@@ -172,6 +172,7 @@ const userSchema = new Schema<IUser>(
 
 userSchema.index({ email: 1, tenantId: 1 }, { unique: true });
 userSchema.index({ role: 1, tenantId: 1 });
+userSchema.index({ idOnTheSource: 1, openidIssuer: 1, tenantId: 1 });
 
 const oAuthIdFields = [
   'googleId',
