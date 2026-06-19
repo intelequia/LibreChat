@@ -39,18 +39,6 @@ async function loadDefaultModels(req) {
       appConfig?.endpoints?.[EModelEndpoint.anthropic]?.headers,
     );
 
-    /** Forward configured custom headers (endpoint over global `all`) so model
-     *  fetches reach a gateway-fronted provider the same as chat requests. */
-    const allHeaders = appConfig?.endpoints?.all?.headers;
-    const openAIHeaders = mergeHeaders(
-      allHeaders,
-      appConfig?.endpoints?.[EModelEndpoint.openAI]?.headers,
-    );
-    const anthropicHeaders = mergeHeaders(
-      allHeaders,
-      appConfig?.endpoints?.[EModelEndpoint.anthropic]?.headers,
-    );
-
     const [openAI, anthropic, azureOpenAI, assistants, azureAssistants, azureAgents, google, bedrock] =
       await Promise.all([
         getOpenAIModels({ user: req.user.id, headers: openAIHeaders, userObject: req.user }).catch(
