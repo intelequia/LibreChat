@@ -8,6 +8,7 @@ const {
     resolveBuildInfo,
     resolveTitleTiming,
     sanitizeModelSpecs,
+    isFileSnapshotEnabled,
 } = require('@librechat/api');
 const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
 const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
@@ -167,9 +168,9 @@ function buildPreLoginPayload() {
 }
 
 /**
- * Public share fields rendered by `client/src/components/Share/ShareView.tsx`.
- * They remain off the default anonymous config used by login screens, and are
- * exposed to anonymous callers only when the client asks for share context.
+ * Fields shared by authenticated chat and share-view config. Anonymous share
+ * views receive these through `/api/share/:shareId/config` after share access
+ * checks, not through the generic startup config endpoint.
  */
 function buildPublicSharePayload() {
     /** @type {Partial<TStartupConfig>} */
@@ -319,7 +320,6 @@ router.get('/', async function (req, res) {
             /** @type {Partial<TStartupConfig>} */
             const payload = {
                 ...preLoginPayload,
-                ...(req.query.context === 'share' ? publicSharePayload : {}),
                 socialLogins: baseConfig?.registration?.socialLogins ?? defaultSocialLogins,
                 turnstile: baseConfig?.turnstileConfig,
                 ...(rum ? { rum } : {}),
@@ -365,6 +365,7 @@ router.get('/', async function (req, res) {
             ...preLoginPayload,
             ...publicSharePayload,
             ...buildPostLoginPayload(),
+            sharedLinksSnapshotFilesEnabled: sharedLinksEnabled && isFileSnapshotEnabled(appConfig),
             socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
             interface: appConfig?.interfaceConfig,
             titleGenerationTiming: resolveTitleTiming({

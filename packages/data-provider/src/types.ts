@@ -377,6 +377,8 @@ export type TSharedLinkResponse = Pick<TSharedLink, 'shareId'> &
 export type TSharedLinkGetResponse = Omit<TSharedLinkResponse, 'shareId'> & {
   shareId: string | null;
   success: boolean;
+  /** Per-link "share files" choice; absent on legacy links (treated as enabled). */
+  snapshotFiles?: boolean;
 };
 
 // type for getting conversation tags
@@ -454,6 +456,8 @@ export type TConfig = {
     defaultParamsEndpoint?: string;
     reasoningFormat?: ReasoningParameterFormat;
     reasoningKey?: ReasoningResponseKey;
+    includeReasoningContent?: boolean;
+    includeReasoningHistory?: boolean;
     paramDefinitions?: Partial<SettingDefinition>[];
   };
 };

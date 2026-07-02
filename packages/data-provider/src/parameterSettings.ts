@@ -415,11 +415,11 @@ const anthropic: Record<string, SettingDefinition> = {
     type: 'enum',
     default: anthropicSettings.promptCacheTtl.default,
     options: ['5m', '1h'],
-    component: 'dropdown',
+    component: 'combobox',
     optionType: 'conversation',
     showDefault: false,
-    placeholder: 'com_endpoint_prompt_cache_ttl_default',
-    placeholderCode: true,
+    selectPlaceholder: 'com_endpoint_prompt_cache_ttl_default',
+    selectPlaceholderCode: true,
     columnSpan: 2,
   },
   thinking: {
@@ -577,11 +577,11 @@ const bedrock: Record<string, SettingDefinition> = {
     type: 'enum',
     default: undefined,
     options: ['5m', '1h'],
-    component: 'dropdown',
+    component: 'combobox',
     optionType: 'conversation',
     showDefault: false,
-    placeholder: 'com_endpoint_prompt_cache_ttl_default',
-    placeholderCode: true,
+    selectPlaceholder: 'com_endpoint_prompt_cache_ttl_default',
+    selectPlaceholderCode: true,
     columnSpan: 2,
   },
   reasoning_effort: {
@@ -765,6 +765,19 @@ const google: Record<string, SettingDefinition> = {
     showDefault: false,
     columnSpan: 2,
   },
+  url_context: {
+    key: 'url_context',
+    label: 'com_endpoint_use_url_context',
+    labelCode: true,
+    description: 'com_endpoint_google_use_url_context',
+    descriptionCode: true,
+    type: 'boolean',
+    default: false,
+    component: 'switch',
+    optionType: 'model',
+    showDefault: false,
+    columnSpan: 2,
+  },
 };
 
 const googleConfig: SettingsConfiguration = [
@@ -780,6 +793,7 @@ const googleConfig: SettingsConfiguration = [
   google.thinkingBudget,
   google.thinkingLevel,
   google.web_search,
+  google.url_context,
   librechat.fileTokenLimit,
 ];
 
@@ -800,6 +814,7 @@ const googleCol2: SettingsConfiguration = [
   google.thinkingBudget,
   google.thinkingLevel,
   google.web_search,
+  google.url_context,
   librechat.fileTokenLimit,
 ];
 
