@@ -63,22 +63,8 @@ RUN \
 RUN mkdir -p /app/client/public/images /app/api/logs
 
 # =============================================================================
-# Intelequia Patches (@librechat/agents overrides)
-# These replace specific modules from the @librechat/agents npm package to add
-# custom functionality without forking the package.
-# Source: ./intelequia-patches/
+# Intelequia Patches
 # =============================================================================
-
-# CodeExecutor.cjs — Adds support for remote code-interpreter-manager service
-# instead of local Docker-based execution. Allows per-user containers and
-# external workspace management via LIBRECHAT_CODE_API_URL env var.
-COPY ./intelequia-patches/CodeExecutor.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
-COPY ./intelequia-patches/CodeExecutor.cjs /app/api/node_modules/@librechat/agents/dist/cjs/tools/CodeExecutor.cjs
-
-# BashExecutor.cjs — Same remote execution support for bash/shell commands,
-# routing through code-interpreter-manager instead of local Docker.
-COPY ./intelequia-patches/BashExecutor.cjs /app/node_modules/@librechat/agents/dist/cjs/tools/BashExecutor.cjs
-COPY ./intelequia-patches/BashExecutor.cjs /app/api/node_modules/@librechat/agents/dist/cjs/tools/BashExecutor.cjs
 
 # rerankers.cjs — Supports Azure AI Foundry as Cohere reranker backend.
 # Env vars CUSTOM_RERANKER_API_KEY, CUSTOM_RERANKER_URL, CUSTOM_RERANKER_MODEL
