@@ -125,6 +125,9 @@ uploads/
 # SearXNG
 searxng/
 
+# Intelequia deployment configuration
+/intelequia-config/
+
 # owner
 release/
 build.sh
