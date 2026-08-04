@@ -19,6 +19,8 @@ import type {
   OCRResult,
   OCRImage,
 } from '~/types';
+import { logAxiosError, createAxiosInstance } from '~/utils/axios';
+import { applyAxiosProxyConfig } from '~/utils/proxy';
 import { readFileAsBuffer } from '~/utils/files';
 import { loadServiceKey } from '~/utils/key';
 const DEFAULT_MISTRAL_BASE_URL = 'https://api.mistral.ai/v1';
@@ -83,9 +85,7 @@ export async function uploadDocumentToMistral({
     body: form,
   };
 
-  if (process.env.PROXY) {
-    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
-  }
+  applyAxiosProxyConfig(config, `${baseURL}/files`);
 
   try {
     const response = await fetch(`${baseURL}/files`, fetchOptions);
@@ -118,9 +118,7 @@ export async function getSignedUrl({
     },
   };
 
-  if (process.env.PROXY) {
-    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
-  }
+  applyAxiosProxyConfig(config, `${baseURL}/files/${fileId}/url?expiry=${expiry}`);
 
   try {
     const response = await fetch(`${baseURL}/files/${fileId}/url?expiry=${expiry}`, fetchOptions);
@@ -165,34 +163,30 @@ export async function performOCR({
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      image_limit: 0,
-      include_image_base64: false,
-      document: {
-        type: documentType,
-        [documentKey]: url,
-      },
-    }),
   };
 
-  if (process.env.PROXY) {
-    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
-  }
-
   const ocrURL = baseURL.endsWith('/ocr') ? baseURL : `${baseURL}/ocr`;
+  applyAxiosProxyConfig(config, ocrURL);
 
-  try {
-    const response = await fetch(ocrURL, fetchOptions);
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`OCR request failed with status ${response.status}: ${errorText}`);
-    }
-    return (await response.json()) as OCRResult;
-  } catch (error) {
-    logger.error('Error performing OCR:', error);
-    throw error;
-  }
+  return axios
+    .post(
+      ocrURL,
+      {
+        model,
+        image_limit: 0,
+        include_image_base64: false,
+        document: {
+          type: documentType,
+          [documentKey]: url,
+        },
+      },
+      config,
+    )
+    .then((res) => res.data)
+    .catch((error) => {
+      logger.error('Error performing OCR:', error.message);
+      throw error;
+    });
 }
 
 /**
@@ -219,9 +213,7 @@ export async function deleteMistralFile({
     },
   };
 
-  if (process.env.PROXY) {
-    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
-  }
+  applyAxiosProxyConfig(config, `${baseURL}/files/${fileId}`);
 
   try {
     const response = await fetch(`${baseURL}/files/${fileId}`, fetchOptions);
@@ -598,9 +590,7 @@ async function exchangeJWTForAccessToken(jwt: string): Promise<string> {
     }).toString(),
   };
 
-  if (process.env.PROXY) {
-    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
-  }
+  applyAxiosProxyConfig(config, 'https://oauth2.googleapis.com/token');
 
   const response = await fetch('https://oauth2.googleapis.com/token', fetchOptions);
   
@@ -672,9 +662,7 @@ async function performGoogleVertexOCR({
     body: JSON.stringify(requestBody),
   };
 
-  if (process.env.PROXY) {
-    fetchOptions.dispatcher = new ProxyAgent(process.env.PROXY);
-  }
+  applyAxiosProxyConfig(config, baseURL);
 
   try {
     const response = await fetch(baseURL, fetchOptions);

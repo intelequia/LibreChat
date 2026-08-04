@@ -88,6 +88,7 @@ archive
 .vscode/settings.json
 src/style - official.css
 /e2e/specs/.test-results/
+/e2e/.generated/
 /e2e/playwright-report/
 /playwright/.cache/
 .DS_Store
@@ -123,6 +124,9 @@ uploads/
 
 # SearXNG
 searxng/
+
+# Intelequia deployment configuration
+/intelequia-config/
 
 # owner
 release/
@@ -199,3 +203,4 @@ CLAUDE.md
 .gsd
 
 maintenance-gateway/
+codedb.snapshot

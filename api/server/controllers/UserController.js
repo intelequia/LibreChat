@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { logger, webSearchKeys } = require('@librechat/data-schemas');
+const { logger, getTenantId, webSearchKeys } = require('@librechat/data-schemas');
 const {
   getNewS3URL,
   needsRefresh,
@@ -7,6 +7,7 @@ const {
   MCPTokenStorage,
   normalizeHttpError,
   extractWebSearchEnvVars,
+  deleteAllSharedLinksWithCleanup,
 } = require('@librechat/api');
 const {
   Tools,
@@ -25,17 +26,47 @@ const { getAppConfig } = require('~/server/services/Config');
 const { getLogStores } = require('~/cache');
 const db = require('~/models');
 
+const PUBLIC_USER_RESPONSE_FIELDS = [
+  '_id',
+  'id',
+  'name',
+  'username',
+  'email',
+  'emailVerified',
+  'avatar',
+  'provider',
+  'role',
+  'plugins',
+  'twoFactorEnabled',
+  'termsAccepted',
+  'personalization',
+  'favorites',
+  'skillStates',
+  'createdAt',
+  'updatedAt',
+  'tenantId',
+];
+
+const sanitizeUserForResponse = (user) => {
+  const source = user.toObject != null ? user.toObject() : user;
+  return PUBLIC_USER_RESPONSE_FIELDS.reduce((userData, field) => {
+    if (source[field] !== undefined) {
+      userData[field] = source[field];
+    }
+    return userData;
+  }, {});
+};
+
 const getUserController = async (req, res) => {
-  const appConfig = await getAppConfig({ role: req.user?.role, tenantId: req.user?.tenantId });
+  const appConfig =
+    req.config ??
+    (await getAppConfig({
+      role: req.user?.role,
+      userId: req.user?.id,
+      tenantId: req.user?.tenantId,
+    }));
   /** @type {IUser} */
-  const userData = req.user.toObject != null ? req.user.toObject() : { ...req.user };
-  /**
-   * These fields should not exist due to secure field selection, but deletion
-   * is done in case of alternate database incompatibility with Mongo API
-   * */
-  delete userData.password;
-  delete userData.totpSecret;
-  delete userData.backupCodes;
+  const userData = sanitizeUserForResponse(req.user);
   if (appConfig.fileStrategy === FileSources.s3 && userData.avatar) {
     const avatarNeedsRefresh = needsRefresh(userData.avatar, 3600);
     if (!avatarNeedsRefresh) {
@@ -165,7 +196,13 @@ const deleteUserMcpServers = async (userId) => {
 };
 
 const updateUserPluginsController = async (req, res) => {
-  const appConfig = await getAppConfig({ role: req.user?.role, tenantId: req.user?.tenantId });
+  const appConfig =
+    req.config ??
+    (await getAppConfig({
+      role: req.user?.role,
+      userId: req.user?.id,
+      tenantId: req.user?.tenantId,
+    }));
   const { user } = req;
   const { pluginKey, action, auth, isEntityTool } = req.body;
   try {
@@ -323,7 +360,7 @@ const deleteUserController = async (req, res) => {
     }
     await deleteUserPluginAuth(user.id, null, true);
     await db.deleteUserById(user.id);
-    await db.deleteAllSharedLinks(user.id);
+    await deleteAllSharedLinksWithCleanup(user.id);
     await deleteUserFiles(req);
     await db.deleteFiles(null, user.id);
     await db.deleteToolCalls(user.id);
@@ -351,7 +388,7 @@ const verifyEmailController = async (req, res) => {
   try {
     const verifyEmailService = await verifyEmail(req);
     if (verifyEmailService instanceof Error) {
-      return res.status(400).json(verifyEmailService);
+      return res.status(400).json({ message: verifyEmailService.message });
     } else {
       return res.status(200).json(verifyEmailService);
     }
@@ -365,9 +402,9 @@ const resendVerificationController = async (req, res) => {
   try {
     const result = await resendVerificationEmail(req);
     if (result instanceof Error) {
-      return res.status(400).json(result);
+      return res.status(400).json({ message: result.message });
     } else {
-      return res.status(200).json(result);
+      return res.status(result.status ?? 200).json({ message: result.message });
     }
   } catch (e) {
     logger.error('[verifyEmailController]', e);
@@ -395,11 +432,24 @@ const clearStoredMCPOAuthState = async (userId, serverName) => {
   try {
     const flowsCache = getLogStores(CacheKeys.FLOWS);
     const flowManager = getFlowStateManager(flowsCache);
-    const flowId = MCPOAuthHandler.generateFlowId(userId, serverName);
-    const results = await Promise.allSettled([
-      flowManager.deleteFlow(flowId, 'mcp_get_tokens'),
-      flowManager.deleteFlow(flowId, 'mcp_oauth'),
-    ]);
+    const baseFlowId = MCPOAuthHandler.generateFlowId(userId, serverName);
+    const tenantId = getTenantId();
+    const tokenFlowId = MCPOAuthHandler.generateTokenFlowId(userId, serverName, tenantId);
+    const oauthFlowId = MCPOAuthHandler.generateFlowId(userId, serverName, tenantId);
+    const flowDeletes = [
+      [tokenFlowId, 'mcp_get_tokens'],
+      [oauthFlowId, 'mcp_oauth'],
+      [baseFlowId, 'mcp_get_tokens'],
+      [baseFlowId, 'mcp_oauth'],
+    ].filter(
+      ([flowId, type], index, deletes) =>
+        deletes.findIndex(([candidateId, candidateType]) => {
+          return candidateId === flowId && candidateType === type;
+        }) === index,
+    );
+    const results = await Promise.allSettled(
+      flowDeletes.map(([flowId, type]) => flowManager.deleteFlow(flowId, type)),
+    );
     for (const result of results) {
       if (result.status === 'rejected') {
         logger.warn(
@@ -480,9 +530,10 @@ const maybeUninstallOAuthMCP = async (userId, pluginKey, appConfig) => {
     serverConfig.oauth?.revocation_endpoint_auth_methods_supported ??
     clientMetadata.revocation_endpoint_auth_methods_supported;
   const oauthHeaders = serverConfig.oauth_headers ?? {};
-  const registry = getMCPServersRegistry();
-  const allowedDomains = registry.getAllowedDomains();
-  const allowedAddresses = registry.getAllowedAddresses();
+  // Use the request's merged (tenant/principal-scoped) allowlists so admin-panel mcpSettings
+  // overrides are honored for OAuth revocation, consistent with inspection/connection.
+  const allowedDomains = appConfig?.mcpSettings?.allowedDomains;
+  const allowedAddresses = appConfig?.mcpSettings?.allowedAddresses;
 
   if (tokens?.access_token) {
     try {

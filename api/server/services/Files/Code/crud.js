@@ -43,6 +43,7 @@ async function getCodeOutputDownloadStream(fileIdentifier, identity, req) {
       },
       httpAgent: codeServerHttpAgent,
       httpsAgent: codeServerHttpsAgent,
+      proxy: false,
       timeout: 15000,
     };
 
@@ -55,6 +56,71 @@ async function getCodeOutputDownloadStream(fileIdentifier, identity, req) {
         error,
       }),
     );
+  }
+}
+
+/**
+ * Deletes a file from the Code Environment server.
+ *
+ * @param {ServerRequest} req - Current authenticated request, used to mint Code API auth.
+ * @param {MongoFile} file - File metadata containing `metadata.codeEnvRef`.
+ * @returns {Promise<void>}
+ */
+async function deleteCodeEnvFile(req, file) {
+  const ref = file?.metadata?.codeEnvRef;
+  if (!ref) {
+    return;
+  }
+
+  let lastError;
+  const missingOrUnsupportedStatuses = new Set([404, 405]);
+  try {
+    const baseURL = getCodeBaseURL();
+    const query = buildCodeEnvDownloadQuery({
+      kind: ref.kind,
+      id: ref.id,
+      ...(ref.kind === 'skill' ? { version: ref.version } : {}),
+    });
+    const authHeaders = await getCodeApiAuthHeaders(req);
+    const baseRequest = {
+      method: 'delete',
+      headers: {
+        'User-Agent': 'LibreChat/1.0',
+        ...authHeaders,
+      },
+      httpAgent: codeServerHttpAgent,
+      httpsAgent: codeServerHttpsAgent,
+      timeout: 15000,
+    };
+    const urls = [
+      `${baseURL}/sessions/${ref.storage_session_id}/objects/${ref.file_id}${query}`,
+      `${baseURL}/files/${ref.storage_session_id}/${ref.file_id}${query}`,
+    ];
+
+    for (const url of urls) {
+      try {
+        await axios({ ...baseRequest, url });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!missingOrUnsupportedStatuses.has(error.response?.status)) {
+          throw error;
+        }
+      }
+    }
+  } catch (error) {
+    lastError = error;
+  }
+
+  if (lastError) {
+    logAxiosError({
+      error: lastError,
+      message: `Error deleting code environment file: ${lastError.message}`,
+    });
+    if (lastError.response?.status === 404) {
+      return;
+    }
+    throw new Error(lastError.message || 'An error occurred during file deletion.');
   }
 }
 
@@ -100,6 +166,7 @@ async function uploadCodeEnvFile({ req, stream, filename, kind, id, version }) {
       },
       httpAgent: codeServerHttpAgent,
       httpsAgent: codeServerHttpsAgent,
+      proxy: false,
       timeout: 120000,
       maxContentLength: MAX_FILE_SIZE,
       maxBodyLength: MAX_FILE_SIZE,
@@ -172,6 +239,7 @@ async function batchUploadCodeEnvFiles({ req, files, kind, id, version, read_onl
     },
     httpAgent: codeServerHttpAgent,
     httpsAgent: codeServerHttpsAgent,
+    proxy: false,
     timeout: 120000,
     maxContentLength: MAX_FILE_SIZE,
     maxBodyLength: MAX_FILE_SIZE,
@@ -209,6 +277,7 @@ async function batchUploadCodeEnvFiles({ req, files, kind, id, version, read_onl
 }
 
 module.exports = {
+  deleteCodeEnvFile,
   getCodeOutputDownloadStream,
   uploadCodeEnvFile,
   batchUploadCodeEnvFiles,

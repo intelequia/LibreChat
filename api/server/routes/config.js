@@ -5,12 +5,16 @@ const {
     isEnabled,
     getBalanceConfig,
     getCloudFrontConfig,
+    resolveBuildInfo,
+    resolveTitleTiming,
     sanitizeModelSpecs,
+    isFileSnapshotEnabled,
 } = require('@librechat/api');
-const { defaultSocialLogins } = require('librechat-data-provider');
+const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
 const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
+const { getRumConfig } = require('~/server/services/Config/rum');
 const { getAppConfig } = require('~/server/services/Config/app');
 
 const router = express.Router();
@@ -61,41 +65,40 @@ const substituteVariables = (html, variables) => {
     return result;
 };
 
-const buildWebSearchConfig = (appConfig) => {
-    const ws = appConfig?.webSearch;
-    if (!ws) {
-        return undefined;
-    }
+const emailLoginEnabled =
+    process.env.ALLOW_EMAIL_LOGIN === undefined || isEnabled(process.env.ALLOW_EMAIL_LOGIN);
+const passwordResetEnabled = isEnabled(process.env.ALLOW_PASSWORD_RESET);
+const sharedLinksEnabled =
+    process.env.ALLOW_SHARED_LINKS === undefined || isEnabled(process.env.ALLOW_SHARED_LINKS);
+const publicSharedLinksEnabled =
+    sharedLinksEnabled && isEnabled(process.env.ALLOW_SHARED_LINKS_PUBLIC);
 
-    const { searchProvider, scraperProvider, rerankerType } = ws;
-    if (!searchProvider && !scraperProvider && !rerankerType) {
-        return undefined;
-    }
+const sharePointFilePickerEnabled = isEnabled(process.env.ENABLE_SHAREPOINT_FILEPICKER);
+const openidReuseTokens = isEnabled(process.env.OPENID_REUSE_TOKENS);
 
-    return {
-        ...(searchProvider && { searchProvider }),
-        ...(scraperProvider && { scraperProvider }),
-        ...(rerankerType && { rerankerType }),
-    };
-};
+/**
+ * Resolve build metadata eagerly at module load so the first `/api/config`
+ * request does not pay the cost of `execFileSync('git', ...)` on the hot path.
+ * The resolver caches its result after the first call.
+ */
+resolveBuildInfo();
 
-const isBirthday = () => {
+function isBirthday() {
     const today = new Date();
     return today.getMonth() === 1 && today.getDate() === 11;
-};
+}
 
-const buildSharedPayload = (ldap) => {
-    const emailLoginEnabled =
-        process.env.ALLOW_EMAIL_LOGIN === undefined || isEnabled(process.env.ALLOW_EMAIL_LOGIN);
-    const passwordResetEnabled = isEnabled(process.env.ALLOW_PASSWORD_RESET);
-    const sharedLinksEnabled =
-        process.env.ALLOW_SHARED_LINKS === undefined || isEnabled(process.env.ALLOW_SHARED_LINKS);
-    const publicSharedLinksEnabled =
-        sharedLinksEnabled && isEnabled(process.env.ALLOW_SHARED_LINKS_PUBLIC);
-
+/**
+ * Pre-login fields rendered by the unauthenticated login, registration, password-reset,
+ * and email-verification pages. Any field added here is readable by anonymous callers
+ * of `GET /api/config`, so keep this set strictly to what those pages need.
+ *
+ * See client consumers under `client/src/components/Auth/` and `client/src/routes/Layouts/Startup.tsx`.
+ */
+function buildPreLoginPayload() {
     const isOpenIdEnabled =
         !!process.env.OPENID_CLIENT_ID &&
-        !!process.env.OPENID_CLIENT_SECRET &&
+        (isEnabled(process.env.OPENID_USE_PKCE) || !!process.env.OPENID_CLIENT_SECRET?.trim()) &&
         !!process.env.OPENID_ISSUER &&
         !!process.env.OPENID_SESSION_SECRET;
 
@@ -104,6 +107,8 @@ const buildSharedPayload = (ldap) => {
         !!process.env.SAML_ISSUER &&
         !!process.env.SAML_CERT &&
         !!process.env.SAML_SESSION_SECRET;
+
+    const ldap = getLdapConfig();
 
     /** @type {Partial<TStartupConfig>} */
     const payload = {
@@ -159,12 +164,42 @@ const buildSharedPayload = (ldap) => {
         payload.ldap = ldap;
     }
 
+    return payload;
+}
+
+/**
+ * Fields shared by authenticated chat and share-view config. Anonymous share
+ * views receive these through `/api/share/:shareId/config` after share access
+ * checks, not through the generic startup config endpoint.
+ */
+function buildPublicSharePayload() {
+    /** @type {Partial<TStartupConfig>} */
+    const payload = {
+        analyticsGtmId: process.env.ANALYTICS_GTM_ID,
+    };
+
     if (typeof process.env.CUSTOM_FOOTER === 'string') {
         payload.customFooter = process.env.CUSTOM_FOOTER;
     }
 
     return payload;
-};
+}
+
+function buildWebSearchConfig(appConfig) {
+    const ws = appConfig?.webSearch;
+    if (!ws) {
+        return undefined;
+    }
+    const { searchProvider, scraperProvider, rerankerType } = ws;
+    if (!searchProvider && !scraperProvider && !rerankerType) {
+        return undefined;
+    }
+    return {
+        ...(searchProvider && { searchProvider }),
+        ...(scraperProvider && { scraperProvider }),
+        ...(rerankerType && { rerankerType }),
+    };
+}
 
 const applyBusinessHeaderConfig = async (payload) => {
     payload.businessChatTitle = process.env.BUSINESS_CHAT_TITLE || 'Intelewriter';
@@ -210,6 +245,48 @@ const applyBusinessHeaderConfig = async (payload) => {
     }
 };
 
+/**
+ * Post-login fields appended only when `req.user` is present. These describe the
+ * authenticated UX (account-settings links, share-link feature flags, birthday icon,
+ * openid token-reuse marker) and are not needed on the pre-login screens, so they
+ * are not exposed to unauthenticated callers.
+ */
+function buildPostLoginPayload() {
+    /** @type {Partial<TStartupConfig>} */
+    const payload = {
+        showBirthdayIcon:
+            isBirthday() ||
+            isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
+            process.env.SHOW_BIRTHDAY_ICON === '',
+        helpAndFaqURL: process.env.HELP_AND_FAQ_URL || 'https://librechat.ai',
+        sharedLinksEnabled,
+        publicSharedLinksEnabled,
+        openidReuseTokens,
+        /** Read inline (not module-level) for per-request evaluation and test isolation */
+        allowAccountDeletion:
+            process.env.ALLOW_ACCOUNT_DELETION === undefined ||
+            isEnabled(process.env.ALLOW_ACCOUNT_DELETION),
+    };
+
+    return payload;
+}
+
+function buildBuildInfoPayload(interfaceConfig) {
+    if (interfaceConfig?.buildInfo === false) {
+        return undefined;
+    }
+    const info = resolveBuildInfo();
+    if (!info.commit && !info.branch && !info.buildDate) {
+        return undefined;
+    }
+    return {
+        commit: info.commit,
+        commitShort: info.commitShort,
+        branch: info.branch,
+        buildDate: info.buildDate,
+    };
+}
+
 function buildCloudFrontStartupConfig() {
     const config = getCloudFrontConfig();
     if (
@@ -230,11 +307,11 @@ function buildCloudFrontStartupConfig() {
     };
 }
 
-router.get('/', async (req, res) => {
+router.get('/', async function (req, res) {
     try {
-        const ldap = getLdapConfig();
-        const sharedPayload = buildSharedPayload(ldap);
-        const cloudFront = buildCloudFrontStartupConfig();
+        const preLoginPayload = buildPreLoginPayload();
+        const publicSharePayload = buildPublicSharePayload();
+        const rum = getRumConfig();
 
         if (!req.user) {
             const tenantId = getTenantId();
@@ -242,14 +319,15 @@ router.get('/', async (req, res) => {
 
             /** @type {Partial<TStartupConfig>} */
             const payload = {
-                ...sharedPayload,
+                ...preLoginPayload,
                 socialLogins: baseConfig?.registration?.socialLogins ?? defaultSocialLogins,
                 turnstile: baseConfig?.turnstileConfig,
-                ...(cloudFront ? { cloudFront } : {}),
+                ...(rum ? { rum } : {}),
             };
 
             const interfaceConfig = baseConfig?.interfaceConfig;
-            if (interfaceConfig?.privacyPolicy || interfaceConfig?.termsOfService) {
+            const buildInfoDisabled = interfaceConfig?.buildInfo === false;
+            if (interfaceConfig?.privacyPolicy || interfaceConfig?.termsOfService || buildInfoDisabled) {
                 payload.interface = {};
                 if (interfaceConfig.privacyPolicy) {
                     payload.interface.privacyPolicy = interfaceConfig.privacyPolicy;
@@ -257,6 +335,14 @@ router.get('/', async (req, res) => {
                 if (interfaceConfig.termsOfService) {
                     payload.interface.termsOfService = interfaceConfig.termsOfService;
                 }
+                if (buildInfoDisabled) {
+                    payload.interface.buildInfo = false;
+                }
+            }
+
+            const unauthBuildInfo = buildBuildInfoPayload(interfaceConfig);
+            if (unauthBuildInfo) {
+                payload.buildInfo = unauthBuildInfo;
             }
 
             await applyBusinessHeaderConfig(payload);
@@ -272,18 +358,26 @@ router.get('/', async (req, res) => {
         });
 
         const balanceConfig = getBalanceConfig(appConfig);
+        const cloudFront = buildCloudFrontStartupConfig();
 
         /** @type {TStartupConfig} */
         const payload = {
-            ...sharedPayload,
+            ...preLoginPayload,
+            ...publicSharePayload,
+            ...buildPostLoginPayload(),
+            sharedLinksSnapshotFilesEnabled: sharedLinksEnabled && isFileSnapshotEnabled(appConfig),
             socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
             interface: appConfig?.interfaceConfig,
+            titleGenerationTiming: resolveTitleTiming({
+                appConfig,
+                endpoint: EModelEndpoint.agents,
+            }),
             turnstile: appConfig?.turnstileConfig,
             modelSpecs: sanitizeModelSpecs(appConfig?.modelSpecs),
             balance: balanceConfig,
             bundlerURL: process.env.SANDPACK_BUNDLER_URL,
             staticBundlerURL: process.env.SANDPACK_STATIC_BUNDLER_URL,
-            sharePointFilePickerEnabled: isEnabled(process.env.ENABLE_SHAREPOINT_FILEPICKER),
+            sharePointFilePickerEnabled,
             sharePointBaseUrl: process.env.SHAREPOINT_BASE_URL,
             sharePointPickerGraphScope: process.env.SHAREPOINT_PICKER_GRAPH_SCOPE,
             sharePointPickerSharePointScope: process.env.SHAREPOINT_PICKER_SHAREPOINT_SCOPE,
@@ -291,11 +385,17 @@ router.get('/', async (req, res) => {
                 ? parseInt(process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES, 10)
                 : 0,
             ...(cloudFront ? { cloudFront } : {}),
+            ...(rum ? { rum } : {}),
         };
 
         const webSearch = buildWebSearchConfig(appConfig);
         if (webSearch) {
             payload.webSearch = webSearch;
+        }
+
+        const buildInfo = buildBuildInfoPayload(appConfig?.interfaceConfig);
+        if (buildInfo) {
+            payload.buildInfo = buildInfo;
         }
 
         if (!payload.allowAccountDeletion) {

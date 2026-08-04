@@ -1,11 +1,31 @@
-import type { DeleteResult, FilterQuery, Model } from 'mongoose';
-import logger from '~/config/winston';
-import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
-import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
+import { RetentionMode } from 'librechat-data-provider';
+import type { DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
 import type { AppConfig, IMessage } from '~/types';
+import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
+import { createFallbackRetentionDate } from '~/utils/retention';
+import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
+import logger from '~/config/winston';
 
 /** Simple UUID v4 regex to replace zod validation */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface MessageQueryOptions {
+  limit?: number;
+  sort?: Record<string, 1 | -1> | false;
+}
+
+interface MessageTextStatsOptions {
+  limit?: number;
+}
+
+export interface MessageTextStats {
+  messageId: string;
+  textBytes: number;
+  quoteCount: number;
+  quoteBytes: number;
+  quoteLineCount: number;
+  nonStringQuoteCount: number;
+}
 
 export interface MessageMethods {
   saveMessage(
@@ -35,7 +55,15 @@ export interface MessageMethods {
     userId: string,
     params: { messageId: string; conversationId: string },
   ): Promise<DeleteResult>;
-  getMessages(filter: FilterQuery<IMessage>, select?: string): Promise<IMessage[]>;
+  getMessages(
+    filter: FilterQuery<IMessage>,
+    select?: string,
+    options?: MessageQueryOptions,
+  ): Promise<IMessage[]>;
+  getMessageTextStats(
+    filter: FilterQuery<IMessage>,
+    options?: MessageTextStatsOptions,
+  ): Promise<MessageTextStats[]>;
   getMessage(params: { user: string; messageId: string }): Promise<IMessage | null>;
   getMessagesByCursor(
     filter: FilterQuery<IMessage>,
@@ -77,9 +105,9 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
 
     const conversationId = params.conversationId as string | undefined;
     if (!conversationId || !UUID_REGEX.test(conversationId)) {
-      logger.warn(`Invalid conversation ID: ${conversationId}`);
-      logger.info(`---\`saveMessage\` context: ${metadata?.context}`);
-      logger.info(`---Invalid conversation ID Params: ${JSON.stringify(params, null, 2)}`);
+      logger.warn(
+        `Invalid conversation ID: ${conversationId} (context: ${metadata?.context ?? 'n/a'})`,
+      );
       return;
     }
 
@@ -91,15 +119,28 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
         messageId: params.newMessageId || params.messageId,
       };
 
-      if (isTemporary) {
+      if (interfaceConfig?.retentionMode === RetentionMode.ALL) {
+        if (typeof isTemporary === 'boolean') {
+          update.isTemporary = isTemporary;
+        }
         try {
           update.expiredAt = createTempChatExpirationDate(interfaceConfig);
         } catch (err) {
           logger.error('Error creating temporary chat expiration date:', err);
           logger.info(`---\`saveMessage\` context: ${metadata?.context}`);
-          update.expiredAt = null;
+          update.expiredAt = createFallbackRetentionDate();
         }
-      } else {
+      } else if (isTemporary === true) {
+        update.isTemporary = true;
+        try {
+          update.expiredAt = createTempChatExpirationDate(interfaceConfig);
+        } catch (err) {
+          logger.error('Error creating temporary chat expiration date:', err);
+          logger.info(`---\`saveMessage\` context: ${metadata?.context}`);
+          update.expiredAt = createFallbackRetentionDate();
+        }
+      } else if (isTemporary === false) {
+        update.isTemporary = false;
         update.expiredAt = null;
       }
 
@@ -115,6 +156,19 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
         update,
         { upsert: true, new: true },
       );
+
+      if (
+        interfaceConfig?.retentionMode === RetentionMode.ALL &&
+        typeof isTemporary !== 'boolean' &&
+        (message.isTemporary == null ||
+          (message.isTemporary === false && message.$isDefault('isTemporary')))
+      ) {
+        await Message.updateOne(
+          { _id: message._id, isTemporary: { $ne: false } },
+          { $set: { isTemporary: false } },
+        );
+        message.isTemporary = false;
+      }
 
       return message.toObject();
     } catch (err: unknown) {
@@ -257,6 +311,7 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
         isCreatedByUser: updatedMessage.isCreatedByUser,
         tokenCount: updatedMessage.tokenCount,
         feedback: updatedMessage.feedback,
+        endpoint: updatedMessage.endpoint,
       };
     } catch (err) {
       logger.error('Error updating message:', err);
@@ -294,16 +349,114 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
   /**
    * Retrieves messages from the database.
    */
-  async function getMessages(filter: FilterQuery<IMessage>, select?: string) {
+  async function getMessages(
+    filter: FilterQuery<IMessage>,
+    select?: string,
+    options: MessageQueryOptions = {},
+  ) {
     try {
       const Message = mongoose.models.Message as Model<IMessage>;
+      const query = Message.find(filter);
       if (select) {
-        return await Message.find(filter).select(select).sort({ createdAt: 1 }).lean<IMessage[]>();
+        query.select(select);
+      }
+      if (options.sort !== false) {
+        query.sort(options.sort ?? { createdAt: 1 });
+      }
+      if (options.limit != null && options.limit > 0) {
+        query.limit(options.limit);
       }
 
-      return await Message.find(filter).sort({ createdAt: 1 }).lean<IMessage[]>();
+      return await query.lean<IMessage[]>();
     } catch (err) {
       logger.error('Error getting messages:', err);
+      throw err;
+    }
+  }
+
+  async function getMessageTextStats(
+    filter: FilterQuery<IMessage>,
+    options: MessageTextStatsOptions = {},
+  ) {
+    try {
+      const Message = mongoose.models.Message as Model<IMessage>;
+      const pipeline: PipelineStage[] = [{ $match: filter }];
+      if (options.limit != null && options.limit > 0) {
+        pipeline.push({ $limit: options.limit });
+      }
+      pipeline.push({
+        $project: {
+          _id: 0,
+          messageId: 1,
+          textBytes: {
+            $cond: [{ $eq: [{ $type: '$text' }, 'string'] }, { $strLenBytes: '$text' }, 0],
+          },
+          quoteCount: {
+            $cond: [{ $isArray: '$quotes' }, { $size: '$quotes' }, 0],
+          },
+          quoteBytes: {
+            $cond: [
+              { $isArray: '$quotes' },
+              {
+                $sum: {
+                  $map: {
+                    input: '$quotes',
+                    as: 'quote',
+                    in: {
+                      $cond: [
+                        { $eq: [{ $type: '$$quote' }, 'string'] },
+                        { $strLenBytes: '$$quote' },
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+          quoteLineCount: {
+            $cond: [
+              { $isArray: '$quotes' },
+              {
+                $sum: {
+                  $map: {
+                    input: '$quotes',
+                    as: 'quote',
+                    in: {
+                      $cond: [
+                        { $eq: [{ $type: '$$quote' }, 'string'] },
+                        { $size: { $split: ['$$quote', '\n'] } },
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+          nonStringQuoteCount: {
+            $cond: [
+              { $isArray: '$quotes' },
+              {
+                $size: {
+                  $filter: {
+                    input: '$quotes',
+                    as: 'quote',
+                    cond: { $ne: [{ $type: '$$quote' }, 'string'] },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+        },
+      });
+
+      return await Message.aggregate<MessageTextStats>(pipeline);
+    } catch (err) {
+      logger.error('Error getting message text stats:', err);
       throw err;
     }
   }
@@ -394,6 +547,7 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
     updateMessage,
     deleteMessagesSince,
     getMessages,
+    getMessageTextStats,
     getMessage,
     getMessagesByCursor,
     searchMessages,

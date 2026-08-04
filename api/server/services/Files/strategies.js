@@ -71,8 +71,8 @@ const {
   prepareAzureImageURL,
   processAzureAvatar,
 } = require('./Azure');
-const { uploadOpenAIFile, deleteOpenAIFile, getOpenAIFileStream,uploadAzureAgentsFile } = require('./OpenAI');
-const { getCodeOutputDownloadStream, uploadCodeEnvFile } = require('./Code');
+const { uploadOpenAIFile, deleteOpenAIFile, getOpenAIFileStream, uploadAzureAgentsFile } = require('./OpenAI');
+const { deleteCodeEnvFile, getCodeOutputDownloadStream, uploadCodeEnvFile } = require('./Code');
 const { uploadVectors, deleteVectors } = require('./VectorDB');
 
 /**
@@ -200,7 +200,7 @@ const openAIStrategy = () => ({
   prepareImagePayload: null,
   deleteFile: deleteOpenAIFile,
   handleFileUpload: uploadOpenAIFile,
-  handleFileUploadAzureAgent:  uploadAzureAgentsFile,
+  handleFileUploadAzureAgent: uploadAzureAgentsFile,
   getDownloadStream: getOpenAIFileStream,
 });
 
@@ -222,8 +222,7 @@ const codeOutputStrategy = () => ({
   handleImageUpload: null,
   /** @type {typeof prepareImagesLocal | null} */
   prepareImagePayload: null,
-  /** @type {typeof deleteLocalFile | null} */
-  deleteFile: null,
+  deleteFile: deleteCodeEnvFile,
   handleFileUpload: uploadCodeEnvFile,
   getDownloadStream: getCodeOutputDownloadStream,
 });

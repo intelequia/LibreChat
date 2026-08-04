@@ -1,7 +1,6 @@
 const axios = require('axios');
 const { logger } = require('@librechat/data-schemas');
-const { HttpsProxyAgent } = require('https-proxy-agent');
-const { genAzureEndpoint, logAxiosError } = require('@librechat/api');
+const { genAzureEndpoint, logAxiosError, applyAxiosProxyConfig } = require('@librechat/api');
 const { extractEnvVariable, TTSProviders } = require('librechat-data-provider');
 const { getRandomVoiceId, createChunkProcessor, splitTextIntoChunks } = require('./streamAudio');
 const { getAppConfig } = require('~/server/services/Config');
@@ -267,10 +266,7 @@ class TTSService {
 
     const options = { headers, responseType: stream ? 'stream' : 'arraybuffer' };
 
-    if (process.env.PROXY) {
-      options.httpsAgent = new HttpsProxyAgent(process.env.PROXY);
-      options.proxy = false;
-    }
+    applyAxiosProxyConfig(options, url);
 
     try {
       return await axios.post(url, data, options);
@@ -298,6 +294,7 @@ class TTSService {
       req.config ??
       (await getAppConfig({
         role: req.user?.role,
+        userId: req.user?.id,
         tenantId: req.user?.tenantId,
       }));
     try {
@@ -367,6 +364,7 @@ class TTSService {
       req.config ??
       (await getAppConfig({
         role: req.user?.role,
+        userId: req.user?.id,
         tenantId: req.user?.tenantId,
       }));
     const provider = this.getProvider(appConfig);

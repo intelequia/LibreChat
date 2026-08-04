@@ -61,7 +61,14 @@ async function buildEndpointOption(req, res, next) {
   if (appConfig.modelSpecs?.list?.length && appConfig.modelSpecs?.enforce) {
     /** @type {{ list: TModelSpec[] }}*/
     const { list } = appConfig.modelSpecs;
-    const { spec } = parsedBody;
+    const rawSpec = req.body.spec;
+    const spec = parsedBody.spec ?? (typeof rawSpec === 'string' ? rawSpec : undefined);
+    const rawChatProjectId = req.body.chatProjectId;
+    const parsedBodyForModelSpec =
+      parsedBody.chatProjectId === undefined &&
+      (typeof rawChatProjectId === 'string' || rawChatProjectId === null)
+        ? { ...parsedBody, chatProjectId: rawChatProjectId }
+        : parsedBody;
 
     if (!spec) {
       return handleError(res, { text: 'No model spec selected' });
@@ -79,7 +86,7 @@ async function buildEndpointOption(req, res, next) {
     try {
       const result = applyModelSpecPreset({
         modelSpec: currentModelSpec,
-        parsedBody: currentModelSpec.preset,
+        parsedBody: parsedBodyForModelSpec,
         endpoint,
         endpointType,
         defaultParamsEndpoint,
@@ -133,7 +140,10 @@ async function buildEndpointOption(req, res, next) {
     req.body.endpointOption = await builder(endpoint, parsedBody, endpointType);
 
     if (req.body.files && !isAgents) {
-      req.body.endpointOption.attachments = updateFilesUsage(req.body.files);
+      req.body.endpointOption.attachments = updateFilesUsage(req.body.files, undefined, {
+        user: req.user.id,
+        tenantId: req.user.tenantId,
+      });
     }
 
     next();
