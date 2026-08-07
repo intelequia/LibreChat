@@ -21,40 +21,6 @@ export function azureAssistantsDefaults(): {
   };
 }
 
-function azureAgentsDefaults(config, azureAgentEndpoint,prevConfig = {}) {
-
-  const azureAgentsConfig  = config.endpoints[azureAgentEndpoint]
-  const parsedConfig = assistantEndpointSchema.parse(azureAgentsConfig);
-  if (azureAgentsConfig.supportedIds?.length && azureAgentsConfig.excludedIds?.length) {
-    logger.warn(
-      `Configuration conflict: The '${azureAgentEndpoint}' endpoint has both 'supportedIds' and 'excludedIds' defined. The 'excludedIds' will be ignored.`,
-    );
-  }
-  if(azureAgentsConfig.privateAssistants &&
-    (azureAgentsConfig.supportedIds?.length || azureAgentsConfig.excludedIds?.length)) {
-    logger.warn(
-      `Configuration conflict: The '${azureAgentEndpoint}' endpoint has both 'privateAssistants' and 'supportedIds' or 'excludedIds' defined. The 'supportedIds' and 'excludedIds' will be ignored.`,
-    );
-  }{
-    logger.warn(
-      `Configuration conflict: The '${azureAgentEndpoint}' endpoint has both 'privateAssistants' and 'supportedIds' or 'excludedIds' defined. The 'supportedIds' and 'excludedIds' will be ignored.`,
-    );
-  }
-
-  return {
-    ...prevConfig,
-    retrievalModels: parsedConfig.retrievalModels,
-    disableBuilder: parsedConfig.disableBuilder,
-    pollIntervalMs: parsedConfig.pollIntervalMs,
-    supportedIds: parsedConfig.supportedIds,
-    capabilities: parsedConfig.capabilities,
-    excludedIds: parsedConfig.excludedIds,
-    privateAssistants: parsedConfig.privateAssistants,
-    timeoutMs: parsedConfig.timeoutMs,
-    streamRate: parsedConfig.streamRate,
-  };
-}
-
 /**
  * Sets up the Assistants configuration from the config (`librechat.yaml`) file.
  * @param config - The loaded custom configuration.

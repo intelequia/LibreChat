@@ -95,104 +95,6 @@ const isMissingStorageError = (err) => {
  * @param {Set<string>} params.failedFileIds - File IDs whose storage delete failed.
  * @param {OpenAI | undefined} [params.openai] - If an OpenAI file, the initialized OpenAI client.
  */
-function enqueueDeleteOperation({
-  req,
-  file,
-  deleteFile,
-  promises,
-  resolvedFileIds,
-  failedFileIds,
-  openai,
-}) {
-  if (checkOpenAIStorage(file.source)) {
-    // Enqueue to leaky bucket
-    promises.push(
-      new Promise((resolve, reject) => {
-        LB_QueueAsyncCall(
-          () => deleteFile(req, file, openai),
-          [],
-          (err, result) => {
-            if (err) {
-              if (isMissingStorageError(err)) {
-                resolvedFileIds.add(file.file_id);
-                logger.warn('File storage was already missing during delete', err);
-                resolve(result);
-                return;
-              }
-              failedFileIds.add(file.file_id);
-              logger.error('Error deleting file from OpenAI source', err);
-              reject(err);
-            } else {
-              resolvedFileIds.add(file.file_id);
-              resolve(result);
-            }
-          },
-        );
-      }),
-    );
-  } else {
-    // Add directly to promises
-    promises.push(
-      deleteFile(req, file)
-        .then(() => resolvedFileIds.add(file.file_id))
-        .catch((err) => {
-          if (isMissingStorageError(err)) {
-            resolvedFileIds.add(file.file_id);
-            logger.warn('File storage was already missing during delete', err);
-            return;
-          }
-          failedFileIds.add(file.file_id);
-          logger.error('Error deleting file', err);
-          return Promise.reject(err);
-        }),
-    );
-  }
-}
-
-const getDeleteMethod = ({ source, deletionMethods }) => {
-  if (deletionMethods[source]) {
-    return deletionMethods[source];
-  }
-
-  const { deleteFile } = getStrategyFunctions(source);
-  if (!deleteFile) {
-    throw new Error(`Delete function not implemented for ${source}`);
-  }
-
-  deletionMethods[source] = deleteFile;
-  return deleteFile;
-};
-
-const createDeleteFileWithSecondaryStorage = ({ source, deleteFile, deletionMethods }) => {
-  return async (req, file, openai) => {
-    const secondaryDeleteMethods = [];
-    if (file.embedded === true && source !== FileSources.vectordb) {
-      secondaryDeleteMethods.push(
-        getDeleteMethod({ source: FileSources.vectordb, deletionMethods }),
-      );
-    }
-    if (hasCodeEnvRef(file) && source !== FileSources.execute_code) {
-      secondaryDeleteMethods.push(
-        getDeleteMethod({ source: FileSources.execute_code, deletionMethods }),
-      );
-    }
-
-    try {
-      await deleteFile(req, file, openai);
-    } catch (err) {
-      if (!isMissingStorageError(err)) {
-        throw err;
-      }
-      logger.warn('Primary file storage was already missing during delete', err);
-    }
-
-    await Promise.all(
-      secondaryDeleteMethods.map((secondaryDeleteFile) => secondaryDeleteFile(req, file)),
-    );
-  };
-};
-
-// TODO: refactor as currently only image files can be deleted this way
 // as other filetypes will not reside in public path
 /**
  * Deletes a list of files from the server filesystem and the database.
@@ -558,109 +460,11 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
  * @param {FileMetadata} params.metadata - Additional metadata for the file.
  * @returns {Promise<void>}
  */
-const azureAgentsProcessFileUpload = async ({ req, res, metadata }) => {
-  const isAssistantUpload = isAssistantsEndpoint(metadata.endpoint);
-  const source = FileSources.azure;
-  const { handleFileUploadAzureAgent } = getStrategyFunctions(source);
-  // const { handleFileUpload } = getStrategyFunctions(source);
-  const { file_id, temp_file_id } = metadata;
-
-  /** @type {OpenAI | undefined} */
-  let client;
-  if (checkOpenAIStorage(source)) {
-    (client = await getOpenAIClient({ req }));
-  }
-
-  const { file } = req;
-  const {
-    id,
-    bytes,
-    filename,
-    filepath: _filepath,
-    embedded,
-    height,
-    width,
-  } = await handleFileUploadAzureAgent({
-    req,
-    file,
-    file_id,
-    client,
-  });
-  if (metadata.knowledge == 'true') {
-    await handleKnowledge({ fileId: id, assistantId: metadata.assistant_id }, client)
-  }
-  else if (isAssistantUpload && !metadata.message_file && !metadata.tool_resource) {
-    await client.beta.assistants.files.create(metadata.assistant_id, {
-      file_id: id,
-    });
-  } else if (isAssistantUpload && !metadata.message_file) {
-    await addResourceFileId({
-      req,
-      client,
-      file_id: id,
-      assistant_id: metadata.assistant_id,
-      tool_resource: metadata.tool_resource,
-    });
-  }
-
-  let filepath = isAssistantUpload ? `${client.baseURL}/files/${id}` : _filepath;
-  if (isAssistantUpload && file.mimetype.startsWith('image')) {
-    const result = await processImageFile({
-      req,
-      file,
-      metadata: { file_id: v4() },
-      returnFile: true,
-    });
-    filepath = result.filepath;
-  }
-
-  const result = await createFile(
-    {
-      user: req.user.id,
-      file_id: id ?? file_id,
-      temp_file_id,
-      bytes,
-      filepath,
-      filename: filename ?? file.originalname,
-      context: isAssistantUpload ? FileContext.assistants : FileContext.message_attachment,
-      model: isAssistantUpload ? req.body.model : undefined,
-      type: file.mimetype,
-      embedded,
-      source,
-      height,
-      width,
-    },
-    true,
-  );
-  const userId = result.user.toString();
-  const { email } = await findUser({ _id: userId });
-
-  await trackEvent('AzureUploadFile', {
-    userId,
-    userEmail: email,
-    fileName: file.filename,
-    fileSize: file.size,
-    fileExtension: file.mimetype.split('/')[1],
-  });
-  res.status(200).json({ message: 'File uploaded and processed successfully', ...result });
-};
-
-/**
- * Applies the current strategy for file uploads.
- * Saves file metadata to the database with an expiry TTL.
- * Files must be deleted from the server filesystem manually.
- *
- * @param {Object} params - The parameters object.
- * @param {ServerRequest} params.req - The Express request object.
- * @param {Express.Response} params.res - The Express response object.
- * @param {FileMetadata} params.metadata - Additional metadata for the file.
- * @returns {Promise<void>}
- */
 const processFileUpload = async ({ req, res, metadata }) => {
   const appConfig = req.config;
   const isAssistantUpload = isAssistantsEndpoint(metadata.endpoint);
   const assistantSource =
-    metadata.endpoint === EModelEndpoint.azureAssistants || EModelEndpoint.azureAgents ? FileSources.azure : FileSources.openai;
+    metadata.endpoint === EModelEndpoint.azureAssistants ? FileSources.azure : FileSources.openai;
   const source = isAssistantUpload ? assistantSource : appConfig.fileStrategy;
   const { handleFileUpload } = getStrategyFunctions(source);
   const { file_id, temp_file_id = null } = metadata;
@@ -1443,7 +1247,6 @@ module.exports = {
   sweepExpiredFiles,
   startExpiredFileSweep,
   processFileUpload,
-  azureAgentsProcessFileUpload,
   processDeleteRequest,
   processAgentFileUpload,
   retrieveAndProcessFile,

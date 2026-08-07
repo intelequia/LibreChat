@@ -128,10 +128,7 @@ export default function useSideNavLinks({
         endpointsConfig[EModelEndpoint.assistants].disableBuilder !== true) ||
         (endpoint === EModelEndpoint.azureAssistants &&
           endpointsConfig?.[EModelEndpoint.azureAssistants] &&
-          endpointsConfig[EModelEndpoint.azureAssistants].disableBuilder !== true) ||
-        (endpoint === EModelEndpoint.azureAgents &&
-          endpointsConfig?.[EModelEndpoint.azureAgents] &&
-          endpointsConfig[EModelEndpoint.azureAgents].disableBuilder !== true)) &&
+          endpointsConfig[EModelEndpoint.azureAssistants].disableBuilder !== true)) &&
       keyProvided &&
       hasAccessToAssistantCreator
     ) {

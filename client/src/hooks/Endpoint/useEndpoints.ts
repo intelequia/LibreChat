@@ -58,11 +58,6 @@ export const useEndpoints = ({
     [assistantsMap],
   );
 
-  const azureAgents: Assistant[] = useMemo(
-    () => Object.values(assistantsMap?.[EModelEndpoint.azureAgents] ?? {}),
-    [assistantsMap],
-  );
-
   const filteredEndpoints = useMemo(() => {
     if (!interfaceConfig.modelSelect) {
       return [];
@@ -95,7 +90,6 @@ export const useEndpoints = ({
       const Icon = icons[iconKey];
       const endpointIconURL = getEndpointField(endpointsConfig, ep, 'iconURL');
       const hasModels =
-        (ep === EModelEndpoint.azureAgents && (azureAgents?.length ?? 0) > 0) ||
         (ep === EModelEndpoint.agents && ((agents?.length ?? 0) > 0 || showAgentMarketplace)) ||
         (ep === EModelEndpoint.assistants && assistants?.length > 0) ||
         (ep !== EModelEndpoint.assistants && ep !== EModelEndpoint.agents && (modelsQuery.data?.[ep]?.length ?? 0) > 0);
@@ -178,25 +172,6 @@ export const useEndpoints = ({
           {},
         );
         result.modelIcons = azureAssistants.reduce(
-          (acc: Record<string, string | undefined>, assistant: Assistant) => {
-            acc[assistant.id] = assistant.metadata?.avatar;
-            return acc;
-          },
-          {},
-        );
-      } else if (ep === EModelEndpoint.azureAgents && azureAgents.length > 0) {
-        result.models = azureAgents.map((assistant: { id: string }) => ({
-          name: assistant.id,
-          isGlobal: false,
-        }));
-        result.assistantNames = azureAgents.reduce(
-          (acc: Record<string, string>, assistant: Assistant) => {
-            acc[assistant.id] = assistant.name || '';
-            return acc;
-          },
-          {},
-        );
-        result.modelIcons = azureAgents.reduce(
           (acc: Record<string, string | undefined>, assistant: Assistant) => {
             acc[assistant.id] = assistant.metadata?.avatar;
             return acc;

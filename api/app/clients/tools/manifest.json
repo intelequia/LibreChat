@@ -114,13 +114,6 @@
     ]
   },
   {
-    "name": "Dataverse",
-    "pluginKey": "dataverse",
-    "description": "Use Dataverse plugin to connect to your Dataverse instance",
-    "icon": "/assets/Plugin-Icons/Dataverse.svg",
-    "authConfig": []
-  },
-  {
     "name": "Microsoft Graph",
     "pluginKey": "microsoft-graph",
     "description": "Create consults to Microsoft Graph API",

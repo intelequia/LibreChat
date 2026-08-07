@@ -19,7 +19,6 @@ const createGeminiImageTool = require('./structured/GeminiImageGen');
  */
 const {
   AzureAIFunctions,
-  Dataverse,
   MicrosoftGraph,
   BingSearch
 } = require("~/utils")
@@ -39,7 +38,6 @@ module.exports = {
   TraversaalSearch,
   // Intelequia Plugins
   AzureAIFunctions,
-  Dataverse,
   MicrosoftGraph,
   BingSearch,
   createOpenAIImageTools,

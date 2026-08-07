@@ -102,11 +102,10 @@ function formatAction(action) {
   formattedAction.thought = getString(formattedAction.thought);
 
   if (action.tool.toLowerCase() === 'self-reflection' || formattedAction.plugin === 'N/A') {
-    formattedAction.inputStr = `{\n\tthought: ${formattedAction.input}${
-      !formattedAction.thought.includes(formattedAction.input)
+    formattedAction.inputStr = `{\n\tthought: ${formattedAction.input}${!formattedAction.thought.includes(formattedAction.input)
         ? ' - ' + formattedAction.thought
         : ''
-    }\n}`;
+      }\n}`;
     formattedAction.inputStr = formattedAction.inputStr.replace('N/A - ', '');
   } else {
     const hasThought = formattedAction.thought.length > 0;
@@ -125,7 +124,7 @@ function formatAction(action) {
  * @returns {boolean | { userProvide: boolean, userProvideURL?: boolean }}
  */
 function generateConfig(key, baseURL, endpoint) {
-  if (!key && endpoint != EModelEndpoint.azureAgents) {
+  if (!key) {
     return false;
   }
 

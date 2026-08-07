@@ -71,7 +71,6 @@ const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const routes = require('./routes');
 const NodeCache = require('node-cache');
-const { intelequiaConfigLoader } = require('~/utils');
 
 global.myCache = new NodeCache();
 const { PORT, HOST, ALLOW_SOCIAL_LOGIN, DISABLE_COMPRESSION, TRUST_PROXY } = process.env ?? {};
@@ -284,7 +283,6 @@ const startServer = async () => {
   app.use('/api/models', routes.models);
   app.use('/api/config', preAuthTenantMiddleware, optionalJwtAuth, routes.config);
   app.use('/api/assistants', routes.assistants);
-  app.use('/api/azureAgents', routes.azureAgents);
   app.use('/api/files', await routes.files.initialize());
   app.use('/images/', createValidateImageRequest(appConfig.secureImageLinks), routes.staticRoute);
   app.use('/api/share', preAuthTenantMiddleware, routes.share);
@@ -300,15 +298,6 @@ const startServer = async () => {
   app.use('/api/rum', routes.rum);
 
   app.use('/metrics', metricsRouter);
-  app.use('/intelequia/config', routes.intelequiaConfig);
-
-  /**
-   * Load permission configuration files from remote repository
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (process.env.ENABLE_PERMISSION_MANAGE == "true")
-    await intelequiaConfigLoader();
 
   /** 404 for unmatched API routes */
   app.use('/api', apiNotFound);

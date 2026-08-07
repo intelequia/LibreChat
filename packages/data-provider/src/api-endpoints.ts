@@ -241,37 +241,6 @@ export const config = (context?: StartupConfigContext) =>
 
 export const prompts = () => `${BASE_URL}/api/prompts`;
 
-export const azureAgents = ({
-  path = '',
-  options,
-  endpoint,
-  isAvatar,
-}: {
-  path?: string;
-  options?: object;
-  endpoint?: AssistantsEndpoint;
-  isAvatar?: boolean;
-}) => {
-  let url = isAvatar === true ? `${images()}/azureAgents` : `/api/azureAgents`;
-
-  if (path && path !== '') {
-    url += `/${path}`;
-  }
-
-  if (endpoint) {
-    options = {
-      ...(options ?? {}),
-      endpoint,
-    };
-  }
-
-  if (options && Object.keys(options).length > 0) {
-    const queryParams = new URLSearchParams(options as Record<string, string>).toString();
-    url += `?${queryParams}`;
-  }
-
-  return url;
-};
 export const addPromptToGroup = (groupId: string) =>
   `${BASE_URL}/api/prompts/groups/${groupId}/prompts`;
 

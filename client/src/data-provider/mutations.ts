@@ -805,11 +805,7 @@ export const useCreateAssistantMutation = (
   const queryClient = useQueryClient();
 
   return useMutation(
-    (newAssistantData: t.AssistantCreateParams) => {
-      const { endpoint } = newAssistantData;
-      return endpoint == "azureAgents" ? 
-        dataService.createAzureAgent(newAssistantData) :
-        dataService.createAssistant(newAssistantData);},
+    (newAssistantData: t.AssistantCreateParams) => dataService.createAssistant(newAssistantData),
     {
       onMutate: (variables) => options?.onMutate?.(variables),
       onError: (error, variables, context) => options?.onError?.(error, variables, context),
@@ -856,16 +852,11 @@ export const useUpdateAssistantMutation = (
       const endpointsConfig = queryClient.getQueryData<t.TEndpointsConfig>([QueryKeys.endpoints]);
       const endpointConfig = endpointsConfig?.[endpoint];
       const version = endpointConfig?.version ?? defaultAssistantsVersion[endpoint];
-      return endpoint == 'azureAgents'? 
-        dataService.updateAzureAgent({
-          data,
-          assistant_id,
-        }):
-        dataService.updateAssistant({
-          data,
-          version,
-          assistant_id,
-        });
+      return dataService.updateAssistant({
+        data,
+        version,
+        assistant_id,
+      });
     },
     {
       onMutate: (variables) => options?.onMutate?.(variables),
@@ -927,12 +918,9 @@ export const useDeleteAssistantMutation = (
   const queryClient = useQueryClient();
   return useMutation(
     ({ assistant_id, model, endpoint }: t.DeleteAssistantBody) => {
-      
       const endpointsConfig = queryClient.getQueryData<t.TEndpointsConfig>([QueryKeys.endpoints]);
       const version = endpointsConfig?.[endpoint]?.version ?? defaultAssistantsVersion[endpoint];
-      return endpoint == "azureAgents" ? 
-        dataService.deleteAzureAgent({ assistant_id, model, endpoint }) :
-        dataService.deleteAssistant({ assistant_id, model, version, endpoint });
+      return dataService.deleteAssistant({ assistant_id, model, version, endpoint });
     },
     {
       onMutate: (variables) => options?.onMutate?.(variables),
@@ -976,12 +964,8 @@ export const useUploadAssistantAvatarMutation = (
   unknown // context
 > => {
   return useMutation([MutationKeys.assistantAvatarUpload], {
-    mutationFn: ({ postCreation: _postCreation, ...variables }: t.AssistantAvatarVariables) =>{
-      const {endpoint} = variables;
-      return endpoint == "azureAgents" ? 
-        dataService.uploadAzureAgentsAvatar(variables): 
-        dataService.uploadAssistantAvatar(variables);
-    },
+    mutationFn: ({ postCreation: _postCreation, ...variables }: t.AssistantAvatarVariables) =>
+      dataService.uploadAssistantAvatar(variables),
     ...(options || {}),
   });
 };

@@ -49,7 +49,7 @@ const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { applyReranking } = require('./reranker');
 const { findUser } = require('~/models');
 
-const { BingSearch, MicrosoftGraph, Dataverse, Sharepoint, AzureAIFunctions } = require('~/utils');
+const { BingSearch, MicrosoftGraph, Sharepoint, AzureAIFunctions } = require('~/utils');
 const { getMCPServerTools } = require('~/server/services/Config');
 const { getMCPServersRegistry } = require('~/config');
 const { getRoleByName } = require('~/models');
@@ -190,7 +190,6 @@ const loadTools = async ({
     traversaal_search: TraversaalSearch,
     // intelequia Tools
     AzureAIFunctions: AzureAIFunctions,
-    "dataverse": Dataverse,
     "bing-search": BingSearch,
     "microsoft-graph": MicrosoftGraph,
     tavily_search_results_json: TavilySearchResults,

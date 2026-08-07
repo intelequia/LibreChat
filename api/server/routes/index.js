@@ -1,6 +1,5 @@
 const accessPermissions = require('./accessPermissions');
 const assistants = require('./assistants');
-const azureAgents = require('./azureAgents');
 const categories = require('./categories');
 const adminAuth = require('./admin/auth');
 const adminConfig = require('./admin/config');
@@ -37,7 +36,6 @@ const keys = require('./keys');
 const user = require('./user');
 const mcp = require('./mcp');
 const rum = require('./rum');
-const intelequiaConfig = require('./intelequia/config');
 
 module.exports = {
   rum,
@@ -75,9 +73,7 @@ module.exports = {
   memories,
   endpoints,
   assistants,
-  azureAgents,
   categories,
   staticRoute,
-  intelequiaConfig,
   accessPermissions,
 };

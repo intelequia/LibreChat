@@ -229,10 +229,7 @@ export const useListAssistantsQuery = <TData = AssistantListResponse>(
   const version = endpointsConfig?.[endpoint]?.version ?? defaultAssistantsVersion[endpoint];
   return useQuery<AssistantListResponse, unknown, TData>(
     [QueryKeys.assistants, endpoint, params],
-    () => {
-      return endpoint == "azureAgents" ? 
-        dataService.listAzureAgents({ ...params, endpoint }) :
-        dataService.listAssistants({ ...params, endpoint }, version)},
+    () => dataService.listAssistants({ ...params, endpoint }, version),
     {
       // Example selector to sort them by created_at
       // select: (res) => {

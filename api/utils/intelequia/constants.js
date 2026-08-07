@@ -4,7 +4,6 @@ const enabledPluginsNames = [
   "Azure AI Search",
   "Google",
   "Web Search",
-  "Dataverse",
   "Microsoft Graph",
   "Bing Search",
   "Microsoft Sharepoint"
@@ -13,7 +12,6 @@ const intelequiaTools = [
   "bing-search",
   "microsoft-graph",
   "sharepoint",
-  "dataverse"
 ]
 
 module.exports = {

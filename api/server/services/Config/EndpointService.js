@@ -13,7 +13,6 @@ const {
   AZURE_OPENAI_BASEURL,
   ASSISTANTS_BASE_URL,
   AZURE_ASSISTANTS_BASE_URL,
-  AZURE_AI_PROJECT_ENDPOINT,
 } = process.env ?? {};
 
 const userProvidedOpenAI = isUserProvided(openAIApiKey);
@@ -45,19 +44,14 @@ module.exports = {
       AZURE_ASSISTANTS_BASE_URL,
       EModelEndpoint.azureAssistants,
     ),
-    [EModelEndpoint.azureAgents]: generateConfig(
-      null,
-      AZURE_AI_PROJECT_ENDPOINT,
-      EModelEndpoint.azureAgents,
-    ),
     [EModelEndpoint.bedrock]: generateConfig(
       bedrockUserProvidedCredential ??
-        firstNonEmpty(
-          process.env.BEDROCK_AWS_BEARER_TOKEN,
-          process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
-          process.env.BEDROCK_AWS_PROFILE,
-          process.env.BEDROCK_AWS_DEFAULT_REGION,
-        ),
+      firstNonEmpty(
+        process.env.BEDROCK_AWS_BEARER_TOKEN,
+        process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
+        process.env.BEDROCK_AWS_PROFILE,
+        process.env.BEDROCK_AWS_DEFAULT_REGION,
+      ),
     ),
     /* key will be part of separate config */
     [EModelEndpoint.agents]: generateConfig('true', undefined, EModelEndpoint.agents),

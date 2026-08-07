@@ -578,7 +578,6 @@ export enum AgentCapabilities {
 }
 
 export const defaultAssistantsVersion = {
-  [EModelEndpoint.azureAgents]: 2,
   [EModelEndpoint.assistants]: 2,
   [EModelEndpoint.azureAssistants]: 1,
 };
@@ -1766,7 +1765,6 @@ export const configSchema = z.object({
       [EModelEndpoint.anthropic]: anthropicEndpointSchema.optional(),
       [EModelEndpoint.azureOpenAI]: azureEndpointSchema.optional(),
       [EModelEndpoint.azureAssistants]: assistantEndpointSchema.optional(),
-      [EModelEndpoint.azureAgents]: assistantEndpointSchema.optional(),
       [EModelEndpoint.assistants]: assistantEndpointSchema.optional(),
       [EModelEndpoint.agents]: agentsEndpointSchema.optional(),
       [EModelEndpoint.custom]: customEndpointsSchema.optional(),
@@ -1852,7 +1850,6 @@ export const alternateName = {
   [EModelEndpoint.assistants]: 'Assistants',
   [EModelEndpoint.agents]: 'My Agents',
   [EModelEndpoint.azureAssistants]: 'Azure Assistants',
-  [EModelEndpoint.azureAgents]:'Azure Agents',
   [EModelEndpoint.azureOpenAI]: 'Azure OpenAI',
   [EModelEndpoint.google]: 'Google',
   [EModelEndpoint.anthropic]: 'Anthropic',
@@ -1866,11 +1863,6 @@ export const alternateName = {
   [KnownEndpoints.helicone]: 'Helicone',
 };
 
-const azureAgentsModels =[
-  'gpt-4o-mini',
-  'gpt-4o',
-  'gpt-4.1',
-]
 const sharedOpenAIModels = [
   'gpt-5.5',
   'gpt-5.5-pro',
@@ -1958,7 +1950,6 @@ export const bedrockModels = [
 
 export const defaultModels = {
   [EModelEndpoint.azureAssistants]: sharedOpenAIModels,
-  [EModelEndpoint.azureAgents]:azureAgentsModels,
   [EModelEndpoint.assistants]: [...sharedOpenAIModels, 'chatgpt-4o-latest'],
   [EModelEndpoint.agents]: sharedOpenAIModels, // TODO: Add agent models (agentsModels)
   [EModelEndpoint.google]: [
@@ -2008,7 +1999,6 @@ export const EndpointURLs = {
   [EModelEndpoint.assistants]: `${apiBaseUrl()}/api/assistants/v2/chat`,
   [EModelEndpoint.azureAssistants]: `${apiBaseUrl()}/api/assistants/v1/chat`,
   [EModelEndpoint.agents]: `${apiBaseUrl()}/api/${EModelEndpoint.agents}/chat`,
-  [EModelEndpoint.azureAgents]: `${apiBaseUrl()}/api/azureAgents/chat`,
 } as const;
 
 export const modularEndpoints = new Set<EModelEndpoint | string>([

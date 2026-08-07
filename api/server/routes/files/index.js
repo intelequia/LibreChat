@@ -9,7 +9,6 @@ const {
 const { restoreTenantContextFromReq } = require('@librechat/api');
 const { avatar: asstAvatarRouter } = require('~/server/routes/assistants/v1');
 const { avatar: agentAvatarRouter } = require('~/server/routes/agents/v1');
-const azureAgentRouter = require('~/server/routes/azureAgents/v2');
 const { createMulterInstance } = require('./multer');
 
 const files = require('./files');
@@ -64,7 +63,6 @@ const initialize = async () => {
   router.use('/images/avatar', avatar);
   router.use('/images/agents', agentAvatarRouter);
   router.use('/images/assistants', asstAvatarRouter);
-  router.use('/images/azureAgents', azureAgentRouter);
   return router;
 };
 

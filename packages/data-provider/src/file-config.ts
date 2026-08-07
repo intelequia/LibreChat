@@ -8,7 +8,6 @@ export const supportsFiles = {
   [EModelEndpoint.google]: true,
   [EModelEndpoint.assistants]: true,
   [EModelEndpoint.azureAssistants]: true,
-  [EModelEndpoint.azureAgents]: true,
   [EModelEndpoint.agents]: true,
   [EModelEndpoint.azureOpenAI]: true,
   [EModelEndpoint.anthropic]: true,

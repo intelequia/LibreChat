@@ -46,7 +46,6 @@ const endpointSchemas: Record<EndpointSchemaLookupKey, EndpointSchema> = {
   [EModelEndpoint.anthropic]: anthropicSchema,
   [EModelEndpoint.assistants]: assistantSchema,
   [EModelEndpoint.azureAssistants]: assistantSchema,
-  [EModelEndpoint.azureAgents]: assistantSchema,
   [EModelEndpoint.agents]: compactAgentsSchema,
   [EModelEndpoint.bedrock]: bedrockInputSchema,
 };
@@ -81,7 +80,6 @@ export function getEnabledEndpoints() {
     EModelEndpoint.assistants,
     EModelEndpoint.azureAssistants,
     EModelEndpoint.azureOpenAI,
-    EModelEndpoint.azureAgents,
     EModelEndpoint.google,
     EModelEndpoint.anthropic,
     EModelEndpoint.bedrock,
@@ -328,7 +326,6 @@ const compactEndpointSchemas: Record<EndpointSchemaLookupKey, CompactEndpointSch
   [Providers.OPENROUTER]: openRouterSchema,
   [EModelEndpoint.assistants]: compactAssistantSchema,
   [EModelEndpoint.azureAssistants]: compactAssistantSchema,
-  [EModelEndpoint.azureAgents]: compactAssistantSchema,
   [EModelEndpoint.agents]: compactAgentsSchema,
   [EModelEndpoint.google]: compactGoogleSchema,
   [EModelEndpoint.bedrock]: bedrockInputSchema,

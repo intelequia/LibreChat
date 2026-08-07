@@ -18,7 +18,7 @@ const { RunManager, waitForRun } = require('~/server/services/Runs');
 const { processMessages } = require('~/server/services/Threads');
 const { createOnProgress } = require('~/server/utils');
 const { TextStream } = require('~/app/clients');
-const { intelequiaTools } = require ("~/utils")
+const { intelequiaTools } = require("~/utils")
 
 /**
  * Sorts, processes, and flattens messages to a single string.
@@ -431,25 +431,15 @@ async function runAssistant({
     const functionCall = item.function;
     const args = JSON.parse(functionCall.arguments);
 
-    /**
-     * Add Azure Functions feature to assistants
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    if ( process.env.ENABLE_PERMISSION_MANAGE == "true" ) {
-
-      if( intelequiaTools.includes(functionCall.name)){
-        args["userEmail"] = userEmail;
-        args['toolName'] = functionCall.name;
-        args['assistant'] = run.assistant_id;
-        args['toolInput'] = JSON.parse(item.function.arguments);
-      }
-      else if (run.tools.find((tool) => tool.function.name === functionCall.name)) {
-        // args["functionInfo"] = matchingTool
-        args['toolName'] = functionCall.name;
-        args['assistant'] = run.assistant_id;
-        args['toolInput'] = JSON.parse(item.function.arguments);
-      }
+    if (intelequiaTools.includes(functionCall.name)) {
+      args.userEmail = userEmail;
+      args.toolName = functionCall.name;
+      args.assistant = run.assistant_id;
+      args.toolInput = JSON.parse(item.function.arguments);
+    } else if (run.tools.find((tool) => tool.function.name === functionCall.name)) {
+      args.toolName = functionCall.name;
+      args.assistant = run.assistant_id;
+      args.toolInput = JSON.parse(item.function.arguments);
     }
     return {
       tool: functionCall.name,
@@ -461,17 +451,17 @@ async function runAssistant({
   });
 
   var tool_outputs = await processRequiredActions(openai, actions);
-  
+
   /**
    *  TO-DO: revert this change 
    *  @Author Enrique Pedroza Castillo
    *  @Organization Intelequia
    */
-  tool_outputs=tool_outputs.tool_outputs;
+  tool_outputs = tool_outputs.tool_outputs;
   const toolRun = await openai.beta.threads.runs.submitToolOutputs(
-    run.id, 
+    run.id,
     {
-      thread_id:run.thread_id, 
+      thread_id: run.thread_id,
       tool_outputs
     }
   );
