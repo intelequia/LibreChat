@@ -41,12 +41,18 @@ const {
   GenerationJobManager,
   QUERY_DEVTOOLS_HEADER,
   createStreamServices,
+  agentStartupIngressMiddleware,
+  agentStartupTelemetryMiddleware,
   initializeFileStorage,
   initializeDeploymentSkills,
+  loadToolApprovalHooks,
   maybeInjectQueryDevtoolsBootstrap,
   preAuthTenantMiddleware,
+  registerShutdownTask,
+  configureServerTimeouts,
   setupGracefulShutdown,
   updateInterfacePermissions,
+  configureMessageFilterRegexValidator,
 } = require('@librechat/api');
 const { connectDb, indexSync } = require('~/db');
 const {
@@ -70,6 +76,9 @@ const { getAppConfig } = require('./services/Config');
 const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const routes = require('./routes');
+
+/** Reject messageFilter PII patterns the RE2 runtime engine cannot compile, at config load. */
+configureMessageFilterRegexValidator();
 const NodeCache = require('node-cache');
 
 global.myCache = new NodeCache();
@@ -105,6 +114,19 @@ const configureGenerationStreams = () => {
     cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS),
   });
   GenerationJobManager.initialize();
+  // Stop active generations and close their SSE streams while the HTTP server drains.
+  registerShutdownTask(
+    'generation job manager prepare',
+    () => GenerationJobManager.prepareForShutdown(),
+    {
+      phase: 'pre-drain',
+      priority: 100,
+    },
+  );
+  // Tear down stream resources before shared caches and telemetry exporters shut down.
+  registerShutdownTask('generation job manager', () => GenerationJobManager.destroy(), {
+    priority: 100,
+  });
 };
 
 const startServer = async () => {
@@ -146,6 +168,16 @@ const startServer = async () => {
   await initializeDeploymentSkills({ projectRoot: path.resolve(__dirname, '../..') });
   initializeGitHubSkillSync(appConfig);
   startExpiredFileSweep({ appConfig, loadAppConfig: getAppConfig });
+  // Register any programmatic tool-approval policy hooks declared in
+  // `endpoints.agents.toolApproval.hooks`. Honor the `enabled` kill switch: when tool
+  // approval is off we pass no hooks, so a disabled endpoint imports/runs nothing (and any
+  // previously loaded batch is unregistered). Hooks are read from the BASE config only —
+  // they register once, process-wide; per-user/tenant differences belong inside the hook
+  // (via its context), not in per-override module lists.
+  const toolApproval = appConfig?.endpoints?.agents?.toolApproval;
+  await loadToolApprovalHooks(toolApproval?.enabled ? toolApproval.hooks : undefined, {
+    basePath: path.resolve(__dirname, '../..'),
+  });
   await runAsSystem(async () => {
     await performStartupChecks(appConfig);
     await updateInterfacePermissions({ appConfig, getRoleByName, updateAccessPermissions });
@@ -194,6 +226,7 @@ const startServer = async () => {
   });
 
   /* Middleware */
+  app.use('/api/agents/chat', agentStartupIngressMiddleware);
   app.use(metricsMiddleware);
   app.use(noIndex);
   app.use(express.json({ limit: '3mb' }));
@@ -231,6 +264,7 @@ const startServer = async () => {
   if (telemetry.enabled) {
     app.use(telemetry.telemetryMiddleware);
   }
+  app.use('/api/agents/chat', agentStartupTelemetryMiddleware);
 
   if (!ALLOW_SOCIAL_LOGIN) {
     console.warn('Social logins are disabled. Set ALLOW_SOCIAL_LOGIN=true to enable them.');
@@ -260,6 +294,7 @@ const startServer = async () => {
   app.use('/api/auth', preAuthTenantMiddleware, routes.auth);
   app.use('/api/admin', routes.adminAuth);
   app.use('/api/admin/config', routes.adminConfig);
+  app.use('/api/admin/langfuse', routes.adminLangfuse);
   app.use('/api/admin/grants', routes.adminGrants);
   app.use('/api/admin/groups', routes.adminGroups);
   app.use('/api/admin/roles', routes.adminRoles);
@@ -354,6 +389,14 @@ const startServer = async () => {
       logger.error('Post-listen initialization failed:', initErr);
       process.exit(1);
     }
+  });
+
+  configureServerTimeouts(server);
+  logger.info('HTTP server timeout configuration', {
+    keepAliveTimeout: server.keepAliveTimeout,
+    keepAliveTimeoutBuffer: server.keepAliveTimeoutBuffer,
+    headersTimeout: server.headersTimeout,
+    requestTimeout: server.requestTimeout,
   });
 
   setupGracefulShutdown(server);

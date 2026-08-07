@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const { createMethods } = require('@librechat/data-schemas');
-const { matchModelName, findMatchingPattern } = require('@librechat/api');
+const { matchModelName, findMatchingPattern, isDeploymentSkillId } = require('@librechat/api');
 const getLogStores = require('~/cache/getLogStores');
 const {
   trackQueryEvent,
@@ -12,6 +12,7 @@ const {
 const methods = createMethods(mongoose, {
   matchModelName,
   findMatchingPattern,
+  isExternalSkillId: isDeploymentSkillId,
   getCache: getLogStores,
 });
 

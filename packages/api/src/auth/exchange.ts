@@ -274,25 +274,60 @@ export async function storeAndStripChallenge(
 }
 
 /**
- * Checks if the redirect URI is for the admin panel.
- * Handles both cross-origin deployments (admin panel on a different host/port)
- * and same-origin subpath deployments (admin panel at e.g. /adminpanel).
+ * Normalizes a URL path by removing any trailing slash, except for the root path.
+ * @returns The normalized path.
+ */
+const normalizePath = (path: string): string => {
+  if (!path || path === '/') {
+    return '/';
+  }
+
+  return path.endsWith('/') ? path.slice(0, -1) : path;
+};
+
+/**
+ * Checks if the redirect URI targets the admin panel.
+ *
+ * Supported cases:
+ * - Cross-origin admin panel: redirect origin must match admin origin.
+ * - Same-origin admin panel under a subpath: redirect path must be within
+ *   the configured admin subpath.
  *
  * @param redirectUri - The redirect URI to check.
  * @param adminPanelUrl - The admin panel URL (from ADMIN_PANEL_URL env var)
  * @param domainClient - The main client domain
- * @returns True if redirecting to admin panel (separate from main client).
+ * @returns True if redirecting to admin panel.
  */
 export function isAdminPanelRedirect(
   redirectUri: string,
   adminPanelUrl: string,
   domainClient: string,
 ): boolean {
-  if (!adminPanelUrl || adminPanelUrl === domainClient) {
-    return false;
-  }
   try {
-    return redirectUri.startsWith(adminPanelUrl);
+    const redirectURL = new URL(redirectUri);
+    const adminURL = new URL(adminPanelUrl);
+    const clientURL = new URL(domainClient);
+
+    const redirectOrigin = redirectURL.origin;
+    const adminOrigin = adminURL.origin;
+    const clientOrigin = clientURL.origin;
+
+    if (redirectOrigin !== adminOrigin) {
+      return false;
+    }
+
+    if (adminOrigin !== clientOrigin) {
+      return true;
+    }
+
+    const adminPath = normalizePath(adminURL.pathname);
+    const redirectPath = normalizePath(redirectURL.pathname);
+
+    if (adminPath === '/') {
+      return false;
+    }
+
+    return redirectPath === adminPath || redirectPath.startsWith(`${adminPath}/`);
   } catch {
     return false;
   }

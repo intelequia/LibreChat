@@ -5,6 +5,7 @@ const {
   mergeHeaders,
   getAnthropicModels,
   getBedrockModels,
+  getAppConfigOptionsFromUser,
   getOpenAIModels,
   getGoogleModels,
 } = require('@librechat/api');
@@ -18,13 +19,7 @@ const { getAppConfig } = require('./app');
  */
 async function loadDefaultModels(req) {
   try {
-    const appConfig =
-      req.config ??
-      (await getAppConfig({
-        role: req.user?.role,
-        userId: req.user?.id,
-        tenantId: req.user?.tenantId,
-      }));
+    const appConfig = req.config ?? (await getAppConfig(getAppConfigOptionsFromUser(req.user)));
     const vertexConfig = appConfig?.endpoints?.[EModelEndpoint.anthropic]?.vertexConfig;
 
     /** Forward configured custom headers (endpoint over global `all`) so model
