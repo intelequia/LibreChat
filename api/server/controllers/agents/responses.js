@@ -66,7 +66,7 @@ const {
   findAccessibleResources,
   getEffectivePermissions,
 } = require('~/server/services/PermissionService');
-const { trackEvent } = require('~/utils/intelequia/appInsights');
+const { trackEvent, trackSpendEvent } = require('~/utils/intelequia/appInsights');
 const {
   getSkillToolDeps,
   getSkillDbMethods,
@@ -883,23 +883,15 @@ const executeResponse = async (envelope, { req, res }) => {
             model: agentModel,
           },
         );
-        // Tokens from collectedUsage directly (usageResult.input_tokens includes cache tokens, causing inflation)
-        const promptTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_tokens) || 0), 0);
-        const cacheCreationTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_creation) || Number(u?.cache_creation_input_tokens) || 0), 0);
-        const cacheReadTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_read) || Number(u?.cache_read_input_tokens) || 0), 0);
-        const completionTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.output_tokens) || 0), 0);
-        await trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
+        await trackSpendEvent({
+          eventName: isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded',
           userId,
           agentId,
           model: agentModel,
           conversationId,
           endpoint: agent.provider || 'unknown',
-          promptTokens,
-          cacheCreationTokens,
-          cacheReadTokens,
-          completionTokens,
-          messageTokens: promptTokens + cacheCreationTokens + cacheReadTokens + completionTokens,
-          timestamp: new Date().toISOString(),
+          collectedUsage,
+          context: 'message',
         });
       } catch (err) {
         logger.error('[Responses API] Error recording usage:', err);
@@ -1094,23 +1086,15 @@ const executeResponse = async (envelope, { req, res }) => {
             model: agentModel,
           },
         );
-        // Tokens from collectedUsage directly (usageResult.input_tokens includes cache tokens, causing inflation)
-        const promptTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_tokens) || 0), 0);
-        const cacheCreationTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_creation) || Number(u?.cache_creation_input_tokens) || 0), 0);
-        const cacheReadTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_read) || Number(u?.cache_read_input_tokens) || 0), 0);
-        const completionTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.output_tokens) || 0), 0);
-        await trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
+        await trackSpendEvent({
+          eventName: isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded',
           userId,
           agentId,
           model: agentModel,
           conversationId,
           endpoint: agent.provider || 'unknown',
-          promptTokens,
-          cacheCreationTokens,
-          cacheReadTokens,
-          completionTokens,
-          messageTokens: promptTokens + cacheCreationTokens + cacheReadTokens + completionTokens,
-          timestamp: new Date().toISOString(),
+          collectedUsage,
+          context: 'message',
         });
       } catch (err) {
         logger.error('[Responses API] Error recording usage:', err);
