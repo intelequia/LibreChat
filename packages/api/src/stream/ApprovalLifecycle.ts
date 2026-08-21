@@ -1,6 +1,12 @@
 import { logger } from '@librechat/data-schemas';
 import type { Agents } from 'librechat-data-provider';
-import type { IJobStoreV2, JobMetadataPatch, SteerQueueItem } from '~/stream/interfaces/IJobStore';
+import type {
+  IJobStoreV2,
+  JobMetadataPatch,
+  SerializableJobData,
+  SteerQueueItem,
+} from '~/stream/interfaces/IJobStore';
+import type { ActivityPhaseSnapshot } from '~/agents/activityPhases/runtime';
 import {
   isPendingActionExpired,
   isPendingActionStale,
@@ -22,6 +28,7 @@ export interface ApprovalLifecycleCallbacks {
 
 export interface ApprovalPauseOptions {
   discoveredTools?: string[];
+  activityPhaseSnapshot?: ActivityPhaseSnapshot;
   /** Generation identity observed by the interrupted run. */
   expectedCreatedAt?: number;
   /** Hold Stop/resume until the paused assistant row is durably unfinished. */
@@ -88,6 +95,7 @@ export class ApprovalLifecycle {
     }
     const expectedCreatedAt = options.expectedCreatedAt ?? job.createdAt;
     const discoveredTools = options.discoveredTools;
+    const activityPhaseSnapshot = options.activityPhaseSnapshot;
     /** The normal receipt TTL matches a running job, but a review pause can
      * live for 24h or an explicit later expiry. The store extends every
      * receipt in the SAME CAS that closes running enqueues: a separate pass
@@ -116,6 +124,7 @@ export class ApprovalLifecycle {
         ...(discoveredTools != null && discoveredTools.length > 0
           ? { discoveredTools: [...discoveredTools] }
           : {}),
+        ...(activityPhaseSnapshot != null ? { activityPhaseSnapshot } : {}),
       },
       expectCreatedAt: expectedCreatedAt,
       steerReceiptTtlSeconds: pauseReceiptTtl,
@@ -373,15 +382,17 @@ export class ApprovalLifecycle {
   }
 
   /**
-   * Expires the observed approval and returns the winning job identity. Callers
-   * that need to notify runtime-local subscribers can use the identity to avoid
-   * delivering the predecessor's terminal event to a replacement generation.
+   * Expires the observed approval and returns the winning pre-transition job.
+   * Callers that need to notify runtime-local subscribers or run host lifecycle
+   * hooks get both the exact generation identity and its trusted metadata without
+   * a racy post-transition read (the terminal TTL may already remove the hash).
    */
   async expireWithIdentity(
     streamId: string,
     expectedActionId?: string,
     expectedCreatedAt?: number,
-  ): Promise<number | null> {
+    options?: { markHostActionPending?: boolean },
+  ): Promise<SerializableJobData | null> {
     const job = await this.waitForPausePersistence(streamId, expectedCreatedAt);
     if (
       !job ||
@@ -390,14 +401,25 @@ export class ApprovalLifecycle {
     ) {
       return null;
     }
+    // Built-in in-memory stores may mutate the returned job object in place during
+    // transitionStatus. Snapshot it before the CAS so the host hook receives the
+    // observed generation metadata even when terminal TTL removes or rewrites it.
+    const expiredJob = { ...job };
     const createdAt = job.createdAt;
     const ok = await this.store.transitionStatus(streamId, {
       from: 'requires_action',
       to: 'aborted',
       clear: ['pendingAction', 'pendingActionId'],
       // completedAt lets the stores' terminal-cleanup reclaim the job; without
-      // it an expired approval lingers in the in-memory map indefinitely.
-      patch: { error: 'Approval expired before a decision was made', completedAt: Date.now() },
+      // it an expired approval lingers in the in-memory map indefinitely. When a host
+      // action is owed, `terminalHostActionPending` retains the job (and keeps it
+      // enumerable) until the adapter acknowledges — set ATOMICALLY here so a crash right
+      // after this CAS still leaves the durable retry evidence.
+      patch: {
+        error: 'Approval expired before a decision was made',
+        completedAt: Date.now(),
+        ...(options?.markHostActionPending === true && { terminalHostActionPending: true }),
+      },
       expectActionId: expectedActionId,
       expectCreatedAt: createdAt,
     });
@@ -405,6 +427,6 @@ export class ApprovalLifecycle {
       this.callbacks.onExpired?.(streamId, createdAt);
       logger.debug(`[ApprovalLifecycle] expired pending review: ${streamId}`);
     }
-    return ok ? createdAt : null;
+    return ok ? expiredJob : null;
   }
 }

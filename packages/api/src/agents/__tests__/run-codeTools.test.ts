@@ -1,3 +1,5 @@
+import type { SubagentTaskConfig } from '@librechat/agents';
+import { CHECK_BACKGROUND_TASK_NAME } from '~/agents/background';
 import { createRun } from '~/agents/run';
 
 /**
@@ -35,11 +37,6 @@ jest.mock('winston', () => ({
   transports: { Console: jest.fn(), DailyRotateFile: jest.fn(), File: jest.fn() },
 }));
 
-jest.mock('~/utils/env', () => ({
-  resolveHeaders: jest.fn((opts: { headers: unknown }) => opts?.headers ?? {}),
-  createSafeUser: jest.fn(() => ({})),
-}));
-
 jest.mock('@librechat/data-schemas', () => ({
   ...jest.requireActual('@librechat/data-schemas'),
   logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn() },
@@ -61,7 +58,7 @@ jest.mock('~/agents/checkpointer', () => ({
   getAgentCheckpointer: jest.fn().mockResolvedValue({}),
 }));
 
-import { Run } from '@librechat/agents';
+import { InMemorySubagentTaskStore, Run } from '@librechat/agents';
 
 function makeAgent(overrides?: Record<string, unknown>) {
   return {
@@ -77,12 +74,16 @@ function makeAgent(overrides?: Record<string, unknown>) {
   };
 }
 
-async function captureRunConfig(): Promise<Record<string, unknown>> {
+async function captureRunConfig(
+  agent = makeAgent(),
+  subagentTasks?: SubagentTaskConfig,
+): Promise<Record<string, unknown>> {
   await createRun({
-    agents: [makeAgent()] as never,
+    agents: [agent] as never,
     signal: new AbortController().signal,
     streaming: true,
     streamUsage: true,
+    subagentTasks,
   });
   const createMock = Run.create as jest.Mock;
   expect(createMock).toHaveBeenCalledTimes(1);
@@ -109,5 +110,46 @@ describe('createRun code-tool eager/session wiring', () => {
     expect(runConfig.codeSessionToolNames).toEqual(
       expect.arrayContaining(['create_file', 'edit_file', 'read_file']),
     );
+  });
+
+  it('passes the trusted per-agent code-session partition to the SDK', async () => {
+    const codeSessionKey = 'execute_code:stateful:v1:user';
+    const runConfig = await captureRunConfig(makeAgent({ codeSessionKey }));
+    const [agentInput] = (runConfig.graphConfig as { agents: Array<Record<string, unknown>> })
+      .agents;
+    expect(agentInput.codeSessionKey).toBe(codeSessionKey);
+  });
+
+  it('registers detached task controls only on a spawn-capable parent', async () => {
+    const subagentTasks: SubagentTaskConfig = {
+      store: new InMemorySubagentTaskStore(),
+      scopeId: 'owner:parent-thread',
+    };
+    const runConfig = await captureRunConfig(
+      makeAgent({
+        subagents: { enabled: true, allowSelf: true },
+        toolDefinitions: [],
+        toolRegistry: new Map(),
+      }),
+      subagentTasks,
+    );
+    const [agentInput] = (runConfig.graphConfig as { agents: Array<Record<string, unknown>> })
+      .agents;
+    const parentDefinitions = agentInput.toolDefinitions as Array<{ name: string }>;
+    const [selfConfig] = agentInput.subagentConfigs as Array<{
+      agentInputs?: {
+        toolDefinitions?: Array<{ name: string }>;
+        toolRegistry?: Map<string, unknown>;
+      };
+    }>;
+
+    expect(runConfig.subagentTasks).toBe(subagentTasks);
+    expect(parentDefinitions.map((definition) => definition.name)).toContain(
+      CHECK_BACKGROUND_TASK_NAME,
+    );
+    expect(
+      selfConfig.agentInputs?.toolDefinitions?.map((definition) => definition.name),
+    ).not.toContain(CHECK_BACKGROUND_TASK_NAME);
+    expect(selfConfig.agentInputs?.toolRegistry?.has(CHECK_BACKGROUND_TASK_NAME)).toBe(false);
   });
 });

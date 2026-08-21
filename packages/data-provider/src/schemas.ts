@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import type { TMessageContentParts, FunctionTool, FunctionToolCall } from './types/assistants';
+import type {
+  TMessageContentParts,
+  AgentSubagentGraph,
+  FunctionToolCall,
+  FunctionTool,
+} from './types/assistants';
 import type { SearchResultData } from './types/web';
 import type { TFile } from './types/files';
 import { TFeedback, feedbackSchema } from './feedback';
@@ -347,6 +352,7 @@ export const defaultAgentFormValues = {
   [Tools.file_search]: false,
   [Tools.web_search]: false,
   [Tools.memory]: false,
+  stateful_code_environment: 'user' as const,
   category: 'general',
   support_contact: {
     name: '',
@@ -360,7 +366,12 @@ export const defaultAgentFormValues = {
   skills_enabled: undefined as boolean | undefined,
   /** `undefined` = feature disabled by default (no subagent tool injected). */
   subagents: undefined as
-    | { enabled?: boolean; allowSelf?: boolean; agent_ids?: string[] }
+    | {
+        enabled?: boolean;
+        allowSelf?: boolean;
+        agent_ids?: string[];
+        graphs?: AgentSubagentGraph[];
+      }
     | undefined,
   /** Memory partition: 'agent' isolates memories per (user, agent); default shared pool */
   memory_scope: undefined as MemoryScope | undefined,
@@ -884,10 +895,17 @@ export type UIResource = {
   [key: string]: unknown;
 };
 
+export type WorkspaceChange = {
+  profile: 'stateful';
+  operation: 'created' | 'updated';
+  path: string;
+};
+
 export type TAttachmentMetadata = {
   type?: Tools;
   messageId: string;
   toolCallId: string;
+  workspaceChange?: WorkspaceChange;
   [Tools.memory]?: MemoryArtifact;
   [Tools.ui_resources]?: UIResource[];
   [Tools.web_search]?: SearchResultData;
@@ -940,12 +958,29 @@ const DocumentType: z.ZodType<DocumentTypeValue> = z.lazy(() =>
   ]),
 );
 
+export const subagentThreadLineageSchema = z.object({
+  rootConversationId: z.string().min(1),
+  parentConversationId: z.string().min(1),
+  parentMessageId: z.string().min(1),
+  parentToolCallId: z.string().min(1),
+  parentAgentId: z.string().min(1).optional(),
+  subagentType: z.string().min(1),
+  subagentKind: z.enum(['agent', 'graph']),
+  depth: z.number().int().positive(),
+});
+
+export type TSubagentThreadLineage = z.infer<typeof subagentThreadLineageSchema>;
+
 export const tConversationSchema = z.object({
   conversationId: z.string().nullable(),
   endpoint: eModelEndpointSchema.nullable(),
   endpointType: eModelEndpointSchema.nullable().optional(),
   isArchived: z.boolean().optional(),
+  /** When the chat was archived; absent on chats archived before this was recorded. */
+  archivedAt: z.string().nullable().optional(),
   pinned: z.boolean().optional(),
+  /** Server-derived: an active shared link exists for this conversation. Not persisted. */
+  isShared: z.boolean().optional(),
   title: z.string().nullable().or(z.literal('New Chat')).default('New Chat'),
   user: z.string().optional(),
   messages: z.array(z.string()).optional(),
@@ -1011,6 +1046,8 @@ export const tConversationSchema = z.object({
   assistant_id: z.string().optional(),
   /* agents */
   agent_id: z.string().optional(),
+  /** Durable parent/child navigation for a subagent thread. */
+  subagentThread: subagentThreadLineageSchema.optional(),
   /* AWS Bedrock */
   region: z.string().optional(),
   maxTokens: coerceNumber.optional(),
@@ -1171,24 +1208,53 @@ export const tQueryParamsSchema = tConversationSchema
  * `spec` is set by the client from `modelSpec.name` via `getModelSpecPreset` and is
  * omitted to avoid duplicate configuration surface.
  */
-export const tModelSpecPresetSchema = tPresetSchema.omit({
-  conversationId: true,
-  presetId: true,
-  title: true,
-  defaultPreset: true,
-  order: true,
-  isArchived: true,
-  user: true,
-  messages: true,
-  tags: true,
-  file_ids: true,
-  expiredAt: true,
-  parentMessageId: true,
-  resendImages: true,
-  chatGptLabel: true,
-  presetOverride: true,
-  spec: true,
-});
+export const tModelSpecPresetSchema = tPresetSchema
+  .omit({
+    conversationId: true,
+    presetId: true,
+    title: true,
+    defaultPreset: true,
+    order: true,
+    isArchived: true,
+    user: true,
+    messages: true,
+    tags: true,
+    file_ids: true,
+    expiredAt: true,
+    parentMessageId: true,
+    resendImages: true,
+    chatGptLabel: true,
+    presetOverride: true,
+    spec: true,
+  })
+  .merge(
+    z.object({
+      /**
+       * Optional here, unlike `tPresetSchema`, where the key is required (though
+       * nullable). A preset naming an `agent_id` has an unambiguous endpoint, so
+       * config may omit it and `resolveModelSpecEndpoint` infers `agents` when
+       * specs are materialized at config load.
+       */
+      endpoint: extendedModelEndpointSchema.nullish(),
+    }),
+  )
+  .superRefine((preset, ctx) => {
+    /**
+     * Omission is only legal when the endpoint is inferable, which requires a
+     * NON-EMPTY `agent_id` — form-backed writers persist untouched fields as
+     * `''`, which names no agent. An explicit `endpoint: null` stays accepted:
+     * it validated before the key became optional, so rejecting it now would
+     * break previously valid configs.
+     */
+    if (preset.endpoint === undefined && !preset.agent_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['endpoint'],
+        message:
+          'endpoint is required unless the preset names a non-empty agent_id (the agents endpoint is then inferred)',
+      });
+    }
+  });
 
 export type TModelSpecPreset = z.infer<typeof tModelSpecPresetSchema>;
 

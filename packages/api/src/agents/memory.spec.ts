@@ -12,6 +12,7 @@ import {
   createDeleteMemoryTool,
   invalidateRequestMemories,
   agentHasInlineMemoryTools,
+  buildInlineMemoryContext,
 } from './memory';
 import { GenerationJobManager } from '~/stream/GenerationJobManager';
 
@@ -70,17 +71,13 @@ jest.mock('~/utils', () => ({
 
 const { createSafeUser } = jest.requireMock('~/utils');
 
-jest.mock('@librechat/agents', () => {
-  const actual = jest.requireActual('@librechat/agents');
-  return {
-    Run: {
-      create: jest.fn(() => ({
+beforeEach(() => {
+  jest.spyOn(Run, 'create').mockImplementation(
+    () =>
+      ({
         processStream: jest.fn(() => Promise.resolve('success')),
-      })),
-    },
-    Providers: actual.Providers,
-    GraphEvents: actual.GraphEvents,
-  };
+      }) as never,
+  );
 });
 
 function createTestUser(overrides: Partial<IUser> = {}): IUser {
@@ -755,6 +752,47 @@ describe('agentHasInlineMemoryTools', () => {
     expect(agentHasInlineMemoryTools({ tools: [{ name: 'memory' }] })).toBe(true);
     expect(agentHasInlineMemoryTools({ tools: ['execute_code'] })).toBe(false);
     expect(agentHasInlineMemoryTools({ tools: [] })).toBe(false);
+  });
+});
+
+describe('buildInlineMemoryContext', () => {
+  it('loads keyed memories for an initialized inline-memory agent', async () => {
+    const getFormattedMemories = jest.fn().mockResolvedValue({
+      withKeys: 'preferred_name: Danny',
+      withoutKeys: 'Danny',
+      totalTokens: 4,
+    });
+    const context = await buildInlineMemoryContext({
+      agent: {
+        id: 'agent_memory',
+        memory_scope: MemoryScope.agent,
+        memoryToolsRegistered: true,
+      },
+      req: {} as never,
+      userId: 'user-1',
+      memoryAvailable: true,
+      getFormattedMemories,
+    });
+
+    expect(context).toContain('# Existing memory about the user:\npreferred_name: Danny');
+    expect(getFormattedMemories).toHaveBeenCalledWith({
+      userId: 'user-1',
+      agentId: 'agent_memory',
+    });
+  });
+
+  it('does not load memories when inline tools are unavailable', async () => {
+    const getFormattedMemories = jest.fn();
+    await expect(
+      buildInlineMemoryContext({
+        agent: { id: 'agent_without_memory', memoryToolsRegistered: false },
+        req: {} as never,
+        userId: 'user-1',
+        memoryAvailable: true,
+        getFormattedMemories,
+      }),
+    ).resolves.toBe('');
+    expect(getFormattedMemories).not.toHaveBeenCalled();
   });
 });
 

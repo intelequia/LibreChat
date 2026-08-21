@@ -1,14 +1,22 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const { logger } = require('@librechat/data-schemas');
-const { ContentTypes, feedbackSchema, isAssistantsEndpoint } = require('librechat-data-provider');
+const { logger, CLIENT_MESSAGE_SELECT } = require('@librechat/data-schemas');
+const {
+  ContentTypes,
+  feedbackSchema,
+  isAssistantsEndpoint,
+  stripReasoningLabelMetadata,
+} = require('librechat-data-provider');
 const {
   unescapeLaTeX,
   countTokens,
   sendFeedbackScore,
   traceIdForMessage,
   mergeQuotedTextForCount,
+  CHILD_THREAD_READ_ONLY_ERROR,
+  isSubagentThreadWriteBlocked,
 } = require('@librechat/api');
+const subagentThreadTaskStore = require('~/server/services/Endpoints/agents/subagentThreadStore');
 const { findAllArtifacts, replaceArtifactContent } = require('~/server/services/Artifacts/update');
 const {
   requireJwtAuth,
@@ -21,6 +29,24 @@ const db = require('~/models');
 
 const router = express.Router();
 router.use(requireJwtAuth);
+
+async function rejectSubagentThreadWrite(req, res, conversationId) {
+  const blocked = await isSubagentThreadWriteBlocked(
+    { getConvo: db.getConvo, store: subagentThreadTaskStore },
+    {
+      userId: req.user.id,
+      conversationId,
+      ...(typeof req.user.tenantId === 'string' && req.user.tenantId !== ''
+        ? { tenantId: req.user.tenantId }
+        : {}),
+    },
+  );
+  if (!blocked) {
+    return false;
+  }
+  res.status(409).json({ error: CHILD_THREAD_READ_ONLY_ERROR });
+  return true;
+}
 
 router.get('/', async (req, res) => {
   try {
@@ -129,6 +155,10 @@ router.post('/branch', async (req, res) => {
       return res.status(404).json({ error: 'Source message not found' });
     }
 
+    if (await rejectSubagentThreadWrite(req, res, sourceMessage.conversationId)) {
+      return;
+    }
+
     if (sourceMessage.isCreatedByUser) {
       return res.status(400).json({ error: 'Cannot branch from user messages' });
     }
@@ -210,6 +240,10 @@ router.post('/artifact/:messageId', async (req, res) => {
       return res.status(404).json({ error: 'Message not found' });
     }
 
+    if (await rejectSubagentThreadWrite(req, res, message.conversationId)) {
+      return;
+    }
+
     const artifacts = findAllArtifacts(message);
     if (index >= artifacts.length) {
       return res.status(400).json({ error: 'Artifact index out of bounds' });
@@ -284,7 +318,7 @@ router.get('/:conversationId', prepareMessageRequestValidation, async (req, res)
     // This intentionally starts a user-scoped read before validation resolves;
     // the response remains gated on validation success below.
     const messagesPromise = validation.shouldFetchMessages
-      ? db.getMessages({ conversationId, user: req.user.id }, '-_id -__v -user').then(
+      ? db.getMessages({ conversationId, user: req.user.id }, CLIENT_MESSAGE_SELECT).then(
           (messages) => ({ messages }),
           (error) => ({ error }),
         )
@@ -310,6 +344,9 @@ router.get('/:conversationId', prepareMessageRequestValidation, async (req, res)
 
 router.post('/:conversationId', validateMessageReq, async (req, res) => {
   try {
+    if (await rejectSubagentThreadWrite(req, res, req.params.conversationId)) {
+      return;
+    }
     const message = { ...req.body, conversationId: req.params.conversationId };
     const reqCtx = {
       userId: req?.user?.id,
@@ -345,7 +382,7 @@ router.get('/:conversationId/:messageId', validateMessageReq, async (req, res) =
     const { conversationId, messageId } = req.params;
     const message = await db.getMessages(
       { conversationId, messageId, user: req.user.id },
-      '-_id -__v -user',
+      CLIENT_MESSAGE_SELECT,
     );
     if (!message) {
       return res.status(404).json({ error: 'Message not found' });
@@ -360,6 +397,18 @@ router.get('/:conversationId/:messageId', validateMessageReq, async (req, res) =
 router.put('/:conversationId/:messageId', validateMessageReq, async (req, res) => {
   try {
     const { conversationId, messageId } = req.params;
+    const message = (
+      await db.getMessages(
+        { messageId, user: req.user.id },
+        'conversationId content tokenCount quotes isCreatedByUser',
+      )
+    )?.[0];
+    if (!message || message.conversationId !== conversationId) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    if (await rejectSubagentThreadWrite(req, res, message.conversationId)) {
+      return;
+    }
     const { text, index, model } = req.body;
 
     if (index === undefined) {
@@ -367,16 +416,10 @@ router.put('/:conversationId/:messageId', validateMessageReq, async (req, res) =
        *  every send, but this edit only changes `text`. Count the merged
        *  text+quotes so the stored `tokenCount` stays authoritative (matching the
        *  send path); a plain text-only count under-reports by the quote block. */
-      const existing = (
-        await db.getMessages(
-          { conversationId, messageId, user: req.user.id },
-          'quotes isCreatedByUser',
-        )
-      )?.[0];
       const textToCount = mergeQuotedTextForCount(
         text,
-        existing?.quotes,
-        existing?.isCreatedByUser === true,
+        message.quotes,
+        message.isCreatedByUser === true,
       );
       const tokenCount = await countTokens(textToCount, model);
       const result = await db.updateMessage(req?.user?.id, { messageId, text, tokenCount });
@@ -385,13 +428,6 @@ router.put('/:conversationId/:messageId', validateMessageReq, async (req, res) =
 
     if (typeof index !== 'number' || index < 0) {
       return res.status(400).json({ error: 'Invalid index' });
-    }
-
-    const message = (
-      await db.getMessages({ conversationId, messageId, user: req.user.id }, 'content tokenCount')
-    )?.[0];
-    if (!message) {
-      return res.status(404).json({ error: 'Message not found' });
     }
 
     const existingContent = message.content;
@@ -409,8 +445,21 @@ router.put('/:conversationId/:messageId', validateMessageReq, async (req, res) =
       return res.status(400).json({ error: 'Cannot update non-text content' });
     }
 
-    const oldText = updatedContent[index][currentPartType];
-    updatedContent[index] = { type: currentPartType, [currentPartType]: text };
+    /** A text part is `string | { value, annotations }`. The Assistants thread sync
+     *  persists the structured form with its file citations intact, and the editor
+     *  reads it through the same union, so an edit has to be written into `value`
+     *  rather than over the whole part. The same object is what gets counted below,
+     *  and the tokenizer measures `length`, which an object does not have. */
+    const currentPart = updatedContent[index];
+    const currentValue = currentPart[currentPartType];
+    const isStructuredValue = currentValue != null && typeof currentValue === 'object';
+    const oldText = isStructuredValue ? (currentValue.value ?? '') : currentValue;
+    const editedPart = {
+      ...currentPart,
+      [currentPartType]: isStructuredValue ? { ...currentValue, value: text } : text,
+    };
+    updatedContent[index] =
+      currentPartType === ContentTypes.THINK ? stripReasoningLabelMetadata(editedPart) : editedPart;
 
     let tokenCount = message.tokenCount;
     if (tokenCount !== undefined) {
@@ -492,6 +541,9 @@ router.put(
 router.delete('/:conversationId/:messageId', validateMessageReq, async (req, res) => {
   try {
     const { conversationId, messageId } = req.params;
+    if (await rejectSubagentThreadWrite(req, res, conversationId)) {
+      return;
+    }
     await db.deleteMessages({ messageId, conversationId, user: req.user.id });
     res.status(204).send();
   } catch (error) {

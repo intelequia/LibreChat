@@ -3,7 +3,7 @@
  * Tests that recordCollectedUsage is called correctly for token spending
  */
 
-const { ResourceType } = require('librechat-data-provider');
+const { ErrorTypes, ResourceType } = require('librechat-data-provider');
 
 const mockSpendTokens = jest.fn().mockResolvedValue({});
 const mockSpendStructuredTokens = jest.fn().mockResolvedValue({});
@@ -12,6 +12,8 @@ const mockRecordCollectedUsage = jest
   .mockResolvedValue({ input_tokens: 100, output_tokens: 50 });
 const mockGetBalanceConfig = jest.fn().mockReturnValue({ enabled: true });
 const mockGetTransactionsConfig = jest.fn().mockReturnValue({ enabled: true });
+const mockResolveMemoryAvailability = jest.fn().mockResolvedValue(true);
+const mockInitialSessions = new Map([['execute_code', { session_id: 'seeded' }]]);
 class MockAgentRunEnvelopeError extends TypeError {
   constructor(message) {
     super(message);
@@ -45,6 +47,7 @@ const mockBuildSkillPrimedIdsByName = jest.fn((manualSkillPrimes, alwaysApplySki
 const mockEnrichWithSkillConfigurable = jest.fn((result) => result);
 const mockBuildAgentToolContext = jest.fn(({ agent, config }) => ({
   agent,
+  endpointTokenConfig: config.endpointTokenConfig,
   toolRegistry: config.toolRegistry,
   userMCPAuthMap: config.userMCPAuthMap,
   tool_resources: config.tool_resources,
@@ -78,6 +81,7 @@ const mockCanAuthorSkillFiles = jest.fn(
 const mockGetSkillToolDeps = jest.fn(() => ({}));
 const mockBuildAgentScopedContext = jest.fn().mockResolvedValue(new Map());
 const mockBuildAgentContextAttachmentsByAgentId = jest.fn().mockReturnValue(new Map());
+const mockBuildInlineMemoryContext = jest.fn().mockResolvedValue('');
 const mockApplyContextToAgent = jest.fn().mockResolvedValue(undefined);
 
 jest.mock('nanoid', () => ({
@@ -113,11 +117,13 @@ jest.mock('@librechat/api', () => ({
   createRun: jest.fn().mockResolvedValue({
     processStream: jest.fn().mockResolvedValue(undefined),
   }),
+  buildInitialToolSessions: jest.fn().mockReturnValue(mockInitialSessions),
   applyContextToAgent: (...args) => mockApplyContextToAgent(...args),
   buildToolSet: jest.fn().mockReturnValue(new Set()),
   AgentRunEnvelopeError: MockAgentRunEnvelopeError,
   createAgentRunEnvelope: (...args) => mockCreateAgentRunEnvelope(...args),
   buildAgentScopedContext: (...args) => mockBuildAgentScopedContext(...args),
+  buildInlineMemoryContext: (...args) => mockBuildInlineMemoryContext(...args),
   buildAgentContextAttachmentsByAgentId: (...args) =>
     mockBuildAgentContextAttachmentsByAgentId(...args),
   scopeSkillIds: jest.fn().mockImplementation((ids) => ids),
@@ -148,10 +154,20 @@ jest.mock('@librechat/api', () => ({
       userMCPAuthMap: undefined,
     };
   }),
+  resolveSubagentGraphs: jest.fn().mockResolvedValue(undefined),
   getBalanceConfig: mockGetBalanceConfig,
   getTransactionsConfig: mockGetTransactionsConfig,
   recordCollectedUsage: mockRecordCollectedUsage,
   createSubagentUsageSink: jest.fn().mockReturnValue(jest.fn()),
+  CHILD_THREAD_READ_ONLY_ERROR:
+    'This subagent thread is view-only. Continue it from its parent agent or create a separate chat.',
+  getLangfuseTraceMessageFields: jest.fn().mockResolvedValue({
+    langfuseSampled: true,
+    langfuseDestinationIds: ['destination-1'],
+  }),
+  resolveAgentTokenConfig: jest.fn(({ agentId, byAgentId, fallback }) =>
+    agentId != null && byAgentId?.has(agentId) ? byAgentId.get(agentId) : fallback,
+  ),
   extractManualSkills: jest.fn().mockReturnValue(undefined),
   injectSkillPrimes: jest.fn().mockReturnValue({
     initialMessages: [],
@@ -211,8 +227,8 @@ jest.mock('@librechat/api', () => ({
 jest.mock('~/server/services/ToolService', () => ({
   loadAgentTools: jest.fn().mockResolvedValue([]),
   loadToolsForExecution: jest.fn().mockResolvedValue([]),
-  isExpectedMCPToolsUnavailableError: (error) =>
-    error?.code === 'AGENT_EXPECTED_MCP_TOOLS_UNAVAILABLE',
+  isFatalAgentInitializationError: (error) =>
+    ['AGENT_EXPECTED_MCP_TOOLS_UNAVAILABLE', 'resource_recovery_required'].includes(error?.code),
 }));
 
 const mockGetMultiplier = jest.fn().mockReturnValue(1);
@@ -262,6 +278,7 @@ jest.mock('~/server/services/Endpoints/agents/skillDeps', () => ({
   enrichWithSkillConfigurable: mockEnrichWithSkillConfigurable,
   buildSkillPrimedIdsByName: mockBuildSkillPrimedIdsByName,
   buildAgentToolContext: mockBuildAgentToolContext,
+  resolveMemoryAvailability: mockResolveMemoryAvailability,
   enrichLoadedToolsWithAgentContext: mockEnrichLoadedToolsWithAgentContext,
 }));
 
@@ -303,6 +320,7 @@ jest.mock('~/models', () => ({
   getMultiplier: mockGetMultiplier,
   getCacheMultiplier: mockGetCacheMultiplier,
   getConvoFiles: jest.fn().mockResolvedValue([]),
+  getFormattedMemories: jest.fn().mockResolvedValue({ withKeys: '', withoutKeys: '' }),
   saveConvo: jest.fn().mockResolvedValue({}),
   getConvo: jest.fn().mockResolvedValue(null),
 }));
@@ -345,6 +363,73 @@ describe('createResponse controller', () => {
     };
   });
 
+  it('resolves saved graph subagents for remote Responses API runs', async () => {
+    const { initializeAgent, resolveSubagentGraphs } = require('@librechat/api');
+    const primaryConfig = {
+      id: 'agent-123',
+      model: 'claude-3',
+      endpointTokenConfig: { 'claude-3': { prompt: 1 } },
+      model_parameters: {},
+      toolRegistry: {},
+      edges: [],
+      agentContextAttachments: [],
+      subagents: {
+        enabled: true,
+        graphs: [{ type: 'team', agent_ids: ['agent-123'], edges: [] }],
+      },
+    };
+    initializeAgent.mockResolvedValueOnce(primaryConfig);
+    const memberConfig = {
+      id: 'agent-graph-member',
+      endpointTokenConfig: { 'custom-model': { prompt: 7 } },
+      agentContextAttachments: [{ file_id: 'member-file' }],
+    };
+    resolveSubagentGraphs.mockImplementationOnce(async ({ rootConfigs }, deps) => {
+      rootConfigs[0].subagentGraphConfigs = [
+        { definition: { type: 'team' }, memberConfigs: [memberConfig] },
+      ];
+      deps.onAgentInitialized(memberConfig.id, memberConfig, memberConfig);
+    });
+    req.config.endpoints.agents.capabilities = ['subagents'];
+
+    await createResponse(req, res);
+
+    expect(resolveSubagentGraphs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        primaryConfig,
+        rootConfigs: [primaryConfig],
+        resourceType: ResourceType.REMOTE_AGENT,
+        memoryAvailable: true,
+      }),
+      expect.objectContaining({ getAgent: expect.any(Function) }),
+    );
+    expect(mockBuildAgentContextAttachmentsByAgentId).toHaveBeenCalledWith([
+      primaryConfig,
+      memberConfig,
+    ]);
+    expect(mockBuildAgentScopedContext).toHaveBeenCalledWith(
+      expect.objectContaining({ agentIds: ['agent-123', 'agent-graph-member'] }),
+    );
+    expect(mockApplyContextToAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: memberConfig, agentId: 'agent-graph-member' }),
+    );
+    expect(mockBuildInlineMemoryContext).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: memberConfig, memoryAvailable: true }),
+    );
+    const usageParams = mockRecordCollectedUsage.mock.calls[0][1];
+    expect(usageParams.endpointTokenConfig).toBe(primaryConfig.endpointTokenConfig);
+    expect(usageParams.resolveEndpointTokenConfig({ agentId: memberConfig.id })).toBe(
+      memberConfig.endpointTokenConfig,
+    );
+    expect(mockResolveMemoryAvailability).toHaveBeenCalledWith(
+      expect.objectContaining({ enabledCapabilities: expect.any(Set), user: req.user }),
+    );
+    const { createRun } = require('@librechat/api');
+    expect(createRun).toHaveBeenCalledWith(
+      expect.objectContaining({ initialSessions: mockInitialSessions }),
+    );
+  });
+
   it('returns 503 when an agent expects MCP tools but resolves none', async () => {
     const { initializeAgent, sendResponsesErrorResponse } = require('@librechat/api');
     const { loadAgentTools } = require('~/server/services/ToolService');
@@ -372,6 +457,60 @@ describe('createResponse controller', () => {
       503,
       'Expected MCP tools are unavailable',
       'server_error',
+      'AGENT_EXPECTED_MCP_TOOLS_UNAVAILABLE',
+    );
+  });
+
+  it('returns the resource recovery status and code before model invocation', async () => {
+    const { initializeAgent, sendResponsesErrorResponse } = require('@librechat/api');
+    const { loadAgentTools } = require('~/server/services/ToolService');
+    const toolError = Object.assign(new Error('resource recovery required'), {
+      code: ErrorTypes.RESOURCE_RECOVERY_REQUIRED,
+      status: 409,
+      statusCode: 409,
+    });
+    loadAgentTools.mockRejectedValueOnce(toolError);
+    initializeAgent.mockImplementationOnce(async ({ req, res, loadTools, agent }) => {
+      await loadTools({
+        req,
+        res,
+        tools: ['execute_code'],
+        model: agent.model,
+        agentId: agent.id,
+        provider: agent.provider,
+      });
+    });
+
+    await createResponse(req, res);
+
+    expect(sendResponsesErrorResponse).toHaveBeenCalledWith(
+      res,
+      409,
+      'resource recovery required',
+      'invalid_request',
+      ErrorTypes.RESOURCE_RECOVERY_REQUIRED,
+    );
+  });
+
+  it('stores Langfuse trace markers with a persisted response', async () => {
+    const api = require('@librechat/api');
+    const { saveMessage } = require('~/models');
+    api.validateResponseRequest.mockReturnValueOnce({
+      request: { ...req.body, store: true },
+    });
+
+    await createResponse(req, res);
+
+    expect(api.getLangfuseTraceMessageFields).toHaveBeenCalledWith(req.config, 'resp_mock-123');
+    expect(saveMessage).toHaveBeenCalledWith(
+      req,
+      expect.objectContaining({
+        messageId: 'resp_mock-123',
+        isCreatedByUser: false,
+        langfuseSampled: true,
+        langfuseDestinationIds: ['destination-1'],
+      }),
+      { context: 'Responses API - save assistant response' },
     );
   });
 
@@ -500,6 +639,41 @@ describe('createResponse controller', () => {
         expect.any(String),
         expect.any(String),
       );
+    });
+
+    it('rejects a remote response continuation of a view-only subagent thread', async () => {
+      const {
+        validateResponseRequest,
+        sendResponsesErrorResponse,
+        CHILD_THREAD_READ_ONLY_ERROR,
+      } = require('@librechat/api');
+      const { getConvo, saveConvo, saveMessage } = require('~/models');
+      validateResponseRequest.mockReturnValueOnce({
+        request: {
+          model: 'agent-123',
+          input: 'Mutate the child.',
+          stream: false,
+          store: true,
+          previous_response_id: 'child-thread',
+        },
+      });
+      getConvo.mockResolvedValueOnce({
+        conversationId: 'child-thread',
+        user: 'user-123',
+        subagentThread: { parentConversationId: 'parent-thread' },
+      });
+
+      await createResponse(req, res);
+
+      expect(sendResponsesErrorResponse).toHaveBeenCalledWith(
+        res,
+        409,
+        CHILD_THREAD_READ_ONLY_ERROR,
+        'invalid_request',
+        'conversation_read_only',
+      );
+      expect(saveConvo).not.toHaveBeenCalled();
+      expect(saveMessage).not.toHaveBeenCalled();
     });
 
     it('should return 500 when getConvo throws a DB error', async () => {
@@ -776,6 +950,25 @@ describe('createResponse controller', () => {
             }),
           ]),
         }),
+      );
+    });
+
+    it('adds subagent usage to the response usage handler', async () => {
+      const api = require('@librechat/api');
+
+      await createResponse(req, res);
+
+      const onSubagentUsage = api.createSubagentUsageSink.mock.calls.at(-1)[1];
+      const aggregatorHandlers =
+        api.createAggregatorEventHandlers.mock.results.at(-1)?.value ??
+        api.createResponsesEventHandlers.mock.results.at(-1)?.value.handlers;
+      onSubagentUsage({ input_tokens: 25, output_tokens: 10 });
+
+      expect(aggregatorHandlers.on_chat_model_end.handle).toHaveBeenCalledWith(
+        'on_chat_model_end',
+        {
+          output: { usage_metadata: { input_tokens: 25, output_tokens: 10 } },
+        },
       );
     });
   });

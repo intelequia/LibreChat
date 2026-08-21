@@ -1109,6 +1109,66 @@ describe('RedisEventTransport', () => {
     }
   });
 
+  it('recovers a confirmed abort from durable owner proof after the initial read', async () => {
+    jest.useFakeTimers();
+    const mockPublisher = createMockPublisher();
+    const mockSubscriber = createMockSubscriber();
+    const transport = new RedisEventTransport(
+      mockPublisher as unknown as Redis,
+      mockSubscriber as unknown as Redis,
+    );
+    const streamId = 'delayed-owner-abort-proof';
+    let resolveAbortPublished!: () => void;
+    const abortPublished = new Promise<void>((resolve) => {
+      resolveAbortPublished = resolve;
+    });
+    mockPublisher.publish.mockImplementationOnce(async () => {
+      resolveAbortPublished();
+      return 0;
+    });
+
+    try {
+      const confirmation = transport.emitAbortConfirmed(streamId, 1234);
+      await abortPublished;
+
+      await expect(transport.recordAbortAcknowledgement(streamId, 1234)).resolves.toBe(true);
+      expect(mockPublisher.set).toHaveBeenCalledWith(
+        `stream:{${streamId}}:abort-ack:1234`,
+        '1',
+        'EX',
+        86400,
+      );
+
+      await jest.advanceTimersByTimeAsync(3000);
+      await expect(confirmation).resolves.toBe(true);
+    } finally {
+      transport.destroy();
+      jest.useRealTimers();
+    }
+  });
+
+  it('persists provider drain proof under the exact generation and segment identity', async () => {
+    const mockPublisher = createMockPublisher();
+    const mockSubscriber = createMockSubscriber();
+    const transport = new RedisEventTransport(
+      mockPublisher as unknown as Redis,
+      mockSubscriber as unknown as Redis,
+    );
+    const streamId = 'provider-drain-proof';
+
+    await expect(transport.recordProviderDrain(streamId, 1234, 'segment-a')).resolves.toBe(true);
+    expect(mockPublisher.set).toHaveBeenCalledWith(
+      `stream:{${streamId}}:provider-drain:1234:segment-a`,
+      '1',
+      'EX',
+      86400,
+    );
+    await expect(transport.hasProviderDrain(streamId, 1234, 'segment-a')).resolves.toBe(true);
+    await expect(transport.hasProviderDrain(streamId, 1234, 'segment-b')).resolves.toBe(false);
+
+    transport.destroy();
+  });
+
   it('waits for a delayed owner acknowledgement when cluster publish reports zero local receivers', async () => {
     const mockPublisher = createMockPublisher();
     const mockSubscriber = createMockSubscriber();

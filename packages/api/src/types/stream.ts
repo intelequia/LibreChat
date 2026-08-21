@@ -1,5 +1,7 @@
 import type { Agents } from 'librechat-data-provider';
 import type { EventEmitter } from 'events';
+import type { ActivityPhaseSnapshot } from '~/agents/activityPhases/runtime';
+import type { ResolvedAskUserQuestion } from '../agents/hitl/resume';
 import type { ServerSentEvent } from './events';
 
 export interface GenerationJobMetadata {
@@ -29,14 +31,34 @@ export interface GenerationJobMetadata {
   agent_id?: string;
   /** Whether the originating turn was a temporary chat; a HITL resume keeps it so. */
   isTemporary?: boolean;
+  /** Trusted scheduled-occurrence identity. These fields are accepted only from a
+   * verified agent-trigger request and let pause/resume/reconciliation keep the
+   * occurrence attached to the exact generation that owns it. */
+  scheduleId?: string;
+  scheduledFor?: string;
+  scheduleConfigRevision?: number;
+  scheduleManual?: boolean;
+  /** Intended terminal classification retained when Mongo outcome persistence
+   * fails. The scheduler reconciler consumes this evidence before clearing the job. */
+  scheduleOutcome?: 'success' | 'error' | 'interrupted' | 'skipped_balance';
+  scheduleOutcomeError?: string;
+  /** Prevent normal terminal cleanup until schedule reconciliation has consumed
+   * the retained outcome evidence. */
+  preserveForScheduleReconcile?: boolean;
   /**
    * Deferred-tool names discovered (via `tool_search`) before a HITL pause. A resume
    * replays these into `createRun` because the rebuilt graph uses `messages: []`, so
    * without them the rebuilt model would lose the discovered tool schemas.
    */
   discoveredTools?: string[];
+  /** Bounded collector state for continuing a phase across HITL resume. */
+  activityPhaseSnapshot?: ActivityPhaseSnapshot;
   /** See `SerializableJobData.preemptCapable`. */
   preemptCapable?: boolean;
+  /** Exact provider segment whose completion gates destructive user cleanup. */
+  providerExecutionId?: string;
+  /** False only while that exact provider segment can still mutate user data. */
+  providerDrained?: boolean;
   /** Terminal close has atomically stopped new steer acceptance, even if the
    * final status CAS has not yet run. */
   steersClosed?: boolean;
@@ -48,6 +70,8 @@ export interface GenerationJobMetadata {
   terminalPersistenceStartedAt?: number;
   /** Set when the job is paused for human review (status === 'requires_action') */
   pendingAction?: Agents.PendingAction;
+  /** Accepted ask-user answer retained until this generation terminalizes. */
+  resolvedAskUserQuestions?: ResolvedAskUserQuestion[];
 }
 
 export type GenerationJobStatus = 'running' | 'complete' | 'error' | 'aborted' | 'requires_action';

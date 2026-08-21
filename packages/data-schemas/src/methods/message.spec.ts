@@ -3,8 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { RetentionMode } from 'librechat-data-provider';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import type { IMessage } from '..';
+import { createMessageMethods, CLIENT_MESSAGE_SELECT } from './message';
 import { tenantStorage, runAsSystem } from '~/config/tenantContext';
-import { createMessageMethods } from './message';
 import { createModels } from '../models';
 import logger from '~/config/winston';
 
@@ -28,6 +28,10 @@ let bulkSaveMessages: ReturnType<typeof createMessageMethods>['bulkSaveMessages'
 let updateMessageText: ReturnType<typeof createMessageMethods>['updateMessageText'];
 let deleteMessagesSince: ReturnType<typeof createMessageMethods>['deleteMessagesSince'];
 let recordMessage: ReturnType<typeof createMessageMethods>['recordMessage'];
+let claimSubagentTaskResult: ReturnType<typeof createMessageMethods>['claimSubagentTaskResult'];
+let releaseSubagentTaskResultClaim: ReturnType<
+  typeof createMessageMethods
+>['releaseSubagentTaskResultClaim'];
 
 beforeAll(async () => {
   mongoServer = await MongoMemoryServer.create();
@@ -47,6 +51,8 @@ beforeAll(async () => {
   updateMessageText = methods.updateMessageText;
   deleteMessagesSince = methods.deleteMessagesSince;
   recordMessage = methods.recordMessage;
+  claimSubagentTaskResult = methods.claimSubagentTaskResult;
+  releaseSubagentTaskResultClaim = methods.releaseSubagentTaskResultClaim;
 
   await mongoose.connect(mongoUri);
 });
@@ -484,6 +490,140 @@ describe('Message Operations', () => {
         conversationId: 'convo123',
       });
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe('CLIENT_MESSAGE_SELECT projection', () => {
+    it('strips server-internal fields and dead SERP verticals, keeping rendered data', async () => {
+      const conversationId = uuidv4();
+      await Message.create({
+        messageId: 'projected-msg',
+        conversationId,
+        user: 'user123',
+        isCreatedByUser: false,
+        sender: 'Agent',
+        text: 'visible text',
+        content: [{ type: 'text', text: 'part text' }],
+        tokenCount: 42,
+        conversationSignature: 'sig',
+        clientId: 'client-1',
+        invocationId: 7,
+        summary: 'legacy summary',
+        summaryTokenCount: 11,
+        contextMeta: { anything: true },
+        langfuseSampled: true,
+        langfuseDestinationIds: ['lf-1'],
+        metadata: {
+          usage: { input: 10, output: 20 },
+          thoughtSignatures: { tool_1: 'opaque' },
+        },
+        subagentTask: {
+          attemptKey: 'private-attempt',
+          requestFingerprint: 'private-fingerprint',
+          status: 'running',
+        },
+        attachments: [
+          {
+            type: 'web_search',
+            toolCallId: 'tool_1',
+            web_search: {
+              turn: 0,
+              organic: [
+                {
+                  title: 'Result',
+                  link: 'https://example.com',
+                  snippet: 'snippet',
+                  sitelinks: [{ title: 'sub', link: 'https://example.com/sub' }],
+                  highlights: ['raw scrape'],
+                },
+              ],
+              topStories: [{ title: 'Story', link: 'https://example.com/s', highlights: ['x'] }],
+              references: [{ link: 'https://example.com', title: 'Result', type: 'link' }],
+              images: [{ imageUrl: 'https://example.com/i.png' }],
+              answerBox: { answer: '42' },
+              knowledgeGraph: { title: 'KG' },
+              peopleAlsoAsk: [{ question: 'q' }],
+              relatedSearches: ['related'],
+              news: [{ title: 'n' }],
+              videos: [{ title: 'v' }],
+              places: [{ title: 'p' }],
+              shopping: [{ title: 's' }],
+            },
+          },
+        ],
+      });
+
+      const [message] = await getMessages(
+        { conversationId, user: 'user123' },
+        CLIENT_MESSAGE_SELECT,
+      );
+
+      expect(message.text).toBe('visible text');
+      expect(message.content).toHaveLength(1);
+      expect(message.tokenCount).toBe(42);
+      const metadata = message.metadata as Record<string, unknown>;
+      expect(metadata.usage).toBeDefined();
+      expect(metadata.thoughtSignatures).toBeUndefined();
+
+      const hidden = message as unknown as Record<string, unknown>;
+      for (const field of [
+        '_id',
+        'user',
+        'conversationSignature',
+        'clientId',
+        'invocationId',
+        'summary',
+        'summaryTokenCount',
+        'contextMeta',
+        'langfuseSampled',
+        'langfuseDestinationIds',
+        'subagentTask',
+      ]) {
+        expect(hidden[field]).toBeUndefined();
+      }
+
+      type ProjectedWebSearch = {
+        turn: number;
+        organic: Array<Record<string, unknown>>;
+        topStories: Array<Record<string, unknown>>;
+        references: unknown[];
+        images: unknown[];
+      } & Record<string, unknown>;
+      const webSearch = (message.attachments?.[0] as { web_search: ProjectedWebSearch }).web_search;
+      expect(webSearch.turn).toBe(0);
+      expect(webSearch.organic[0].title).toBe('Result');
+      expect(webSearch.organic[0].link).toBe('https://example.com');
+      expect(webSearch.organic[0].snippet).toBe('snippet');
+      expect(webSearch.organic[0].sitelinks).toBeUndefined();
+      expect(webSearch.organic[0].highlights).toBeUndefined();
+      expect(webSearch.topStories[0].title).toBe('Story');
+      expect(webSearch.topStories[0].highlights).toBeUndefined();
+      expect(webSearch.references).toHaveLength(1);
+      expect(webSearch.images).toHaveLength(1);
+      /** `videos` stays: `turn…video…` citation markers resolve against it
+       *  (the clipboard refTypeMap addresses it explicitly). */
+      expect(webSearch.videos).toHaveLength(1);
+      expect(webSearch.answerBox).toBeDefined();
+      for (const vertical of [
+        'knowledgeGraph',
+        'peopleAlsoAsk',
+        'relatedSearches',
+        'news',
+        'places',
+        'shopping',
+      ]) {
+        expect(webSearch[vertical]).toBeUndefined();
+      }
+    });
+  });
+
+  describe('conversation fetch index', () => {
+    it('declares the compound index that serves the conversation fetch and its sort', () => {
+      const indexes = Message.schema.indexes() as Array<[Record<string, number>, unknown]>;
+      expect(indexes).toContainEqual([
+        { conversationId: 1, user: 1, createdAt: 1 },
+        expect.anything(),
+      ]);
     });
   });
 
@@ -1413,6 +1553,209 @@ describe('Message Operations', () => {
       const doc = await Message.findOne({ messageId }).lean();
       expect(doc?.text).toBe('Updated');
       expect(doc?.tenantId).toBeUndefined();
+    });
+  });
+  describe('claimSubagentTaskResult', () => {
+    const terminalResult = async (taskId: string, conversationId: string, status: string) =>
+      saveMessage({ userId: 'user123' }, {
+        messageId: `${taskId}:assistant`,
+        conversationId,
+        text: 'child result',
+        subagentTask: { attemptKey: `${taskId}:attempt`, status },
+      } as Partial<IMessage>);
+
+    it('hands one terminal result to a single polling invocation', async () => {
+      const taskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(taskId, conversationId, 'completed');
+
+      const first = await claimSubagentTaskResult({
+        userId: 'user123',
+        conversationId,
+        taskId,
+        kind: 'manual',
+        claimId: 'poll-1',
+      });
+      expect(first.status).toBe('acquired');
+      expect(first.status === 'acquired' && first.message.text).toBe('child result');
+
+      /** The same invocation retrying recovers the result it never received. */
+      const retried = await claimSubagentTaskResult({
+        userId: 'user123',
+        conversationId,
+        taskId,
+        kind: 'manual',
+        claimId: 'poll-1',
+      });
+      expect(retried.status).toBe('acquired');
+
+      /** Another invocation is told it was collected instead of handed a copy. */
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId,
+          kind: 'manual',
+          claimId: 'poll-2',
+        }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+    });
+
+    it('elects either a manual poll or one idempotent automatic wakeup', async () => {
+      const manualTaskId = uuidv4();
+      const wakeupTaskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(manualTaskId, conversationId, 'completed');
+      await terminalResult(wakeupTaskId, conversationId, 'completed');
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId: manualTaskId,
+          kind: 'manual',
+          claimId: 'poll-1',
+        }),
+      ).resolves.toMatchObject({ status: 'acquired' });
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId: manualTaskId,
+          kind: 'wakeup',
+          claimId: 'delivery-1',
+        }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+
+      const wakeupClaim = {
+        userId: 'user123',
+        conversationId,
+        taskId: wakeupTaskId,
+        kind: 'wakeup' as const,
+        claimId: 'delivery-2',
+      };
+      await expect(claimSubagentTaskResult(wakeupClaim)).resolves.toMatchObject({
+        status: 'acquired',
+      });
+      await expect(claimSubagentTaskResult(wakeupClaim)).resolves.toMatchObject({
+        status: 'acquired',
+      });
+      await expect(
+        claimSubagentTaskResult({ ...wakeupClaim, claimId: 'delivery-3' }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+      await expect(
+        claimSubagentTaskResult({ ...wakeupClaim, kind: 'manual', claimId: 'poll-2' }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+    });
+
+    it('preserves and upgrades retries of legacy manual claims without a kind', async () => {
+      const taskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(taskId, conversationId, 'completed');
+      await claimSubagentTaskResult({
+        userId: 'user123',
+        conversationId,
+        taskId,
+        kind: 'manual',
+        claimId: 'legacy-poll',
+      });
+      await Message.collection.updateOne(
+        { user: 'user123', conversationId, messageId: `${taskId}:assistant` },
+        { $unset: { 'subagentTask.resultClaim.kind': '' } },
+      );
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId,
+          kind: 'manual',
+          claimId: 'legacy-poll',
+        }),
+      ).resolves.toMatchObject({
+        status: 'acquired',
+        message: { subagentTask: { resultClaim: { kind: 'manual', claimId: 'legacy-poll' } } },
+      });
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId,
+          kind: 'wakeup',
+          claimId: 'legacy-poll',
+        }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+    });
+
+    it('releases only the exact rejected wakeup so manual collection can take over', async () => {
+      const taskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(taskId, conversationId, 'completed');
+      const wakeup = {
+        userId: 'user123',
+        conversationId,
+        taskId,
+        kind: 'wakeup' as const,
+        claimId: 'delivery-1',
+      };
+      await expect(claimSubagentTaskResult(wakeup)).resolves.toMatchObject({
+        status: 'acquired',
+      });
+      await expect(
+        releaseSubagentTaskResultClaim({ ...wakeup, claimId: 'another-delivery' }),
+      ).resolves.toBe(false);
+      await expect(releaseSubagentTaskResultClaim(wakeup)).resolves.toBe(true);
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId,
+          kind: 'manual',
+          claimId: 'poll-after-rejection',
+        }),
+      ).resolves.toMatchObject({ status: 'acquired' });
+    });
+
+    it('reports a result that is missing or still running as not found', async () => {
+      const runningTaskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(runningTaskId, conversationId, 'running');
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId: runningTaskId,
+          kind: 'manual',
+          claimId: 'poll-1',
+        }),
+      ).resolves.toEqual({ status: 'not_found' });
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId: uuidv4(),
+          kind: 'manual',
+          claimId: 'poll-1',
+        }),
+      ).resolves.toEqual({ status: 'not_found' });
+    });
+
+    it('never hands one owner’s result to another user', async () => {
+      const taskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(taskId, conversationId, 'completed');
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'other-user',
+          conversationId,
+          taskId,
+          kind: 'manual',
+          claimId: 'poll-1',
+        }),
+      ).resolves.toEqual({ status: 'not_found' });
     });
   });
 });

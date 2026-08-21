@@ -14,8 +14,10 @@ export type Conversation = {
 
 export type ConversationListParams = {
   cursor?: string;
+  limit?: number;
   isArchived?: boolean;
-  sortBy?: 'title' | 'createdAt' | 'updatedAt';
+  pinned?: boolean;
+  sortBy?: 'title' | 'createdAt' | 'updatedAt' | 'archivedAt';
   sortDirection?: 'asc' | 'desc';
   tags?: string[];
   search?: string;
@@ -24,7 +26,15 @@ export type ConversationListParams = {
 
 export type MinimalConversation = Pick<
   s.TConversation,
-  'conversationId' | 'endpoint' | 'title' | 'createdAt' | 'updatedAt' | 'user' | 'chatProjectId'
+  | 'conversationId'
+  | 'endpoint'
+  | 'title'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'archivedAt'
+  | 'user'
+  | 'chatProjectId'
+  | 'pinned'
 >;
 
 export type ConversationListResponse = {
@@ -85,7 +95,7 @@ export interface SharedLinksListParams {
 export type SharedLinkItem = {
   shareId: string;
   title: string;
-  createdAt: Date;
+  createdAt: string;
   conversationId: string;
 };
 

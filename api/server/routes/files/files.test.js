@@ -45,6 +45,11 @@ jest.mock('sharp', () =>
 jest.mock('@librechat/api', () => ({
   ...jest.requireActual('@librechat/api'),
   refreshS3FileUrls: jest.fn(),
+  getCodeExecutionBaseUrl: jest.fn((profile) =>
+    profile === 'stateful'
+      ? process.env.LIBRECHAT_CODE_BASEURL_STATEFUL
+      : 'https://code-default.example.com/v1',
+  ),
 }));
 
 jest.mock('~/cache', () => ({
@@ -1086,6 +1091,53 @@ describe('File Routes - Delete with Agent Access', () => {
         .post('/files/usage')
         .send({ file_ids: [fileId] });
       expect(response.status).toBe(401);
+    });
+  });
+
+  describe('GET /files/code/download/:session_id/:fileId', () => {
+    it('routes a persisted stateful fallback through the stateful Code API', async () => {
+      const getDownloadStream = jest.fn().mockResolvedValue({
+        headers: {
+          'content-type': 'text/html',
+          'set-cookie': 'internal-service-cookie=secret',
+        },
+        data: Readable.from(['stateful output']),
+      });
+      getStrategyFunctions.mockReturnValue({ getDownloadStream });
+      process.env.LIBRECHAT_CODE_BASEURL_STATEFUL = 'https://code-stateful.example.com/v1';
+
+      try {
+        const sessionId = 's'.repeat(21);
+        const codeFileId = 'f'.repeat(21);
+        const response = await request(app).get(
+          `/files/code/download/${sessionId}/${codeFileId}?execution_profile=stateful`,
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.body.toString()).toBe('stateful output');
+        expect(response.headers['content-disposition']).toBe('attachment');
+        expect(response.headers['content-type']).toBe('application/octet-stream');
+        expect(response.headers['x-content-type-options']).toBe('nosniff');
+        expect(response.headers['cache-control']).toBe('private, no-store');
+        expect(response.headers['set-cookie']).toBeUndefined();
+        expect(getDownloadStream).toHaveBeenCalledWith(
+          `${sessionId}/${codeFileId}`,
+          { kind: 'user', id: otherUserId.toString() },
+          expect.any(Object),
+          { baseUrl: 'https://code-stateful.example.com/v1', executionProfile: 'stateful' },
+        );
+      } finally {
+        delete process.env.LIBRECHAT_CODE_BASEURL_STATEFUL;
+      }
+    });
+
+    it('rejects an unknown execution profile', async () => {
+      const response = await request(app).get(
+        `/files/code/download/${'s'.repeat(21)}/${'f'.repeat(21)}?execution_profile=attacker`,
+      );
+
+      expect(response.status).toBe(400);
+      expect(getStrategyFunctions).not.toHaveBeenCalled();
     });
   });
 });

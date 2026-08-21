@@ -9,6 +9,7 @@ import {
   paramEndpoints,
   isAgentsEndpoint,
   AgentCapabilities,
+  resolveAllowedStatefulCodeEnvironments,
   replaceSpecialVars,
   providerEndpointMap,
 } from 'librechat-data-provider';
@@ -20,6 +21,7 @@ import type {
   TFile,
   Agent,
   TUser,
+  StatefulCodeEnvironment,
 } from 'librechat-data-provider';
 import type { GenericTool, LCToolRegistry, ToolMap, LCTool } from '@librechat/agents';
 import type { IMongoFile, FileOwnerScope } from '@librechat/data-schemas';
@@ -52,6 +54,11 @@ import {
   normalizeAgentToolKeys,
 } from '~/mcp/utils';
 import {
+  normalizeStatefulCodeEnvironment,
+  resolveCodeExecutionContext,
+  type CodeExecutionContext,
+} from './execution';
+import {
   optionalChainWithEmptyCheck,
   extractLibreChatParams,
   getModelMaxTokens,
@@ -62,6 +69,10 @@ import {
   registerFileAuthoringTools,
   isFileAuthoringToolDefinition,
 } from './tools';
+import {
+  createStatefulCodeEnvironmentPolicyError,
+  isFatalAgentInitializationError,
+} from './errors';
 import { registerMemoryTools, memoryToolUsageGuard } from './memory';
 import { applyIntentLabels, sanitizeIntentLabels } from './intent';
 import { applyBackgroundToolCalls } from './background';
@@ -324,10 +335,16 @@ export type InitializedAgent = Agent & {
    * Whether stateful code sessions are active *for this agent*: the admin
    * `stateful_code_sessions` capability AND the agent's builder opt-in
    * (`agent.stateful_code_sessions`) AND `codeEnvAvailable`. Resolved once
-   * here; `createRun` walks this per-agent value to gate the run-level
-   * `toolExecution.sandbox` config.
+   * here and carried with the agent so execution routing never needs a
+   * graph-global stateful flag.
    */
   statefulCodeSessions: boolean;
+  /** Sharing scope for this agent's stateful code environment. */
+  statefulCodeEnvironment: Agent['stateful_code_environment'];
+  /** Trusted partition for transient code session ids and file references. */
+  codeSessionKey: string;
+  /** Trusted endpoint/profile context for artifact processing and runtime tools. */
+  codeExecutionContext: CodeExecutionContext;
   /** Whether host-side skill file authoring is available for this agent/run. */
   skillAuthoringAvailable: boolean;
   /** Host-side file authoring tool names registered for this run. */
@@ -409,6 +426,8 @@ export interface InitializeAgentParams {
     model: string | null;
     tool_options: AgentToolOptions | undefined;
     tool_resources: AgentToolResources | undefined;
+    /** Trusted endpoint/profile resolved for this agent before any code-file priming. */
+    codeExecutionContext: CodeExecutionContext;
     /** Full accessible MCP server names (operator + user DB) when the heal
      *  already fetched them — lets execution-side collision guards see
      *  cross-tier shadowing without another registry round-trip. */
@@ -464,6 +483,8 @@ export interface InitializeAgentParams {
   toolIntentsAvailable?: boolean;
   /** Whether stateful code sessions are available (stateful_code_sessions capability enabled) */
   statefulSessionsAvailable?: boolean;
+  /** Explicit deployment allowlist for request types that do not carry LibreChat config on req. */
+  allowedStatefulCodeEnvironments?: readonly StatefulCodeEnvironment[];
   /** Whether inline memory tools are available (memory capability enabled, memory
    *  configured, and the user permitted). When true and the agent lists the `memory`
    *  capability, `set_memory` + `delete_memory` are registered for the LLM. */
@@ -699,6 +720,33 @@ export async function initializeAgent(
   const provider = agent.provider;
   agent.endpoint = provider;
 
+  /** Resolve the per-agent Code API route before resource/tool priming. A
+   * stateful agent must perform freshness checks and recovery uploads against
+   * the same isolated deployment its eventual `/exec` request will use. */
+  const agentRequestsCodeExec = (agent.tools ?? []).includes(Tools.execute_code);
+  const effectiveCodeEnvAvailable = params.codeEnvAvailable === true && agentRequestsCodeExec;
+  const effectiveStatefulSessions =
+    effectiveCodeEnvAvailable &&
+    params.statefulSessionsAvailable === true &&
+    agent.stateful_code_sessions === true;
+  const statefulCodeEnvironment = normalizeStatefulCodeEnvironment(agent.stateful_code_environment);
+  if (effectiveStatefulSessions) {
+    const allowedStatefulCodeEnvironments = resolveAllowedStatefulCodeEnvironments(
+      params.allowedStatefulCodeEnvironments ??
+        req.config?.endpoints?.[EModelEndpoint.agents]?.statefulCodeSessions?.allowedEnvironments,
+    );
+    if (!allowedStatefulCodeEnvironments.includes(statefulCodeEnvironment)) {
+      throw createStatefulCodeEnvironmentPolicyError(statefulCodeEnvironment);
+    }
+  }
+  const codeExecutionContext = resolveCodeExecutionContext({
+    statefulSessions: effectiveStatefulSessions,
+    environment: statefulCodeEnvironment,
+    userId: requestFileOwnerId,
+    agentId: agent.id,
+    conversationId,
+  });
+
   /**
    * Load conversation files for ALL agents, not just the initial agent.
    * This enables handoff agents to access files that were uploaded earlier
@@ -706,7 +754,6 @@ export async function initializeAgent(
    * on handoff agents would fail to find previously attached files.
    */
   if (conversationId != null && resendFiles) {
-    const fileIds = (await db.getConvoFiles(conversationId)) ?? [];
     const toolResourceSet = new Set<EToolResources>();
     for (const tool of agent.tools ?? []) {
       if (EToolResources[tool as keyof typeof EToolResources]) {
@@ -714,74 +761,76 @@ export async function initializeAgent(
       }
     }
 
-    const toolFiles = requestFileOwnerScope
-      ? ((await db.getToolFilesByIds(
-          fileIds,
-          toolResourceSet,
-          requestFileOwnerScope,
-        )) as IMongoFile[])
-      : [];
+    const getThreadMessages = db.getMessages;
+    /** Falsy anchors cannot match a parent chain, so they get no walk. */
+    const threadAnchor =
+      parentMessageId && parentMessageId !== Constants.NO_PARENT ? parentMessageId : null;
+    const needsThreadWalk =
+      toolResourceSet.has(EToolResources.execute_code) &&
+      threadAnchor != null &&
+      getThreadMessages != null;
+
+    /**
+     * The conversation's file refs and the thread walk share no inputs, so they resolve
+     * together. Both gate the model call, and this runs on every turn — each serialized
+     * round trip here is time-to-first-token the user waits through.
+     *
+     * Thread walk selects only the fields traversal needs. Both `files` (user uploads)
+     * and `attachments` (code-execution outputs from `processCodeOutput`) carry the
+     * `file_id` refs the next turn must prime — selecting only `files` silently drops
+     * every code-output ref.
+     */
+    const [convoFileIds, threadMessages] = await Promise.all([
+      db.getConvoFiles(conversationId),
+      needsThreadWalk && getThreadMessages
+        ? getThreadMessages({ conversationId }, 'messageId parentMessageId files attachments')
+        : null,
+    ]);
+    const fileIds = convoFileIds ?? [];
+
+    /** Walk the parent chain and collect file_ids referenced by
+     *  any message in the thread (`messages.files[].file_id` +
+     *  `messages.attachments[].file_id`). Used as the primary
+     *  anchor for both `getCodeGeneratedFiles` and
+     *  `getUserCodeFiles` — message ids no longer needed at
+     *  this layer. */
+    const threadFileIds =
+      threadMessages && threadMessages.length > 0
+        ? getThreadData(threadMessages, threadAnchor).fileIds
+        : undefined;
 
     /**
      * Retrieve execute_code files filtered to the current thread.
      * This includes both code-generated files and user-uploaded execute_code files.
+     *
+     * Code-generated and user-uploaded execute_code files share the same primary anchor:
+     * file_ids referenced by messages in the current thread. The two queries differ only
+     * by `context` (`execute_code` for generated outputs, others for uploads). Anchoring
+     * both on `threadFileIds` reaches files regardless of which sibling first generated
+     * them — see `getCodeGeneratedFiles` for the branched-conversation rationale.
      */
-    let codeGeneratedFiles: IMongoFile[] = [];
-    let userCodeFiles: IMongoFile[] = [];
-
-    if (toolResourceSet.has(EToolResources.execute_code)) {
-      let threadFileIds: string[] | undefined;
-
-      if (parentMessageId && parentMessageId !== Constants.NO_PARENT && db.getMessages) {
-        /** Only select fields needed for thread traversal. Both
-         *  `files` (user uploads) and `attachments` (code-execution
-         *  outputs from `processCodeOutput`) carry the `file_id`
-         *  refs the next turn must prime — selecting only `files`
-         *  silently drops every code-output ref. */
-        const messages = await db.getMessages(
-          { conversationId },
-          'messageId parentMessageId files attachments',
-        );
-        if (messages && messages.length > 0) {
-          /** Walk the parent chain and collect file_ids referenced by
-           *  any message in the thread (`messages.files[].file_id` +
-           *  `messages.attachments[].file_id`). Used as the primary
-           *  anchor for both `getCodeGeneratedFiles` and
-           *  `getUserCodeFiles` — message ids no longer needed at
-           *  this layer. */
-          threadFileIds = getThreadData(messages, parentMessageId).fileIds;
-        }
-      }
-
-      /** Code-generated and user-uploaded execute_code files share the
-       *  same primary anchor: file_ids referenced by messages in the
-       *  current thread. The two queries differ only by `context`
-       *  (`execute_code` for generated outputs, others for uploads).
-       *  Anchoring both on `threadFileIds` reaches files regardless of
-       *  which sibling first generated them — see `getCodeGeneratedFiles`
-       *  for the branched-conversation rationale. */
-      if (db.getCodeGeneratedFiles) {
-        codeGeneratedFiles = requestFileOwnerScope
-          ? ((await db.getCodeGeneratedFiles(
-              conversationId,
-              threadFileIds,
-              requestFileOwnerScope,
-            )) as IMongoFile[])
-          : [];
-      }
-
-      if (
-        db.getUserCodeFiles &&
-        requestFileOwnerScope &&
-        threadFileIds &&
-        threadFileIds.length > 0
-      ) {
-        userCodeFiles = (await db.getUserCodeFiles(
-          threadFileIds,
-          requestFileOwnerScope,
-        )) as IMongoFile[];
-      }
-    }
+    const wantsCodeFiles = toolResourceSet.has(EToolResources.execute_code);
+    const [toolFiles, codeGeneratedFiles, userCodeFiles] = await Promise.all([
+      requestFileOwnerScope
+        ? (db.getToolFilesByIds(fileIds, toolResourceSet, requestFileOwnerScope) as Promise<
+            IMongoFile[]
+          >)
+        : ([] as IMongoFile[]),
+      wantsCodeFiles && db.getCodeGeneratedFiles && requestFileOwnerScope
+        ? (db.getCodeGeneratedFiles(
+            conversationId,
+            threadFileIds,
+            requestFileOwnerScope,
+          ) as Promise<IMongoFile[]>)
+        : ([] as IMongoFile[]),
+      wantsCodeFiles &&
+      db.getUserCodeFiles &&
+      requestFileOwnerScope &&
+      threadFileIds &&
+      threadFileIds.length > 0
+        ? (db.getUserCodeFiles(threadFileIds, requestFileOwnerScope) as Promise<IMongoFile[]>)
+        : ([] as IMongoFile[]),
+    ]);
 
     const allToolFiles = toolFiles.concat(codeGeneratedFiles, userCodeFiles);
     if (requestFiles.length || allToolFiles.length) {
@@ -1015,6 +1064,7 @@ export async function initializeAgent(
       model: agent.model,
       tool_options: agent.tool_options,
       tool_resources,
+      codeExecutionContext,
       accessibleMcpServerNames: resolvedAuditNames,
     });
 
@@ -1024,6 +1074,9 @@ export async function initializeAgent(
   try {
     loadToolsResult = await callLoadTools(requestedToolNames);
   } catch (err) {
+    if (isFatalAgentInitializationError(err, { allowExpectedMCPFallback: true })) {
+      throw err;
+    }
     if (extraAllowedToolNames.length > 0) {
       logger.warn(
         `[allowedTools] loadTools threw with skill-added extras [${extraAllowedToolNames.join(', ')}]; retrying without them:`,
@@ -1176,8 +1229,6 @@ export async function initializeAgent(
    * code-only description to the skill-aware description without adding a
    * duplicate — exactly one copy of each tool reaches the LLM.
    */
-  const agentRequestsCodeExec = (agent.tools ?? []).includes(Tools.execute_code);
-  const effectiveCodeEnvAvailable = params.codeEnvAvailable === true && agentRequestsCodeExec;
   /**
    * Capability marker → definition names its registration produced this run,
    * reported by the registrars themselves. `tool_options` entries keyed by a
@@ -1194,14 +1245,6 @@ export async function initializeAgent(
     const existing = capabilityToolNames.get(capability);
     capabilityToolNames.set(capability, existing ? [...existing, ...toolNames] : toolNames);
   };
-  /** Per-agent stateful-session truth: the admin capability AND the agent's
-   *  own builder opt-in AND a working code env. Resolved once here so the
-   *  registered bash description, the tool factories, and `createRun`'s
-   *  `toolExecution.sandbox` gate all agree for this agent. */
-  const effectiveStatefulSessions =
-    effectiveCodeEnvAvailable &&
-    params.statefulSessionsAvailable === true &&
-    agent.stateful_code_sessions === true;
   if (effectiveCodeEnvAvailable) {
     const codeExecResult = registerCodeExecutionTools({
       toolRegistry,
@@ -1522,6 +1565,9 @@ export async function initializeAgent(
     memoryToolsRegistered: inlineMemoryRegistered,
     codeEnvAvailable: effectiveCodeEnvAvailable,
     statefulCodeSessions: effectiveStatefulSessions,
+    statefulCodeEnvironment,
+    codeSessionKey: codeExecutionContext.codeSessionKey,
+    codeExecutionContext,
     reasoningKey: customEndpointConfig?.customParams?.reasoningKey,
     includeReasoningHistory: customEndpointConfig?.customParams?.includeReasoningHistory,
     skillAuthoringAvailable,

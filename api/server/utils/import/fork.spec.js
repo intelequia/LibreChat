@@ -146,6 +146,29 @@ describe('forkConversation', () => {
     );
   });
 
+  test('detaches subagent lineage when forking a child conversation', async () => {
+    getConvo.mockResolvedValue({
+      ...mockConversation,
+      subagentThread: {
+        rootConversationId: 'root-conversation',
+        parentConversationId: 'parent-conversation',
+        parentToolCallId: 'parent-tool-call',
+        subagentType: 'researcher',
+        subagentKind: 'agent',
+        depth: 1,
+      },
+    });
+
+    await forkConversation({
+      originalConvoId: 'abc123',
+      targetMessageId: '3',
+      requestUserId: 'user1',
+      option: ForkOptions.DIRECT_PATH,
+    });
+
+    expect(bulkSaveConvos.mock.calls[0][0][0]).not.toHaveProperty('subagentThread');
+  });
+
   test('should fork conversation with branches', async () => {
     const result = await forkConversation({
       originalConvoId: 'abc123',
@@ -311,6 +334,27 @@ describe('duplicateConversation', () => {
     // bulkIncrementTagCounts will be called with empty array
     expect(bulkIncrementTagCounts).toHaveBeenCalledWith('user1', []);
   });
+
+  test('detaches subagent lineage when duplicating a child conversation', async () => {
+    getConvo.mockResolvedValue({
+      ...mockConversation,
+      subagentThread: {
+        rootConversationId: 'root-conversation',
+        parentConversationId: 'parent-conversation',
+        parentToolCallId: 'parent-tool-call',
+        subagentType: 'researcher',
+        subagentKind: 'agent',
+        depth: 1,
+      },
+    });
+
+    await duplicateConversation({
+      userId: 'user1',
+      conversationId: 'abc123',
+    });
+
+    expect(bulkSaveConvos.mock.calls[0][0][0]).not.toHaveProperty('subagentThread');
+  });
 });
 
 describe('forkSharedConversation', () => {
@@ -331,10 +375,13 @@ describe('forkSharedConversation', () => {
     },
   ];
 
+  const SHARE_REVISION = '2026-01-01T00:00:00.000Z';
+
   const mockShare = {
     shareId: 'share123',
     conversationId: 'convo_anon',
     title: 'Shared Title',
+    updatedAt: new Date(SHARE_REVISION),
     messages: mockSharedMessages,
   };
 
@@ -347,6 +394,42 @@ describe('forkSharedConversation', () => {
     bulkSaveConvos.mockResolvedValue(null);
     bulkSaveMessages.mockResolvedValue(null);
     bulkIncrementTagCounts.mockResolvedValue(null);
+  });
+
+  test('should reject a fork aimed at a payload the owner has since republished', async () => {
+    getSharedMessages.mockResolvedValue({
+      ...mockShare,
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    });
+
+    await expect(
+      forkSharedConversation({
+        shareId: 'share123',
+        shareResourceId: 'resource123',
+        requestUserId: 'user1',
+        targetMessageIndex: 1,
+        shareRevision: '2026-01-01T00:00:00.000Z',
+      }),
+    ).rejects.toMatchObject({ code: 'SHARE_REVISION_MISMATCH' });
+
+    expect(bulkSaveMessages).not.toHaveBeenCalled();
+  });
+
+  test('should fork when the held revision still matches the published one', async () => {
+    getSharedMessages.mockResolvedValue({
+      ...mockShare,
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+
+    const result = await forkSharedConversation({
+      shareId: 'share123',
+      shareResourceId: 'resource123',
+      requestUserId: 'user1',
+      shareRevision: SHARE_REVISION,
+    });
+
+    expect(result).toBeTruthy();
+    expect(bulkSaveMessages).toHaveBeenCalled();
   });
 
   test('should clone shared messages into a conversation owned by the requesting user', async () => {
@@ -591,6 +674,7 @@ describe('forkSharedConversation', () => {
       shareId: 'share123',
       requestUserId: 'user1',
       targetMessageIndex: 1,
+      shareRevision: SHARE_REVISION,
     });
 
     const savedTexts = bulkSaveMessages.mock.calls[0][0].map((message) => message.text);
@@ -628,6 +712,7 @@ describe('forkSharedConversation', () => {
       shareId: 'share123',
       requestUserId: 'user1',
       targetMessageIndex: 2,
+      shareRevision: SHARE_REVISION,
     });
 
     const savedTexts = bulkSaveMessages.mock.calls[0][0].map((message) => message.text);
@@ -640,8 +725,21 @@ describe('forkSharedConversation', () => {
       shareId: 'share123',
       requestUserId: 'user1',
       targetMessageIndex: 999,
+      shareRevision: SHARE_REVISION,
     });
 
+    expect(bulkSaveMessages.mock.calls[0][0]).toHaveLength(mockSharedMessages.length);
+  });
+
+  test('should ignore a positional target that comes without a revision', async () => {
+    await forkSharedConversation({
+      shareId: 'share123',
+      requestUserId: 'user1',
+      targetMessageIndex: 1,
+    });
+
+    // Nothing proves which payload the index was read against, so the whole share
+    // is cloned instead of a branch the caller may never have seen.
     expect(bulkSaveMessages.mock.calls[0][0]).toHaveLength(mockSharedMessages.length);
   });
 

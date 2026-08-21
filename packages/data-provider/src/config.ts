@@ -9,13 +9,23 @@ import {
   eReasoningResponseKeySchema,
 } from './schemas';
 import { ComponentTypes, SettingTypes, OptionTypes } from './generate';
+import { MAX_SUBAGENTS, MAX_SUBAGENTS_CEILING } from './limits';
+import { STATEFUL_CODE_ENVIRONMENTS } from './stateful-code';
 import { specsConfigSchema, TSpecsConfig } from './models';
 import { REFILL_INTERVAL_UNITS } from './balance';
 import { fileConfigSchema } from './file-config';
 import { apiBaseUrl } from './api-endpoints';
 import { FileSources } from './types/files';
 import { MCPServersSchema } from './mcp';
-export { MAX_SUBAGENTS } from './limits';
+export {
+  MAX_SUBAGENTS,
+  MAX_SUBAGENTS_CEILING,
+  getMaxSubagents,
+  setMaxSubagents,
+  MAX_GRAPH_SUBAGENT_MEMBERS,
+  MAX_CHAT_PROJECT_NAME_LENGTH,
+  MAX_CHAT_PROJECT_DESCRIPTION_LENGTH,
+} from './limits';
 
 export const defaultSocialLogins = ['google', 'facebook', 'openid', 'github', 'discord', 'saml'];
 
@@ -49,6 +59,7 @@ export const defaultRetrievalModels = [
 
 export const excludedKeys = new Set([
   'conversationId',
+  'subagentThread',
   'title',
   'iconURL',
   'greeting',
@@ -60,6 +71,8 @@ export const excludedKeys = new Set([
   'isTemporary',
   'messages',
   'isArchived',
+  'pinned',
+  'archivedAt',
   'tags',
   'user',
   '__v',
@@ -113,6 +126,38 @@ function isPrivateIPv4Literal(value: string): boolean {
   return false;
 }
 
+/**
+ * Mirrors `hasPrivateEmbeddedIPv4` in `@librechat/api`'s ip helpers: 6to4, NAT64, and Teredo
+ * carry an IPv4 address inside the IPv6 one, and the runtime guard blocks those when the
+ * embedded address is private. Kept in sync so an operator can exempt what the runtime blocks.
+ */
+function hasPrivateEmbeddedIPv4Literal(value: string): boolean {
+  const is6to4 = value.startsWith('2002:');
+  const isNat64 = value.startsWith('64:ff9b::');
+  const isTeredo = value.startsWith('2001::');
+  if (!is6to4 && !isNat64 && !isTeredo) {
+    return false;
+  }
+
+  const segments = value.split(':').filter((segment) => segment !== '');
+  const pair = is6to4 ? segments.slice(1, 3) : segments.slice(-2);
+  if (pair.length !== 2) {
+    return false;
+  }
+
+  const hi = parseInt(pair[0], 16);
+  const lo = parseInt(pair[1], 16);
+  if (isNaN(hi) || isNaN(lo)) {
+    return false;
+  }
+
+  /** RFC 4380: Teredo stores the external IPv4 as a bitwise complement. */
+  const high = isTeredo ? ~hi : hi;
+  const low = isTeredo ? ~lo : lo;
+  const octets = [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff];
+  return isPrivateIPv4Literal(octets.join('.'));
+}
+
 function isPrivateIPv6Literal(value: string): boolean {
   if (!value.includes(':')) return false;
   if (value === '::1' || value === '::') return true;
@@ -126,7 +171,7 @@ function isPrivateIPv6Literal(value: string): boolean {
   // 4-in-6: ::ffff:A.B.C.D
   const mappedMatch = value.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
   if (mappedMatch) return isPrivateIPv4Literal(mappedMatch[1]);
-  return false;
+  return hasPrivateEmbeddedIPv4Literal(value);
 }
 
 /**
@@ -591,7 +636,14 @@ export const defaultAssistantsVersion = {
 };
 
 export const baseEndpointSchema = z.object({
-  streamRate: z.number().optional(),
+  /**
+   * Milliseconds between visible streamed chunks. Agents SDK-backed
+   * providers (openAI, custom, anthropic, google, bedrock, agents) smooth
+   * adaptively at 25ms by default; set to override the cadence, 0 to
+   * disable smoothing. Legacy Assistants and Ollama paths instead sleep
+   * this long per provider chunk (default 1ms), with no adaptive smoothing.
+   */
+  streamRate: z.number().min(0).optional(),
   baseURL: z.string().optional(),
   /**
    * Custom request headers forwarded to the provider on every request. Values
@@ -638,6 +690,32 @@ export const baseEndpointSchema = z.object({
   activityMaxPerRun: z.number().int().positive().optional(),
   /** Per-entry truncation of tool input/output in the label prompt. Default 600. */
   activityCharLimit: z.number().int().positive().optional(),
+  /** Generates one parent summary for each run phase containing 2+ activities. */
+  activityPhaseLabel: z.boolean().optional(),
+  /** Model used for phase summaries. Defaults to activityModel, titleModel, then the run model. */
+  activityPhaseModel: z.string().optional(),
+  /** Endpoint whose credentials the phase summary model uses. Defaults to activityEndpoint. */
+  activityPhaseEndpoint: z.string().optional(),
+  /** Overrides the dedicated phase-summary system prompt. */
+  activityPhasePrompt: z.string().optional(),
+  /** Cost cap: maximum phase summaries generated per run. Default 5. */
+  activityPhaseMaxPerRun: z.number().int().positive().optional(),
+  /** Generates a live orientation label for sufficiently long top-level response reasoning. */
+  reasoningLabel: z.boolean().optional(),
+  /** Model used for reasoning labels. Defaults to activityModel, titleModel, then run model. */
+  reasoningLabelModel: z.string().optional(),
+  /** Endpoint receiving the bounded visible-reasoning snapshot. Defaults to activityEndpoint. */
+  reasoningLabelEndpoint: z.string().optional(),
+  /** Overrides the dedicated reasoning-label system prompt. */
+  reasoningLabelPrompt: z.string().optional(),
+  /** Characters required before the first reasoning label. Default 500. */
+  reasoningLabelMinChars: z.number().int().positive().optional(),
+  /** New characters required between streaming revisions. Default 400. */
+  reasoningLabelUpdateChars: z.number().int().positive().optional(),
+  /** Minimum milliseconds between streaming revisions. Default 3000. */
+  reasoningLabelUpdateIntervalMs: z.number().int().nonnegative().optional(),
+  /** Cost cap: maximum reasoning-label provider calls attempted per run. Default 8. */
+  reasoningLabelMaxPerRun: z.number().int().positive().optional(),
   /** Maximum characters allowed in a single tool result before truncation. */
   maxToolResultChars: z.number().positive().optional(),
 });
@@ -928,11 +1006,28 @@ export const agentsEndpointSchema = baseEndpointSchema
       maxCitations: z.number().min(1).max(50).optional().default(30),
       maxCitationsPerFile: z.number().min(1).max(10).optional().default(7),
       minRelevanceScore: z.number().min(0.0).max(1.0).optional().default(0.45),
+      /** Maximum explicit subagents per agent (`agent_ids` and `graphs`); raised from
+       * the shipped default of 10 for orchestration-heavy deployments, bounded by
+       * `MAX_SUBAGENTS_CEILING`. */
+      maxSubagents: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_SUBAGENTS_CEILING)
+        .optional()
+        .default(MAX_SUBAGENTS),
       allowedProviders: z.array(z.union([z.string(), eModelEndpointSchema])).optional(),
       capabilities: z
         .array(z.nativeEnum(AgentCapabilities))
         .optional()
         .default(defaultAgentCapabilities),
+      /** Controls which workspace-sharing scopes users may select for stateful code sessions.
+       *  Omit this block to preserve the legacy behavior of allowing every scope. */
+      statefulCodeSessions: z
+        .object({
+          allowedEnvironments: z.array(z.enum(STATEFUL_CODE_ENVIRONMENTS)).min(1),
+        })
+        .optional(),
       skills: z
         .object({
           maxCatalogSkills: z.number().int().min(1).max(100).optional(),
@@ -941,8 +1036,8 @@ export const agentsEndpointSchema = baseEndpointSchema
       remoteApi: remoteApiSchema.optional(),
       /** Human-in-the-loop tool approval policy. Off by default. */
       toolApproval: toolApprovalPolicySchema,
-      /** Durable checkpointer backing HITL resume. Defaults to the app's MongoDB
-       *  when `toolApproval.enabled` is set; ignored otherwise. */
+      /** Durable checkpointer backing tool-approval and Ask User resume.
+       *  Defaults to the app's MongoDB when either flow needs it. */
       checkpointer: checkpointerSchema,
     }),
   )
@@ -952,6 +1047,7 @@ export const agentsEndpointSchema = baseEndpointSchema
     maxCitations: 30,
     maxCitationsPerFile: 7,
     minRelevanceScore: 0.45,
+    maxSubagents: MAX_SUBAGENTS,
   });
 
 export type TAgentsEndpoint = z.infer<typeof agentsEndpointSchema>;
@@ -1083,6 +1179,19 @@ export const azureEndpointSchema = z
         activityPrompt: true,
         activityMaxPerRun: true,
         activityCharLimit: true,
+        activityPhaseLabel: true,
+        activityPhaseModel: true,
+        activityPhaseEndpoint: true,
+        activityPhasePrompt: true,
+        activityPhaseMaxPerRun: true,
+        reasoningLabel: true,
+        reasoningLabelModel: true,
+        reasoningLabelEndpoint: true,
+        reasoningLabelPrompt: true,
+        reasoningLabelMinChars: true,
+        reasoningLabelUpdateChars: true,
+        reasoningLabelUpdateIntervalMs: true,
+        reasoningLabelMaxPerRun: true,
       })
       .partial(),
   );
@@ -1237,8 +1346,8 @@ const speechTab = z
       .optional()
       .or(
         z.object({
-          /** Keep in sync with STTProviders enum (defined below — cannot reference due to eval order) */
-          engineSTT: z.enum(['openai', 'azureOpenAI']).optional(),
+          /** Provider names remain valid for backward compatibility and are normalized for clients. */
+          engineSTT: z.enum(['browser', 'external', 'openai', 'azureOpenAI']).optional(),
           languageSTT: z.string().optional(),
           autoTranscribeAudio: z.boolean().optional(),
           decibelValue: z.number().optional(),
@@ -1251,8 +1360,10 @@ const speechTab = z
       .optional()
       .or(
         z.object({
-          /** Keep in sync with TTSProviders enum (defined below — cannot reference due to eval order) */
-          engineTTS: z.enum(['openai', 'azureOpenAI', 'elevenlabs', 'localai']).optional(),
+          /** Provider names remain valid for backward compatibility and are normalized for clients. */
+          engineTTS: z
+            .enum(['browser', 'external', 'openai', 'azureOpenAI', 'elevenlabs', 'localai'])
+            .optional(),
           voice: z.string().optional(),
           languageTTS: z.string().optional(),
           automaticPlayback: z.boolean().optional(),
@@ -1452,6 +1563,19 @@ export const interfaceSchema = z
         }),
       ])
       .optional(),
+    schedules: z
+      .union([
+        z.boolean(),
+        z.object({
+          use: z.boolean().optional(),
+          create: z.boolean().optional(),
+          maxPerUser: z.number().int().min(0).optional(),
+          minIntervalMinutes: z.number().int().min(1).optional(),
+          autoDisableAfterFailures: z.number().int().min(1).optional(),
+          fireConcurrency: z.number().int().min(1).optional(),
+        }),
+      ])
+      .optional(),
   })
   .default({
     modelSelect: true,
@@ -1514,6 +1638,11 @@ export const interfaceSchema = z
       public: true,
       snapshotFiles: true,
     },
+    // `schedules` is deliberately ABSENT from this default. It is experimental and
+    // default-off in v1, and zod applies this whole object when `interface` is omitted
+    // from librechat.yaml — including it would silently enable the feature (and permit
+    // billable scheduled runs) on every deployment that never opted in. The PERMISSION
+    // defaults live in updateInterfacePermissions, which is a separate concern.
   });
 
 export type TInterfaceConfig = z.infer<typeof interfaceSchema>;
@@ -1559,6 +1688,7 @@ export type TStartupConfig = {
   socialLogins?: string[];
   langfuseFanoutEnabled?: boolean;
   langfuseConnectionAccess?: boolean;
+  insightsEnabled?: boolean;
   interface?: TInterfaceConfig;
   turnstile?: TTurnstileConfig;
   balance?: TBalanceConfig;
@@ -1590,6 +1720,8 @@ export type TStartupConfig = {
   emailEnabled: boolean;
   showBirthdayIcon: boolean;
   helpAndFaqURL: string;
+  /** Admin panel link, only present for users with admin access */
+  adminPanelURL?: string;
   customFooter?: string;
   modelSpecs?: TSpecsConfig;
   modelDescriptions?: Record<string, Record<string, string>>;
@@ -1703,6 +1835,7 @@ export enum SafeSearchTypes {
 }
 
 export const webSearchSchema = z.object({
+  allowedAddresses: allowedAddressesSchema,
   serperApiKey: z.string().optional().default('${SERPER_API_KEY}'),
   serperApiKeyPreview: apiKeyPreviewSchema,
   searxngInstanceUrl: z.string().optional().default('${SEARXNG_INSTANCE_URL}'),
@@ -1944,6 +2077,27 @@ export const langfuseConfigSchema = z.object({
   secretKeyPreview: z.string().optional(),
   /** Routing key for one of the deployment-configured tenant Langfuse destinations. */
   destination: z.string().optional(),
+  /**
+   * Custom request headers sent on every outbound Langfuse request — trace and
+   * media export, feedback scores, and credential verification — for
+   * self-hosted instances behind an authenticating proxy or gateway. Values
+   * support `${ENV_VAR}` interpolation.
+   *
+   * Deployment-level only. Trace export batches spans from every user through
+   * one exporter, so unlike endpoint headers these cannot carry per-user
+   * placeholders. Headers referencing an unset variable, naming an
+   * infrastructure secret, or carrying an invalid HTTP field name are dropped
+   * with a warning rather than sent.
+   *
+   * Sent only when the deployment configures exactly one Langfuse origin, and
+   * only to that origin. The map cannot say which endpoint it authenticates
+   * to, so with several configured origins any choice of recipient would risk
+   * disclosing a gateway credential to the others; a warning is logged instead.
+   * Multi-destination deployments need per-destination headers, which this
+   * schema does not yet express — and note the fanout collector forwards only
+   * `Authorization` upstream regardless.
+   */
+  headers: z.record(z.string()).optional(),
 });
 
 export type LangfuseConfig = z.infer<typeof langfuseConfigSchema>;
@@ -2214,6 +2368,8 @@ export const defaultModels = {
   [EModelEndpoint.assistants]: [...sharedOpenAIModels, 'chatgpt-4o-latest'],
   [EModelEndpoint.agents]: sharedOpenAIModels, // TODO: Add agent models (agentsModels)
   [EModelEndpoint.google]: [
+    // Gemini 3.7 Models
+    'gemini-3.7-flash',
     // Gemini 3.6 Models
     'gemini-3.6-flash',
     // Gemini 3.5 Models
@@ -2630,6 +2786,14 @@ export enum ErrorTypes {
    */
   GOOGLE_VIDEO_UNPROCESSABLE = 'google_video_unprocessable',
   /**
+   * Required CodeAPI resources could not be restored before model invocation.
+   */
+  RESOURCE_RECOVERY_REQUIRED = 'resource_recovery_required',
+  /**
+   * Agent selected a stateful Code API workspace scope disabled by the deployment.
+   */
+  STATEFUL_CODE_ENVIRONMENT_NOT_ALLOWED = 'stateful_code_environment_not_allowed',
+  /**
    * Invalid Agent Provider (excluded by Admin)
    */
   INVALID_AGENT_PROVIDER = 'invalid_agent_provider',
@@ -2799,7 +2963,7 @@ export enum Constants {
    */
   VERSION = '__LIBRECHAT_VERSION__',
   /** Key for the Custom Config's version (librechat.yaml). */
-  CONFIG_VERSION = '1.3.13',
+  CONFIG_VERSION = '1.3.14',
   /** Standard value for the first message's `parentMessageId` value, to indicate no parent exists. */
   NO_PARENT = '00000000-0000-0000-0000-000000000000',
   /** Standard value to use whatever the submission prelim. `responseMessageId` is */

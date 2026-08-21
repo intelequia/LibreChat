@@ -60,6 +60,9 @@ const mockGenerationJobManager = {
   publishTerminalClaim: jest.fn(),
   finishTerminalJob: jest.fn(),
   completeJob: jest.fn(),
+  abortJob: jest.fn(),
+  beginProviderExecution: jest.fn(),
+  markProviderExecutionDrained: jest.fn(),
   failPausePersistence: jest.fn(),
   expireApproval: jest.fn(),
   approvals: {
@@ -80,6 +83,12 @@ const mockGetMessages = jest.fn();
 const mockDisposeClient = jest.fn();
 const mockGetMCPRequestContext = jest.fn();
 const mockCleanupMCPRequestContextForReq = jest.fn();
+const mockRecordScheduleOutcome = jest.fn();
+const mockIsScheduleLive = jest.fn();
+const mockClaimScheduleResume = jest.fn();
+const mockReleaseScheduleResumeClaim = jest.fn();
+const mockFinalizeScheduleResumeClaim = jest.fn();
+const mockReleaseScheduleResumeFence = jest.fn();
 
 jest.mock('@librechat/data-schemas', () => ({
   ...jest.requireActual('@librechat/data-schemas'),
@@ -100,6 +109,15 @@ jest.mock('~/models', () => ({
   saveMessage: (...args) => mockSaveMessage(...args),
   getConvo: (...args) => mockGetConvo(...args),
   getMessages: (...args) => mockGetMessages(...args),
+}));
+
+jest.mock('~/server/services/Schedules', () => ({
+  recordScheduleOutcome: (...args) => mockRecordScheduleOutcome(...args),
+  claimScheduleResume: (...args) => mockClaimScheduleResume(...args),
+  releaseScheduleResumeClaim: (...args) => mockReleaseScheduleResumeClaim(...args),
+  finalizeScheduleResumeClaim: (...args) => mockFinalizeScheduleResumeClaim(...args),
+  releaseScheduleResumeFence: (...args) => mockReleaseScheduleResumeFence(...args),
+  isScheduleLive: (...args) => mockIsScheduleLive(...args),
 }));
 
 jest.mock('~/server/cleanup', () => ({
@@ -162,6 +180,20 @@ function makeAskUserJob(overrides = {}) {
   job.metadata.pendingAction.payload = {
     type: 'ask_user_question',
     question: 'What should I name the file?',
+  };
+  return job;
+}
+
+function makeAskUserBatchJob(overrides = {}) {
+  const job = makeToolApprovalJob(overrides);
+  job.metadata.pendingAction.payload = {
+    type: 'ask_user_question',
+    question: { question: 'Which environment?' },
+    questions: [
+      { id: 'environment', question: 'Which environment?' },
+      { id: 'window', question: 'Which time window?' },
+    ],
+    tool_call_id: 'tc1',
   };
   return job;
 }
@@ -232,10 +264,23 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
     );
     mockGenerationJobManager.finishTerminalJob.mockResolvedValue(undefined);
     mockGenerationJobManager.completeJob.mockResolvedValue(true);
+    mockGenerationJobManager.abortJob.mockResolvedValue({ success: true });
+    mockGenerationJobManager.beginProviderExecution.mockResolvedValue(true);
+    mockGenerationJobManager.markProviderExecutionDrained.mockResolvedValue(true);
     mockGenerationJobManager.failPausePersistence.mockResolvedValue(true);
     mockGenerationJobManager.approvals.resolve.mockResolvedValue(true);
     mockGenerationJobManager.approvals.ownsPausePersistence.mockResolvedValue(true);
     mockGenerationJobManager.approvals.finishPausePersistence.mockResolvedValue(true);
+    mockRecordScheduleOutcome.mockResolvedValue(true);
+    mockIsScheduleLive.mockResolvedValue(true);
+    mockClaimScheduleResume.mockResolvedValue({
+      capacitySlot: 0,
+      claimToken: 'resume-token',
+      leaseBy: 'resume:resume-token',
+    });
+    mockReleaseScheduleResumeClaim.mockResolvedValue(true);
+    mockFinalizeScheduleResumeClaim.mockResolvedValue(true);
+    mockReleaseScheduleResumeFence.mockResolvedValue(undefined);
 
     // `decrementPendingRequest` runs in the controller's `finally` on every
     // post-ACK path, so resolving on it signals the async continuation is done.
@@ -284,6 +329,222 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
     endpoint: 'agents',
     decisions: [{ tool_call_id: 'tc1', decision: 'approve' }],
     ...extra,
+  });
+
+  describe('scheduled occurrence lifecycle', () => {
+    const scheduledFor = '2026-08-17T12:00:00.000Z';
+    const makeScheduledJob = () =>
+      makeToolApprovalJob({
+        metadata: {
+          scheduleId: 'schedule-1',
+          scheduledFor,
+          scheduleConfigRevision: 4,
+          checkpointNamespace: '1000',
+        },
+      });
+
+    it('stops and settles an occurrence that became inactive while awaiting approval', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeScheduledJob());
+      mockIsScheduleLive.mockResolvedValue(false);
+
+      const res = await post(approveBody());
+
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ code: 'SCHEDULE_NO_LONGER_ACTIVE' });
+      expect(mockIsScheduleLive).toHaveBeenCalledWith('schedule-1', 4, {
+        automatic: true,
+        policy: true,
+      });
+      expect(mockGenerationJobManager.abortJob).toHaveBeenCalledWith(CONVO_ID, {
+        expectedCreatedAt: 1000,
+        awaitProviderDrain: true,
+      });
+      expect(mockRecordScheduleOutcome).toHaveBeenCalledWith({
+        scheduleId: 'schedule-1',
+        scheduledFor,
+        streamId: CONVO_ID,
+        jobCreatedAt: 1000,
+        status: 'interrupted',
+        conversationId: CONVO_ID,
+        error: 'Schedule was disabled, changed, or deleted before approval',
+      });
+      expect(mockDeleteAgentCheckpoint).toHaveBeenCalledWith(
+        CONVO_ID,
+        { type: 'mongo' },
+        undefined,
+        { checkpointNamespace: '1000' },
+      );
+      expect(mockGenerationJobManager.approvals.resolve).not.toHaveBeenCalled();
+    });
+
+    it('fails closed without settling or pruning when provider drain cannot be confirmed', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeScheduledJob());
+      mockIsScheduleLive.mockResolvedValue(false);
+      mockGenerationJobManager.abortJob.mockRejectedValue(new Error('drain timed out'));
+
+      const res = await post(approveBody());
+
+      expect(res.status).toBe(503);
+      expect(res.headers['retry-after']).toBe('1');
+      expect(res.body).toMatchObject({ code: 'SCHEDULE_STOP_UNCONFIRMED' });
+      expect(mockRecordScheduleOutcome).not.toHaveBeenCalled();
+      expect(mockDeleteAgentCheckpoint).not.toHaveBeenCalled();
+      expect(mockGenerationJobManager.approvals.resolve).not.toHaveBeenCalled();
+    });
+
+    it('records success after resumed persistence and before terminal publication', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeScheduledJob());
+
+      const res = await post(approveBody());
+      expect(res.status).toBe(200);
+      await settled;
+
+      expect(mockClaimScheduleResume).toHaveBeenCalledWith('schedule-1', scheduledFor, {
+        expectedConfigRevision: 4,
+        automatic: true,
+      });
+      expect(mockFinalizeScheduleResumeClaim).toHaveBeenCalledWith(
+        'schedule-1',
+        'resume-token',
+        'resume:resume-token',
+        { expectedConfigRevision: 4, automatic: true },
+      );
+
+      expect(mockRecordScheduleOutcome).toHaveBeenCalledWith({
+        scheduleId: 'schedule-1',
+        scheduledFor,
+        streamId: CONVO_ID,
+        jobCreatedAt: 1000,
+        status: 'success',
+        conversationId: CONVO_ID,
+      });
+      expect(mockRecordScheduleOutcome.mock.invocationCallOrder[0]).toBeLessThan(
+        mockGenerationJobManager.publishTerminalClaim.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('keeps the approval paused when global scheduled-run capacity is full', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeScheduledJob());
+      mockClaimScheduleResume.mockResolvedValue({ conflict: 'capacity' });
+
+      const res = await post(approveBody());
+
+      expect(res.status).toBe(429);
+      expect(res.headers['retry-after']).toBe('1');
+      expect(res.body).toMatchObject({ code: 'SCHEDULE_CAPACITY' });
+      expect(mockGenerationJobManager.approvals.resolve).not.toHaveBeenCalled();
+      expect(mockDecrementPendingRequest).toHaveBeenCalledWith(USER_ID);
+    });
+
+    it('rolls back scheduled capacity when the approval CAS does not consume the action', async () => {
+      const job = makeScheduledJob();
+      mockGenerationJobManager.getJob.mockResolvedValue(job);
+      mockGenerationJobManager.approvals.resolve.mockResolvedValue(false);
+
+      const res = await post(approveBody());
+
+      expect(res.status).toBe(409);
+      expect(mockReleaseScheduleResumeClaim).toHaveBeenCalledWith('schedule-1', scheduledFor, 0);
+      expect(mockReleaseScheduleResumeFence).toHaveBeenCalledWith(
+        'schedule-1',
+        'resume:resume-token',
+      );
+    });
+
+    it('stops before provider execution when an edit wins the final resume handoff', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeScheduledJob());
+      mockFinalizeScheduleResumeClaim.mockResolvedValue(false);
+
+      const res = await post(approveBody());
+
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({ code: 'SCHEDULE_NO_LONGER_ACTIVE' });
+      expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalled();
+      expect(mockGenerationJobManager.abortJob).toHaveBeenCalledWith(CONVO_ID, {
+        expectedCreatedAt: 1000,
+        awaitProviderDrain: true,
+      });
+      expect(mockRecordScheduleOutcome).toHaveBeenCalledWith({
+        scheduleId: 'schedule-1',
+        scheduledFor,
+        streamId: CONVO_ID,
+        jobCreatedAt: 1000,
+        status: 'interrupted',
+        conversationId: CONVO_ID,
+        error: 'Schedule was disabled, changed, or deleted before approval',
+      });
+      expect(mockInitializeClient).not.toHaveBeenCalled();
+    });
+
+    it('settles a scheduled continuation stopped during its resumed segment', async () => {
+      const job = makeScheduledJob();
+      mockGenerationJobManager.getJob.mockResolvedValue(job);
+      mockInitializeClient.mockImplementation(async () => {
+        job.abortController.abort();
+        return { client: makeClient(), userMCPAuthMap: {} };
+      });
+
+      const res = await post(approveBody());
+      expect(res.status).toBe(200);
+      await settled;
+      await flush();
+
+      expect(mockRecordScheduleOutcome).toHaveBeenCalledWith({
+        scheduleId: 'schedule-1',
+        scheduledFor,
+        streamId: CONVO_ID,
+        jobCreatedAt: 1000,
+        status: 'interrupted',
+        conversationId: CONVO_ID,
+        error: 'Scheduled run was stopped',
+      });
+    });
+
+    it('records an empty-preempt resumed segment as interrupted, not successful', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeScheduledJob());
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({
+          run: {
+            getPreemptStats: () => ({ emptyBoundaries: 1 }),
+            getHaltReason: () => 'preempt_incomplete',
+          },
+        }),
+        userMCPAuthMap: {},
+      });
+
+      const res = await post(approveBody());
+      expect(res.status).toBe(200);
+      await settled;
+      await flush();
+
+      expect(mockSaveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ unfinished: true }),
+        expect.anything(),
+      );
+      expect(mockRecordScheduleOutcome).toHaveBeenCalledWith({
+        scheduleId: 'schedule-1',
+        scheduledFor,
+        streamId: CONVO_ID,
+        jobCreatedAt: 1000,
+        status: 'interrupted',
+        conversationId: CONVO_ID,
+        error: 'Scheduled run was interrupted before completion',
+      });
+    });
+
+    it('does not overwrite the terminal winner when failed-resume finalization loses its CAS', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeScheduledJob());
+      mockGenerationJobManager.completeJob.mockResolvedValue(false);
+      mockInitializeClient.mockRejectedValue(new Error('resume reconstruction failed'));
+
+      const res = await post(approveBody());
+      expect(res.status).toBe(200);
+      await settled;
+
+      expect(mockGenerationJobManager.completeJob).toHaveBeenCalled();
+      expect(mockRecordScheduleOutcome).not.toHaveBeenCalled();
+    });
   });
 
   describe('temporal context restore', () => {
@@ -350,6 +611,32 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       );
       // ...then torn down exactly once in the finally.
       expect(mockCleanupMCPRequestContextForReq).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks the exact resumed provider segment drained only after request cleanup', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeToolApprovalJob());
+      const res = await post(approveBody());
+      expect(res.status).toBe(200);
+      await settled;
+      await flush();
+
+      const resumePatch = mockGenerationJobManager.approvals.resolve.mock.calls[0][2];
+      expect(mockGenerationJobManager.beginProviderExecution).toHaveBeenCalledWith(
+        CONVO_ID,
+        1000,
+        resumePatch.providerExecutionId,
+      );
+      expect(mockGenerationJobManager.markProviderExecutionDrained).toHaveBeenCalledWith(
+        CONVO_ID,
+        1000,
+        resumePatch.providerExecutionId,
+      );
+      expect(mockCleanupMCPRequestContextForReq.mock.invocationCallOrder[0]).toBeLessThan(
+        mockGenerationJobManager.markProviderExecutionDrained.mock.invocationCallOrder[0],
+      );
+      expect(
+        mockGenerationJobManager.beginProviderExecution.mock.invocationCallOrder[0],
+      ).toBeLessThan(mockInitializeClient.mock.invocationCallOrder[0]);
     });
   });
 
@@ -580,7 +867,11 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
         CONVO_ID,
         ACTION_ID,
-        { preemptCapable: true },
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+        }),
         1000,
       );
       await settled;
@@ -629,6 +920,30 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockGenerationJobManager.approvals.resolve).not.toHaveBeenCalled();
     });
 
+    it('400 when a batched answer omits a question or includes an unknown id', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeAskUserBatchJob());
+      const missing = await post({
+        conversationId: CONVO_ID,
+        actionId: ACTION_ID,
+        agent_id: AGENT_ID,
+        endpoint: 'agents',
+        answers: { environment: 'staging' },
+      });
+      expect(missing.status).toBe(400);
+      expect(missing.body.error).toMatch(/every question/i);
+
+      mockGenerationJobManager.getJob.mockResolvedValue(makeAskUserBatchJob());
+      const extra = await post({
+        conversationId: CONVO_ID,
+        actionId: ACTION_ID,
+        agent_id: AGENT_ID,
+        endpoint: 'agents',
+        answers: { environment: 'staging', window: '7d', region: 'us-east-2' },
+      });
+      expect(extra.status).toBe(400);
+      expect(extra.body.error).toMatch(/unknown question id/i);
+    });
+
     it('400 on an unsupported pending-action type', async () => {
       const job = makeToolApprovalJob();
       job.metadata.pendingAction.payload = { type: 'totally_unknown' };
@@ -649,7 +964,11 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
         CONVO_ID,
         ACTION_ID,
-        { preemptCapable: true },
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+        }),
         1000,
       );
       await settled;
@@ -688,7 +1007,11 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
         CONVO_ID,
         ACTION_ID,
-        { preemptCapable: true },
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+        }),
         1000,
       );
       expect(mockDecrementPendingRequest).toHaveBeenCalledWith(USER_ID);
@@ -709,7 +1032,11 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
         CONVO_ID,
         ACTION_ID,
-        { preemptCapable: true },
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+        }),
         1000,
       );
       expect(mockDecrementPendingRequest).toHaveBeenCalledWith(USER_ID);
@@ -746,7 +1073,11 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
         CONVO_ID,
         ACTION_ID,
-        { preemptCapable: true },
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+        }),
         1000,
       );
       expect(mockCaptureAgentCheckpointGeneration.mock.invocationCallOrder[0]).toBeLessThan(
@@ -838,6 +1169,61 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
 
       const client = await mockInitializeClient.mock.results[0].value.then((r) => r.client);
       expect(client.resumeCompletion).toHaveBeenCalledWith(expect.objectContaining({ runSteps }));
+    });
+
+    it('reapplies retained ask answers before resuming a later tool approval', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(
+        makeToolApprovalJob({
+          metadata: {
+            resolvedAskUserQuestions: [
+              {
+                request: 'Which environment?',
+                output: 'staging',
+                toolCallId: 'ask-1',
+              },
+            ],
+          },
+        }),
+      );
+      mockGenerationJobManager.getResumeState.mockResolvedValue({
+        aggregatedContent: [
+          {
+            type: 'tool_call',
+            tool_call: { id: 'ask-1', name: 'ask_user_question', args: '' },
+          },
+        ],
+        runSteps: [],
+      });
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      const client = await mockInitializeClient.mock.results[0].value.then((r) => r.client);
+      expect(client.resumeCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          seedContent: [
+            expect.objectContaining({
+              tool_call: expect.objectContaining({
+                id: 'ask-1',
+                args: JSON.stringify('Which environment?'),
+                output: 'staging',
+                progress: 1,
+              }),
+            }),
+          ],
+        }),
+      );
+      expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
+        CONVO_ID,
+        ACTION_ID,
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+        }),
+        1000,
+      );
     });
 
     it('restores the paused user message files before reconstruction (execute-code files)', async () => {
@@ -1289,6 +1675,18 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
 
     it('resumes an ask_user_question with the free-form answer', async () => {
       mockGenerationJobManager.getJob.mockResolvedValue(makeAskUserJob());
+      mockGenerationJobManager.getResumeState.mockResolvedValue({
+        aggregatedContent: [
+          {
+            type: 'tool_call',
+            tool_call: { id: 'older-ask', name: 'ask_user_question', args: '' },
+          },
+          {
+            type: 'tool_call',
+            tool_call: { id: 'current-ask', name: 'ask_user_question', args: '' },
+          },
+        ],
+      });
       const res = await post({
         conversationId: CONVO_ID,
         actionId: ACTION_ID,
@@ -1304,12 +1702,102 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(client.resumeCompletion).toHaveBeenCalledWith(
         expect.objectContaining({ resumeValue: { answer: 'call it report.pdf' } }),
       );
+      expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
+        CONVO_ID,
+        ACTION_ID,
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+          resolvedAskUserQuestions: [
+            {
+              request: 'What should I name the file?',
+              output: 'call it report.pdf',
+              contentIndex: 1,
+            },
+          ],
+        }),
+        1000,
+      );
       expect(mockGenerationJobManager.claimTerminalJob).toHaveBeenCalledWith(
         CONVO_ID,
         'complete',
         undefined,
         1000,
         { persistencePending: true },
+      );
+    });
+
+    it('retains an ID-less answer when earlier text exists but the ask part is missing', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeAskUserJob());
+      mockGenerationJobManager.getResumeState.mockResolvedValue({
+        aggregatedContent: [{ type: 'text', text: 'Let me check.' }],
+      });
+
+      const res = await post({
+        conversationId: CONVO_ID,
+        actionId: ACTION_ID,
+        agent_id: AGENT_ID,
+        endpoint: 'agents',
+        answer: 'call it report.pdf',
+      });
+
+      expect(res.status).toBe(200);
+      await settled;
+      await flush();
+      expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
+        CONVO_ID,
+        ACTION_ID,
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+          resolvedAskUserQuestions: [
+            {
+              request: 'What should I name the file?',
+              output: 'call it report.pdf',
+              contentMissing: true,
+            },
+          ],
+        }),
+        1000,
+      );
+    });
+
+    it('resumes a batched ask_user_question with answers keyed by question id', async () => {
+      mockGenerationJobManager.getJob.mockResolvedValue(makeAskUserBatchJob());
+      const answers = { environment: 'staging', window: '7d' };
+      const res = await post({
+        conversationId: CONVO_ID,
+        actionId: ACTION_ID,
+        agent_id: AGENT_ID,
+        endpoint: 'agents',
+        answers,
+      });
+      expect(res.status).toBe(200);
+      await settled;
+      await flush();
+
+      const client = await mockInitializeClient.mock.results[0].value.then((r) => r.client);
+      expect(client.resumeCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({ resumeValue: { answers } }),
+      );
+      expect(mockGenerationJobManager.approvals.resolve).toHaveBeenCalledWith(
+        CONVO_ID,
+        ACTION_ID,
+        expect.objectContaining({
+          preemptCapable: true,
+          providerExecutionId: expect.any(String),
+          providerDrained: true,
+          resolvedAskUserQuestions: [
+            {
+              request: { questions: expect.any(Array) },
+              output: JSON.stringify({ answers }),
+              toolCallId: 'tc1',
+            },
+          ],
+        }),
+        1000,
       );
     });
 

@@ -1,5 +1,7 @@
 import type { Agents, TFile, TPendingSteer } from 'librechat-data-provider';
 import type { StandardGraph } from '@librechat/agents';
+import type { ActivityPhaseSnapshot } from '~/agents/activityPhases/runtime';
+import type { ResolvedAskUserQuestion } from '~/agents/hitl/resume';
 import type { RecoveredSteerPayload } from '../SteerRecovery';
 
 /**
@@ -89,6 +91,8 @@ export interface SerializableJobData {
    * the discovered tool schemas.
    */
   discoveredTools?: string[];
+  /** Bounded collector state for continuing a phase across HITL resume. */
+  activityPhaseSnapshot?: ActivityPhaseSnapshot;
   /**
    * Whether the replica that OWNS this generation can seal mid-stream
    * (`PreemptBoundary` wiring). Recorded at createJob because the steer route
@@ -103,6 +107,13 @@ export interface SerializableJobData {
    * evidence and must be treated like true by replacement handoff. */
   providerAbortReady?: boolean;
 
+  /** Opaque identity of the currently executing provider segment. A HITL resume
+   * replaces it so an earlier paused segment cannot acknowledge the new run. */
+  providerExecutionId?: string;
+  /** False while the identified provider segment can still mutate user data;
+   * true before provider startup and after the owner has fully unwound. */
+  providerDrained?: boolean;
+
   /** Whether the user-message created event has been emitted */
   createdEventEmitted?: boolean;
 
@@ -111,6 +122,31 @@ export interface SerializableJobData {
 
   /** Whether sync has been sent to a client */
   syncSent: boolean;
+
+  /** Trusted schedule identity copied atomically into the generation job. */
+  scheduleId?: string;
+  scheduledFor?: string;
+  scheduleConfigRevision?: number;
+  scheduleManual?: boolean;
+  /** Terminal outcome evidence retained when the schedule row could not be updated. */
+  scheduleOutcome?: 'success' | 'error' | 'interrupted' | 'skipped_balance';
+  scheduleOutcomeError?: string;
+  preserveForScheduleReconcile?: boolean;
+  /**
+   * A terminal transition (currently approval expiry) still owes a durable host
+   * lifecycle hook. Set atomically with that transition and cleared only once the host
+   * adapter acknowledges success, so the job is retained (not reaped) and enumerable by
+   * cleanup across restarts and replicas until the hook completes. Generic: a host with
+   * no action clears it immediately on its no-op success, so nothing accumulates.
+   */
+  terminalHostActionPending?: boolean;
+  /**
+   * Last time a cleanup pass enumerated this pending host action for retry. Retention is
+   * measured from this rather than `completedAt`, so evidence survives as long as some
+   * replica is still actively retrying the hook (e.g. Mongo unreachable for days), while a
+   * deployment that stops retrying entirely still lets it age out instead of leaking.
+   */
+  terminalHostActionRefreshedAt?: number;
 
   /** Serialized final event for replay */
   finalEvent?: string;
@@ -160,6 +196,12 @@ export interface SerializableJobData {
    */
   pendingAction?: Agents.PendingAction;
 
+  /** Durable bridge between the resume claim and content reconstruction. An
+   * abort can win while the resume controller is still rebuilding the client;
+   * retaining the accepted answer here lets that terminal owner stamp it onto
+   * the persisted partial response instead of losing it with the request. */
+  resolvedAskUserQuestions?: ResolvedAskUserQuestion[];
+
   /**
    * Flat mirror of `pendingAction.actionId`, kept as a top-level field so an
    * atomic status transition can guard on it (a nested JSON field can't be
@@ -191,7 +233,12 @@ export interface SerializableJobData {
  * reconstruct it without exposing it through normal job serialization. */
 export type ReplacedGeneration = Pick<
   SerializableJobData,
-  'createdAt' | 'status' | 'conversationId' | 'providerAbortReady'
+  | 'createdAt'
+  | 'status'
+  | 'conversationId'
+  | 'providerAbortReady'
+  | 'providerExecutionId'
+  | 'providerDrained'
 >;
 
 /** Latest generation epoch checked by a conditional create. A retained epoch
@@ -255,10 +302,21 @@ export type JobMetadataPatch = Partial<
     | 'model'
     | 'agent_id'
     | 'isTemporary'
+    | 'scheduleId'
+    | 'scheduledFor'
+    | 'scheduleConfigRevision'
+    | 'scheduleManual'
+    | 'scheduleOutcome'
+    | 'scheduleOutcomeError'
+    | 'preserveForScheduleReconcile'
     | 'promptTokens'
     | 'discoveredTools'
+    | 'activityPhaseSnapshot'
     | 'preemptCapable'
+    | 'providerExecutionId'
+    | 'providerDrained'
     | 'generationProtocolVersion'
+    | 'resolvedAskUserQuestions'
   >
 >;
 
@@ -501,6 +559,8 @@ export interface UsageMetadata {
   /** Agent that produced this usage (graph agent id / subagent agent id). Lets
    *  multi-endpoint graphs price each call with its own endpoint token config. */
   agentId?: string;
+  /** Authoritative display cost attached by the host before durable child persistence. */
+  cost?: number;
   /**
    * OpenAI-style cache token details.
    * Present for OpenAI models (GPT-4, o1, etc.)
@@ -633,13 +693,24 @@ export interface IJobStore {
   deleteJob(streamId: string, expectedCreatedAt?: number): Promise<boolean>;
   hasJob(streamId: string): Promise<boolean>;
   getRunningJobs(): Promise<SerializableJobData[]>;
+  /** Optional durable paused-job enumeration. Built-in stores implement it so
+   * the manager can own approval expiry even after the original runtime died. */
+  getRequiresActionJobs?(): Promise<SerializableJobData[]>;
+  /** Optional durable enumeration of terminal jobs that still owe a host lifecycle
+   * hook (see `terminalHostActionPending`). Built-in stores implement it so cleanup can
+   * retry the host adapter after a restart / on another replica, even though the job is
+   * no longer in the requires_action index. */
+  getTerminalHostActionJobs?(): Promise<SerializableJobData[]>;
+  /** Clears the pending-host-action marker once the adapter acknowledges success.
+   * Identity-fenced on `expectedCreatedAt` so a replacement generation at the same
+   * streamId is never cleared through its predecessor. */
+  clearTerminalHostAction?(streamId: string, expectedCreatedAt?: number): Promise<void>;
   cleanup(): Promise<number>;
   recordActivity?(streamId: string, expectedCreatedAt?: number): void;
   getJobCount(): Promise<number>;
   getJobCountByStatus(status: JobStatus): Promise<number>;
   destroy(): Promise<void>;
   getActiveJobIdsByUser(userId: string, tenantId?: string): Promise<string[]>;
-
   setGraph(streamId: string, graph: StandardGraph, expectedCreatedAt?: number): void;
   setContentParts(
     streamId: string,
@@ -714,6 +785,7 @@ export interface IJobStoreV2 extends IJobStore {
     recoveredSteerPayload?: RecoveredSteerPayload,
     creationAttemptId?: string,
     expectedPredecessorCreatedAt?: number,
+    rejectActivePredecessor?: boolean,
   ): Promise<CreatedJobData>;
 
   /** Remove transaction-time predecessor receipts after their handoff was
@@ -737,6 +809,23 @@ export interface IJobStoreV2 extends IJobStore {
     updates: Partial<SerializableJobData>,
     expectedCreatedAt?: number,
   ): Promise<void>;
+
+  /** Atomically marks only the exact provider segment as fully unwound. */
+  markProviderExecutionDrained(
+    streamId: string,
+    expectedCreatedAt: number,
+    providerExecutionId: string,
+  ): Promise<boolean>;
+
+  /** Activates the provider only while its exact generation is still running. */
+  beginProviderExecution(
+    streamId: string,
+    expectedCreatedAt: number,
+    providerExecutionId: string,
+  ): Promise<boolean>;
+
+  /** Includes terminal jobs whose provider still owns user-data writes. */
+  getCleanupBlockingJobIdsByUser(userId: string, tenantId?: string): Promise<string[]>;
 
   /** Atomically replaces an abort persistence-pending marker with the one
    * terminal payload that late subscribers may consume. Exactly one of the
@@ -856,6 +945,9 @@ export interface IJobStoreV2 extends IJobStore {
 
   /** Get all running jobs (for cleanup) */
   getRunningJobs(): Promise<SerializableJobData[]>;
+
+  /** Get durable paused jobs so approval expiry is not process-runtime-dependent. */
+  getRequiresActionJobs?(): Promise<SerializableJobData[]>;
 
   /** Cleanup expired jobs */
   cleanup(): Promise<number>;
@@ -1260,6 +1352,22 @@ export interface IEventTransport {
   /** Awaitable, generation-correlated abort handoff. Resolves true only after
    * the replica owning that generation processes the abort. */
   emitAbortConfirmed?(streamId: string, generationId: number): Promise<boolean>;
+
+  /** Persist proof that this process synchronously stopped the exact generation.
+   * A delayed replacement can use the proof after the owner's listeners retire. */
+  recordAbortAcknowledgement?(streamId: string, generationId: number): Promise<boolean>;
+
+  /** Persist/read exact proof that a provider segment can no longer mutate user data. */
+  recordProviderDrain?(
+    streamId: string,
+    generationId: number,
+    providerExecutionId: string,
+  ): Promise<boolean>;
+  hasProviderDrain?(
+    streamId: string,
+    generationId: number,
+    providerExecutionId: string,
+  ): Promise<boolean>;
 
   /** Publish a predecessor DONE only while the current job's opaque creation
    * attempt still carries that predecessor in its durable receipt chain. */

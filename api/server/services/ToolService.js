@@ -33,6 +33,9 @@ const {
   buildServerNameAliases,
   findShadowedServerNames,
   isNormalizationSensitiveName,
+  AGENT_EXPECTED_MCP_TOOLS_UNAVAILABLE,
+  isFatalAgentInitializationError,
+  resolveCodeExecutionContext,
 } = require('@librechat/api');
 const {
   Time,
@@ -556,16 +559,15 @@ const isExpectedMCPTool = (toolName) =>
   toolName?.includes(Constants.mcp_delimiter) &&
   !toolName.startsWith(mcpServerPinPrefix) &&
   !isActionTool(toolName);
-const expectedMCPToolsUnavailableCode = 'AGENT_EXPECTED_MCP_TOOLS_UNAVAILABLE';
 const isExpectedMCPToolsUnavailableError = (error) =>
-  error?.code === expectedMCPToolsUnavailableCode;
+  error?.code === AGENT_EXPECTED_MCP_TOOLS_UNAVAILABLE;
 const createExpectedMCPToolsUnavailableError = (agentName, cause) => {
   const subject = agentName ? `Agent "${agentName}"` : 'The agent';
   const error = new Error(
     `${subject} is configured to use MCP tools, but none are available. Verify that the MCP server is connected and this agent can access its selected tools, then try again.`,
   );
   error.name = 'AgentToolInitializationError';
-  error.code = expectedMCPToolsUnavailableCode;
+  error.code = AGENT_EXPECTED_MCP_TOOLS_UNAVAILABLE;
   error.status = 503;
   error.statusCode = 503;
   if (cause != null) {
@@ -609,6 +611,7 @@ async function loadToolDefinitionsWrapper({
   streamId = null,
   jobCreatedAt,
   tool_resources,
+  codeExecutionContext,
   accessibleMcpServerNames,
 }) {
   if (!agent.tools || agent.tools.length === 0) {
@@ -634,6 +637,18 @@ async function loadToolDefinitionsWrapper({
   const codeExecutionEnabled =
     agent.tools?.includes(Tools.execute_code) === true &&
     enabledCapabilities.has(AgentCapabilities.execute_code);
+  const resolvedCodeExecutionContext =
+    codeExecutionContext ??
+    resolveCodeExecutionContext({
+      statefulSessions:
+        codeExecutionEnabled &&
+        enabledCapabilities.has(AgentCapabilities.stateful_code_sessions) &&
+        agent.stateful_code_sessions === true,
+      environment: agent.stateful_code_environment,
+      userId: req.user.id,
+      agentId: agent.id,
+      conversationId: req.body?.conversationId,
+    });
   const hasMCPTools = agent.tools?.some((tool) => tool?.includes(Constants.mcp_delimiter));
   const mcpPermissionContext = createMCPPermissionContext(req);
   const canUseMCP = hasMCPTools ? await mcpPermissionContext.canUseServers(req.user) : true;
@@ -1100,7 +1115,7 @@ async function loadToolDefinitionsWrapper({
           connectionTimeout: Time.TWO_MINUTES,
         });
 
-        if (result?.availableTools) {
+        if (result?.availableTools && Object.keys(result.availableTools).length > 0) {
           rememberMCPAvailableTools(serverName, result.availableTools);
           logger.info(`[Tool Definitions] OAuth completed for ${serverName}, tools available`);
           return { serverName, success: true };
@@ -1183,6 +1198,8 @@ async function loadToolDefinitionsWrapper({
         tool_resources,
         agentId: agent.id,
         agentResourceType,
+        codeApiBaseUrl: resolvedCodeExecutionContext.baseUrl,
+        executionProfile: resolvedCodeExecutionContext.executionProfile,
       });
       if (toolContext) {
         dynamicToolContextMap[Tools.execute_code] = toolContext;
@@ -1191,6 +1208,9 @@ async function loadToolDefinitionsWrapper({
         primedCodeFiles = files;
       }
     } catch (error) {
+      if (isFatalAgentInitializationError(error)) {
+        throw error;
+      }
       logger.error('[loadToolDefinitionsWrapper] Error priming code files:', error);
     }
   }
@@ -1280,6 +1300,7 @@ async function loadAgentTools({
   streamId = null,
   jobCreatedAt,
   definitionsOnly = true,
+  codeExecutionContext: providedCodeExecutionContext,
   accessibleMcpServerNames,
 }) {
   if (definitionsOnly) {
@@ -1292,10 +1313,11 @@ async function loadAgentTools({
         streamId,
         jobCreatedAt,
         tool_resources,
+        codeExecutionContext: providedCodeExecutionContext,
         accessibleMcpServerNames,
       });
     } catch (error) {
-      if (isExpectedMCPToolsUnavailableError(error) || !agent.tools?.some(isExpectedMCPTool)) {
+      if (isFatalAgentInitializationError(error) || !agent.tools?.some(isExpectedMCPTool)) {
         throw error;
       }
       throw createExpectedMCPToolsUnavailableError(agent.name, error);
@@ -1390,6 +1412,23 @@ async function loadAgentTools({
     });
   }
 
+  const codeExecutionEnabled =
+    agent.tools?.includes(Tools.execute_code) === true &&
+    enabledCapabilities.has(AgentCapabilities.execute_code);
+  const statefulCodeSessions =
+    codeExecutionEnabled &&
+    enabledCapabilities.has(AgentCapabilities.stateful_code_sessions) &&
+    agent.stateful_code_sessions === true;
+  const codeExecutionContext =
+    providedCodeExecutionContext ??
+    resolveCodeExecutionContext({
+      statefulSessions: statefulCodeSessions,
+      environment: agent.stateful_code_environment,
+      userId: req.user.id,
+      agentId: agent.id,
+      conversationId: req.body?.conversationId,
+    });
+
   const { loadedTools, toolContextMap, dynamicToolContextMap, primedCodeFiles } = await loadTools({
     agent,
     signal,
@@ -1410,6 +1449,7 @@ async function loadAgentTools({
       returnMetadata: true,
       mcpPermissionContext,
       requestScopedConnections: getMCPRequestContext(req, res),
+      codeExecutionContext,
       [Tools.web_search]: webSearchCallbacks,
     },
     webSearch: appConfig.webSearch,
@@ -1420,9 +1460,6 @@ async function loadAgentTools({
   /** Build tool registry from MCP tools and create PTC/tool search tools if configured */
   const deferredToolsEnabled = checkCapability(AgentCapabilities.deferred_tools);
   const programmaticToolsEnabled = enabledCapabilities.has(AgentCapabilities.programmatic_tools);
-  const codeExecutionEnabled =
-    agent.tools?.includes(Tools.execute_code) === true &&
-    enabledCapabilities.has(AgentCapabilities.execute_code);
   const { toolRegistry, toolDefinitions, additionalTools, hasDeferredTools } =
     await buildToolClassification({
       loadedTools,
@@ -1434,6 +1471,7 @@ async function loadAgentTools({
       programmaticToolsEnabled,
       codeExecutionEnabled,
       authHeaders: () => getCodeApiAuthHeaders(req),
+      codeExecutionContext,
     });
 
   const agentTools = [];
@@ -1668,6 +1706,7 @@ async function loadAgentTools({
  * @param {Object} [params.tool_resources] - Tool resources
  * @param {string|null} [params.streamId] - Stream ID for web search callbacks
  * @param {number} [params.jobCreatedAt] - The generation epoch that owns emitted tool events
+ * @param {string} [params.conversationId] - Resolved conversation identity for this request
  * @param {boolean} [params.actionsEnabled] - Whether the actions capability is enabled
  * @param {readonly string[]} [params.accessibleMcpServerNames] - COMPLETE accessible-server audit resolved at initialization
  * @returns {Promise<{ loadedTools: Array, configurable: Object }>}
@@ -1688,6 +1727,7 @@ async function loadToolsForExecution({
   tool_resources,
   streamId = null,
   jobCreatedAt,
+  conversationId,
   actionsEnabled,
   accessibleMcpServerNames,
 }) {
@@ -1717,9 +1757,19 @@ async function loadToolsForExecution({
   const isBashToolRequested = toolNames.includes(AgentConstants.BASH_TOOL);
   const isLegacyExecuteCodeRequested = toolNames.includes(Tools.execute_code);
   const isCodeExecutionToolRequested = isBashToolRequested || isLegacyExecuteCodeRequested;
+  const isSkillToolRequested = toolNames.includes(AgentConstants.SKILL_TOOL);
+  const isSandboxFileToolRequested = toolNames.some((name) =>
+    [AgentConstants.READ_FILE, AgentConstants.CREATE_FILE, AgentConstants.EDIT_FILE].includes(name),
+  );
 
   let enabledCapabilities;
-  if (actionsEnabled === undefined || isPTCRequested || isCodeExecutionToolRequested) {
+  if (
+    actionsEnabled === undefined ||
+    isPTCRequested ||
+    isCodeExecutionToolRequested ||
+    isSkillToolRequested ||
+    isSandboxFileToolRequested
+  ) {
     enabledCapabilities = await resolveAgentCapabilities(req, appConfig, agent?.id);
   }
   if (actionsEnabled === undefined) {
@@ -1729,17 +1779,21 @@ async function loadToolsForExecution({
     enabledCapabilities?.has(AgentCapabilities.execute_code) === true &&
     agent?.tools?.includes(Tools.execute_code) === true;
 
-  /**
-   * Opt bash_tool into the hedged stateful-session description. Gated on code
-   * execution being enabled AND the admin `stateful_code_sessions` capability
-   * AND the agent's own builder opt-in; off by default. Sets prompt text only
-   * (the wire hint is set at run config). PTC keeps its stateless prompt in
-   * v1. Older @librechat/agents ignore the param.
-   */
+  /** Resolve the trusted endpoint/profile from the actually executing agent.
+   * This stays per-agent across handoffs and subagents; no graph-global stateful
+   * flag or model-supplied value is consulted. */
   const statefulCodeSessions =
     codeExecutionEnabled &&
     enabledCapabilities?.has(AgentCapabilities.stateful_code_sessions) === true &&
     agent?.stateful_code_sessions === true;
+  const codeExecutionContext = resolveCodeExecutionContext({
+    statefulSessions: statefulCodeSessions,
+    environment: agent?.stateful_code_environment,
+    userId: req.user.id,
+    agentId: agent?.id,
+    conversationId: conversationId ?? req.body?.conversationId,
+  });
+  configurable.codeExecutionContext = codeExecutionContext;
 
   const isPTC =
     isPTCRequested &&
@@ -1769,6 +1823,9 @@ async function loadToolsForExecution({
       for (const name of ptcToolNames) {
         const ptcTool = createBashProgrammaticToolCallingTool({
           authHeaders: () => getCodeApiAuthHeaders(req),
+          baseUrl: codeExecutionContext.baseUrl,
+          executionProfile: codeExecutionContext.executionProfile,
+          runtimeSessionHint: codeExecutionContext.runtimeSessionHint,
         });
         ptcTool.name = name;
         allLoadedTools.push(ptcTool);
@@ -1794,7 +1851,7 @@ async function loadToolsForExecution({
         user_id: req.user.id,
         user_email: req.user.email || '',
         authHeaders: () => getCodeApiAuthHeaders(req),
-        statefulSessions: statefulCodeSessions,
+        ...codeExecutionContext,
       });
       allLoadedTools.push(bashTool);
     } catch (error) {
@@ -2068,6 +2125,7 @@ module.exports = {
   loadToolsForExecution,
   processRequiredActions,
   resolveAgentCapabilities,
+  isFatalAgentInitializationError,
   isExpectedMCPToolsUnavailableError,
   /** Re-exported for controllers that already depend on (and mock) this
    *  module, avoiding a fresh heavy `services/MCP` require chain there. */

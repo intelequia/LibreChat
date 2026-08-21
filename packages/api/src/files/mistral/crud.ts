@@ -21,6 +21,7 @@ import type {
 } from '~/types';
 import { decryptConfigSecret, isEncryptedSecretPayload } from '~/admin/secrets';
 import { logAxiosError, createAxiosInstance } from '~/utils/axios';
+import { applySSRFSafeAgentIfDirect } from '~/auth/agent';
 import { applyAxiosProxyConfig } from '~/utils/proxy';
 import { readFileAsBuffer } from '~/utils/files';
 import { loadServiceKey } from '~/utils/key';
@@ -65,17 +66,17 @@ export async function uploadDocumentToMistral({
   filePath,
   baseURL = DEFAULT_MISTRAL_BASE_URL,
   fileName = '',
+  allowedAddresses,
 }: {
   apiKey: string;
   filePath: string;
   baseURL?: string;
   fileName?: string;
+  allowedAddresses?: string[] | null;
 }): Promise<MistralFileUploadResponse> {
   const form = new FormData();
   form.append('purpose', 'ocr');
   const actualFileName = fileName || path.basename(filePath);
-  const fileStream = fs.createReadStream(filePath);
-  form.append('file', fileStream, { filename: actualFileName });
 
   const fetchOptions: Record<string, unknown> = {
     method: 'POST',
@@ -87,17 +88,16 @@ export async function uploadDocumentToMistral({
   };
 
   applyAxiosProxyConfig(config, `${baseURL}/files`);
+  applySSRFSafeAgentIfDirect(config, `${baseURL}/files`, allowedAddresses);
+
+  const fileStream = fs.createReadStream(filePath);
+  form.append('file', fileStream, { filename: actualFileName });
 
   try {
-    const response = await fetch(`${baseURL}/files`, fetchOptions);
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Upload failed with status ${response.status}: ${errorText}`);
-    }
-    return (await response.json()) as MistralFileUploadResponse;
-  } catch (error) {
-    logger.error('Error uploading document to Mistral:', error);
-    throw error;
+    const response = await axios.post(`${baseURL}/files`, form, config);
+    return response.data;
+  } finally {
+    fileStream.destroy();
   }
 }
 
@@ -106,11 +106,13 @@ export async function getSignedUrl({
   fileId,
   expiry = 24,
   baseURL = DEFAULT_MISTRAL_BASE_URL,
+  allowedAddresses,
 }: {
   apiKey: string;
   fileId: string;
   expiry?: number;
   baseURL?: string;
+  allowedAddresses?: string[] | null;
 }): Promise<MistralSignedUrlResponse> {
   const fetchOptions: Record<string, unknown> = {
     method: 'GET',
@@ -119,19 +121,17 @@ export async function getSignedUrl({
     },
   };
 
-  applyAxiosProxyConfig(config, `${baseURL}/files/${fileId}/url?expiry=${expiry}`);
+const signedUrlTarget = `${baseURL}/files/${fileId}/url?expiry=${expiry}`;
+  applyAxiosProxyConfig(config, signedUrlTarget);
+  applySSRFSafeAgentIfDirect(config, signedUrlTarget, allowedAddresses);
 
-  try {
-    const response = await fetch(`${baseURL}/files/${fileId}/url?expiry=${expiry}`, fetchOptions);
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Get signed URL failed with status ${response.status}: ${errorText}`);
-    }
-    return (await response.json()) as MistralSignedUrlResponse;
-  } catch (error) {
-    logger.error('Error fetching signed URL:', error);
-    throw error;
-  }
+  return axios
+    .get(`${baseURL}/files/${fileId}/url?expiry=${expiry}`, config)
+    .then((res) => res.data)
+    .catch((error) => {
+      logger.error('Error fetching signed URL:', error.message);
+      throw error;
+    });
 }
 
 /**
@@ -149,12 +149,14 @@ export async function performOCR({
   model = DEFAULT_MISTRAL_MODEL,
   baseURL = DEFAULT_MISTRAL_BASE_URL,
   documentType = 'document_url',
+  allowedAddresses,
 }: {
   url: string;
   apiKey: string;
   model?: string;
   baseURL?: string;
   documentType?: 'document_url' | 'image_url';
+  allowedAddresses?: string[] | null;
 }): Promise<OCRResult> {
   const documentKey = documentType === 'image_url' ? 'image_url' : 'document_url';
 
@@ -168,6 +170,7 @@ export async function performOCR({
 
   const ocrURL = baseURL.endsWith('/ocr') ? baseURL : `${baseURL}/ocr`;
   applyAxiosProxyConfig(config, ocrURL);
+  applySSRFSafeAgentIfDirect(config, ocrURL, allowedAddresses);
 
   return axios
     .post(
@@ -202,10 +205,12 @@ export async function deleteMistralFile({
   fileId,
   apiKey,
   baseURL = DEFAULT_MISTRAL_BASE_URL,
+  allowedAddresses,
 }: {
   fileId: string;
   apiKey: string;
   baseURL?: string;
+  allowedAddresses?: string[] | null;
 }): Promise<void> {
   const fetchOptions: Record<string, unknown> = {
     method: 'DELETE',
@@ -215,6 +220,7 @@ export async function deleteMistralFile({
   };
 
   applyAxiosProxyConfig(config, `${baseURL}/files/${fileId}`);
+  applySSRFSafeAgentIfDirect(config, `${baseURL}/files/${fileId}`, allowedAddresses);
 
   try {
     const response = await fetch(`${baseURL}/files/${fileId}`, fetchOptions);
@@ -400,6 +406,8 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
   let apiKey: string | undefined;
   let baseURL: string | undefined;
 
+  const allowedAddresses = context.req.config?.ocr?.allowedAddresses;
+
   try {
     const authConfig = await loadAuthConfig(context);
     apiKey = authConfig.apiKey;
@@ -411,6 +419,7 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
       fileName: context.file.originalname,
       apiKey,
       baseURL,
+      allowedAddresses,
     });
 
     mistralFileId = mistralFile.id;
@@ -419,6 +428,7 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
       apiKey,
       baseURL,
       fileId: mistralFile.id,
+      allowedAddresses,
     });
 
     const documentType = getDocumentType(context.file);
@@ -428,6 +438,7 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
       baseURL,
       apiKey,
       model,
+      allowedAddresses,
     });
 
     if (!ocrResult || !ocrResult.pages || ocrResult.pages.length === 0) {
@@ -438,7 +449,7 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
     const { text, images } = processOCRResult(ocrResult);
 
     if (mistralFileId && apiKey && baseURL) {
-      await deleteMistralFile({ fileId: mistralFileId, apiKey, baseURL });
+      await deleteMistralFile({ fileId: mistralFileId, apiKey, baseURL, allowedAddresses });
     }
 
     return {
@@ -450,7 +461,7 @@ export const uploadMistralOCR = async (context: OCRContext): Promise<MistralOCRU
     };
   } catch (error) {
     if (mistralFileId && apiKey && baseURL) {
-      await deleteMistralFile({ fileId: mistralFileId, apiKey, baseURL });
+      await deleteMistralFile({ fileId: mistralFileId, apiKey, baseURL, allowedAddresses });
     }
     throw createOCRError(error, 'Error uploading document to Mistral OCR API:');
   }
@@ -475,6 +486,7 @@ export const uploadAzureMistralOCR = async (
   try {
     const { apiKey, baseURL } = await loadAuthConfig(context);
     const model = getModelConfig(context.req.config?.ocr);
+    const allowedAddresses = context.req.config?.ocr?.allowedAddresses;
 
     const { content: buffer } = await readFileAsBuffer(context.file.path, {
       fileSize: context.file.size,
@@ -490,6 +502,7 @@ export const uploadAzureMistralOCR = async (
       model,
       url: `${base64Prefix}${base64}`,
       documentType,
+      allowedAddresses,
     });
 
     if (!ocrResult || !ocrResult.pages || ocrResult.pages.length === 0) {

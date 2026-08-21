@@ -2,6 +2,9 @@ const mockCreateRun = jest.fn();
 const mockCaptureAgentCheckpointGeneration = jest.fn();
 const mockDeleteAgentCheckpoint = jest.fn();
 const mockIsHITLEnabled = jest.fn().mockReturnValue(false);
+const mockRecordCollectedUsage = jest.fn();
+const mockDetachedUsageRecorder = jest.fn();
+const mockCreateDetachedSubagentUsageRecorder = jest.fn(() => mockDetachedUsageRecorder);
 const mockBuildAgentScopedContext = jest.fn((...args) =>
   jest.requireActual('@librechat/api').buildAgentScopedContext(...args),
 );
@@ -15,6 +18,7 @@ const mockFormatAgentMessages = jest.fn(() => ({
 const { Providers } = require('@librechat/agents');
 const { Constants, ContentTypes, EModelEndpoint } = require('librechat-data-provider');
 const { GenerationJobManager, createStreamServices } = require('@librechat/api');
+const BaseClient = require('~/app/clients/BaseClient');
 const AgentClient = require('./client');
 const { resolveConfigServers } = require('~/server/services/MCP');
 
@@ -43,6 +47,8 @@ jest.mock('@librechat/api', () => ({
   countFormattedMessageTokens: jest.fn(() => 42),
   countTokens: jest.fn((text) => Math.ceil(String(text ?? '').length / 4)),
   createTokenCounter: jest.fn(() => jest.fn(() => 0)),
+  createDetachedSubagentUsageRecorder: (...args) =>
+    mockCreateDetachedSubagentUsageRecorder(...args),
   captureAgentCheckpointGeneration: (...args) => mockCaptureAgentCheckpointGeneration(...args),
   deleteAgentCheckpoint: (...args) => mockDeleteAgentCheckpoint(...args),
   decrementPendingRequest: jest.fn(async () => {}),
@@ -57,7 +63,210 @@ jest.mock('@librechat/api', () => ({
   }),
   loadAgent: jest.fn(),
   maybePrewarmCodeSandbox: jest.fn(),
+  recordCollectedUsage: (...args) => mockRecordCollectedUsage(...args),
 }));
+
+describe('AgentClient - detached subagent usage', () => {
+  it('records each detached call from an immutable snapshot after parent disposal', async () => {
+    mockRecordCollectedUsage.mockClear();
+    mockCreateDetachedSubagentUsageRecorder.mockClear();
+    mockDetachedUsageRecorder.mockClear();
+    const client = Object.create(AgentClient.prototype);
+    const childTokenConfig = { input: 1, output: 2 };
+    client.user = 'user-123';
+    client.conversationId = 'conversation-123';
+    client.responseMessageId = 'response-123';
+    client.model = 'primary-model';
+    client.options = {
+      req: { user: { id: 'request-user' } },
+      agent: { model_parameters: { model: 'fallback-model' } },
+      endpointTokenConfig: { input: 3, output: 4 },
+      endpointTokenConfigByAgentId: new Map([['agent-child', childTokenConfig]]),
+    };
+    const balance = { enabled: true };
+    const transactions = { enabled: true };
+    const usage = {
+      usage_type: 'subagent',
+      input_tokens: 100,
+      output_tokens: 20,
+      agentId: 'agent-child',
+    };
+
+    const recordUsage = client.buildDetachedSubagentUsageRecorder(balance, transactions);
+    client.user = null;
+    client.conversationId = null;
+    client.responseMessageId = null;
+    client.model = null;
+    client.options = null;
+
+    await recordUsage(usage);
+
+    expect(mockCreateDetachedSubagentUsageRecorder).toHaveBeenCalledTimes(1);
+    const [deps, billing] = mockCreateDetachedSubagentUsageRecorder.mock.calls[0];
+    expect(deps).toEqual({
+      spendTokens: expect.any(Function),
+      spendStructuredTokens: expect.any(Function),
+      pricing: {
+        getMultiplier: expect.any(Function),
+        getCacheMultiplier: expect.any(Function),
+      },
+      bulkWriteOps: {
+        insertMany: expect.any(Function),
+        updateBalance: expect.any(Function),
+      },
+      isPrincipalActive: expect.any(Function),
+    });
+    expect(billing).toEqual({
+      user: 'user-123',
+      conversationId: 'conversation-123',
+      model: 'primary-model',
+      messageId: 'response-123',
+      balance,
+      transactions,
+      endpointTokenConfig: { input: 3, output: 4 },
+      endpointTokenConfigByAgentId: expect.any(Map),
+    });
+    expect(billing.endpointTokenConfigByAgentId.get('agent-child')).toBe(childTokenConfig);
+    expect(mockDetachedUsageRecorder).toHaveBeenCalledWith(usage);
+  });
+});
+
+describe('AgentClient - subagent parent persistence', () => {
+  it('registers the parent user-message write before detached child dispatch can proceed', async () => {
+    const userMessagePromise = Promise.resolve({
+      message: { messageId: 'parent-user-message', conversationId: 'parent-conversation' },
+    });
+    const registerParentPersistence = jest.fn();
+    const upstreamGetReqData = jest.fn();
+    const baseSend = jest
+      .spyOn(BaseClient.prototype, 'sendMessage')
+      .mockImplementation(async (_message, opts) => {
+        opts.getReqData({ userMessagePromise });
+        return { ok: true };
+      });
+    const client = Object.create(AgentClient.prototype);
+    client.options = {
+      subagentTasks: {
+        scopeId: 'trusted-parent-scope',
+        store: { registerParentPersistence },
+      },
+    };
+
+    await client.sendMessage('Start the parent turn.', { getReqData: upstreamGetReqData });
+
+    expect(upstreamGetReqData).toHaveBeenCalledWith({ userMessagePromise });
+    expect(registerParentPersistence).toHaveBeenCalledWith(
+      'trusted-parent-scope',
+      userMessagePromise,
+    );
+    baseSend.mockRestore();
+  });
+});
+
+describe('AgentClient - label settlement', () => {
+  it('drains a trailing fill enqueued by an in-flight reasoning revision', async () => {
+    const client = Object.create(AgentClient.prototype);
+    const first = deferred();
+    const trailing = deferred();
+    const scope = { closed: false, abort: new AbortController(), detach: jest.fn() };
+    client.activityLabelScopes = [scope];
+    client.pendingActivityLabelFills = [
+      first.promise.finally(() => {
+        client.pendingActivityLabelFills.push(trailing.promise);
+      }),
+    ];
+
+    let settled = false;
+    const settlement = client.settleActivityLabels(1_000).then(() => {
+      settled = true;
+    });
+    first.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(settled).toBe(false);
+    trailing.resolve();
+    await settlement;
+
+    expect(scope.closed).toBe(false);
+    expect(scope.detach).toHaveBeenCalledTimes(1);
+    expect(client.pendingActivityLabelFills).toEqual([]);
+  });
+});
+
+describe('AgentClient - reasoning label accounting', () => {
+  function createReasoningLabelClient(generateReasoningLabel) {
+    const client = Object.create(AgentClient.prototype);
+    client.options = { req: { user: { id: 'user-123' } } };
+    client.conversationId = 'conversation-123';
+    client.parentMessageId = 'parent-123';
+    client.responseMessageId = 'response-123';
+    client.run = { generateReasoningLabel };
+    client.resolveReasoningLabelLLM = jest.fn(async () => ({
+      provider: Providers.OPENAI,
+      clientOptions: { model: 'reasoning-label-model' },
+      endpointTokenConfig: { input: 1, output: 2 },
+      sameEndpoint: false,
+    }));
+    client.recordActivityLabelUsage = jest.fn(async () => undefined);
+    return client;
+  }
+
+  it('estimates output tokens from the raw model completion before title normalization', async () => {
+    const rawCompletion = 'Inspecting the cache race\nThis extra explanation also consumed tokens.';
+    const client = createReasoningLabelClient(
+      jest.fn(async ({ chainOptions }) => {
+        const callback = chainOptions.callbacks[0];
+        callback.handleChatModelStart(undefined, [[{ content: 'captured SDK prompt' }]]);
+        callback.handleLLMEnd({
+          generations: [
+            [
+              {
+                text: rawCompletion,
+                message: { content: [{ type: 'text', text: rawCompletion }] },
+              },
+            ],
+          ],
+        });
+        return { label: 'Inspecting the cache race' };
+      }),
+    );
+
+    const generated = await client.generateReasoningLabelViaRun({
+      visibleReasoning: 'x'.repeat(500),
+      reasoningStepId: 'reasoning-1',
+      revision: 1,
+      status: 'streaming',
+      signal: new AbortController().signal,
+    });
+    await generated.collectUsage(generated.label);
+
+    const usageCall = client.recordActivityLabelUsage.mock.calls[0];
+    expect(usageCall[6]()).toEqual({
+      promptText: 'captured SDK prompt',
+      completionText: rawCompletion,
+    });
+    expect(usageCall[7]).toBe('reasoning-label');
+  });
+
+  it('falls back to the returned label when no raw completion callback is available', async () => {
+    const client = createReasoningLabelClient(
+      jest.fn(async () => ({ label: 'Inspecting the cache race' })),
+    );
+
+    const generated = await client.generateReasoningLabelViaRun({
+      visibleReasoning: 'x'.repeat(500),
+      reasoningStepId: 'reasoning-1',
+      revision: 1,
+      status: 'streaming',
+      signal: new AbortController().signal,
+    });
+    await generated.collectUsage(generated.label);
+
+    expect(client.recordActivityLabelUsage.mock.calls[0][6]()).toMatchObject({
+      completionText: 'Inspecting the cache race',
+    });
+  });
+});
 
 describe('AgentClient - interrupt discovery persistence', () => {
   beforeEach(async () => {
@@ -125,9 +334,16 @@ jest.mock('~/server/services/MCP', () => ({
 }));
 
 jest.mock('~/models', () => ({
+  bulkInsertTransactions: jest.fn(),
+  getCacheMultiplier: jest.fn(),
   getAgent: jest.fn(),
+  getMultiplier: jest.fn(),
   getRoleByName: jest.fn(),
   getFormattedMemories: jest.fn(),
+  isAgentTriggerPrincipalActive: jest.fn().mockResolvedValue(true),
+  spendStructuredTokens: jest.fn(),
+  spendTokens: jest.fn(),
+  updateBalance: jest.fn(),
 }));
 
 // Mock getMCPManager
@@ -142,7 +358,7 @@ describe('AgentClient - applyHideSequentialOutputsFilter', () => {
   const textPart = (text) => ({ type: ContentTypes.TEXT, text });
   const toolCallPart = (id) => ({ type: ContentTypes.TOOL_CALL, tool_call: { id } });
 
-  it('keeps only the last part + tool_call parts when hide_sequential_outputs is on', () => {
+  it('keeps only the last non-label part + tool_call parts when filtering is on', () => {
     const ctx = {
       options: { agent: { hide_sequential_outputs: true } },
       contentParts: [
@@ -156,11 +372,199 @@ describe('AgentClient - applyHideSequentialOutputsFilter', () => {
     expect(ctx.contentParts).toEqual([toolCallPart('tc1'), textPart('final')]);
   });
 
+  it('keeps the final text when a parent phase marker is appended after it', () => {
+    const tool = toolCallPart('tc1');
+    const final = textPart('final');
+    const phase = {
+      type: ContentTypes.ACTIVITY_LABEL,
+      activity_label: 'Completed the investigation',
+      activity_label_type: 'phase',
+      activity_start_index: 0,
+      activity_end_index: 2,
+    };
+    const ctx = {
+      options: { agent: { hide_sequential_outputs: true } },
+      contentParts: [textPart('intermediate'), tool, final, phase],
+    };
+    const previousParts = [...ctx.contentParts];
+
+    AgentClient.prototype.applyHideSequentialOutputsFilter.call(ctx);
+    AgentClient.prototype.rebaseActivityPhaseBounds.call(ctx, previousParts);
+
+    expect(ctx.contentParts).toEqual([tool, final, phase]);
+    expect(phase.activity_start_index).toBe(0);
+    expect(phase.activity_end_index).toBe(1);
+  });
+
+  it('keeps an appended phase before the final text when all phase children are filtered', () => {
+    const final = textPart('final');
+    const phase = {
+      type: ContentTypes.ACTIVITY_LABEL,
+      activity_label: 'Completed both reasoning activities',
+      activity_label_type: 'phase',
+      activity_start_index: 0,
+      activity_end_index: 2,
+    };
+    const ctx = {
+      options: { agent: { hide_sequential_outputs: true } },
+      contentParts: [
+        { type: ContentTypes.THINK, think: 'first' },
+        { type: ContentTypes.THINK, think: 'second' },
+        final,
+        phase,
+      ],
+    };
+    const previousParts = [...ctx.contentParts];
+
+    AgentClient.prototype.applyHideSequentialOutputsFilter.call(ctx);
+    AgentClient.prototype.rebaseActivityPhaseBounds.call(ctx, previousParts);
+
+    expect(ctx.contentParts).toEqual([final, phase]);
+    expect(phase.activity_start_index).toBe(0);
+    expect(phase.activity_end_index).toBe(0);
+  });
+
   it('is a no-op when hide_sequential_outputs is off', () => {
     const parts = [textPart('a'), textPart('b')];
     const ctx = { options: { agent: { hide_sequential_outputs: false } }, contentParts: parts };
     AgentClient.prototype.applyHideSequentialOutputsFilter.call(ctx);
     expect(ctx.contentParts).toEqual([textPart('a'), textPart('b')]);
+  });
+
+  it('rebases phase bounds across skill prepends and sequential filtering', () => {
+    const reasoning = { type: ContentTypes.THINK, think: 'checking' };
+    const activityTool = toolCallPart('activity-tool');
+    const phase = {
+      type: ContentTypes.ACTIVITY_LABEL,
+      activity_label: 'Resolved the session issue',
+      activity_label_type: 'phase',
+      activity_start_index: 0,
+      activity_end_index: 2,
+    };
+    const final = textPart('final');
+    const previousParts = [reasoning, activityTool, phase, final];
+    const skillCard = toolCallPart('manual-skill');
+    const ctx = {
+      options: { agent: { hide_sequential_outputs: true } },
+      contentParts: [skillCard, ...previousParts],
+    };
+
+    AgentClient.prototype.applyHideSequentialOutputsFilter.call(ctx);
+    AgentClient.prototype.rebaseActivityPhaseBounds.call(ctx, previousParts);
+
+    expect(ctx.contentParts).toEqual([skillCard, activityTool, phase, final]);
+    expect(phase.activity_start_index).toBe(1);
+    expect(phase.activity_end_index).toBe(2);
+  });
+
+  it('rebases phase bounds over reshaped sparse content without retaining holes', () => {
+    const reasoning = { type: ContentTypes.THINK, think: 'planning' };
+    const toolCall = toolCallPart('tc-sparse');
+    const phase = {
+      type: ContentTypes.ACTIVITY_LABEL,
+      activity_label: 'Searched for tools',
+      activity_label_type: 'phase',
+      activity_start_index: 1,
+    };
+    const final = textPart('answer');
+    const contentParts = [];
+    contentParts[0] = reasoning;
+    contentParts[2] = toolCall;
+    contentParts[3] = phase;
+    contentParts[4] = final;
+    const previousParts = [...contentParts];
+    const ctx = { options: { agent: {} }, contentParts: [toolCall, phase, final] };
+
+    expect(() =>
+      AgentClient.prototype.rebaseActivityPhaseBounds.call(ctx, previousParts),
+    ).not.toThrow();
+    expect(phase.activity_start_index).toBe(0);
+  });
+
+  it('rebases explicit bounds using only defined sparse slots', () => {
+    const toolCall = toolCallPart('tc-large-sparse');
+    const phase = {
+      type: ContentTypes.ACTIVITY_LABEL,
+      activity_label: 'Searched the sparse transcript',
+      activity_label_type: 'phase',
+      activity_start_index: 5,
+      activity_end_index: 999_999,
+    };
+    const previousParts = [];
+    previousParts[5] = toolCall;
+    previousParts[999_999] = phase;
+    const ctx = { options: { agent: {} }, contentParts: [toolCall, phase] };
+
+    AgentClient.prototype.rebaseActivityPhaseBounds.call(ctx, previousParts);
+
+    expect(phase.activity_start_index).toBe(0);
+    expect(phase.activity_end_index).toBe(1);
+  });
+
+  it('preserves a sparse phase reservation when completion does not reshape content', () => {
+    const firstTool = toolCallPart('tool-1');
+    const secondTool = toolCallPart('tool-2');
+    const firstLabel = {
+      type: ContentTypes.ACTIVITY_LABEL,
+      activity_label: 'Recorded the first result',
+      tool_call_ids: ['tool-1'],
+    };
+    const secondLabel = {
+      type: ContentTypes.ACTIVITY_LABEL,
+      activity_label: 'Recorded the second result',
+      tool_call_ids: ['tool-2'],
+    };
+    const phase = {
+      type: ContentTypes.ACTIVITY_LABEL,
+      activity_label: 'Verified both results',
+      activity_label_type: 'phase',
+      activity_start_index: 0,
+    };
+    const final = { type: ContentTypes.TEXT, text: 'Final answer', phase: 'final_answer' };
+    const contentParts = [];
+    contentParts[1] = { type: ContentTypes.TEXT, text: '', phase: 'final_answer' };
+    contentParts[2] = firstLabel;
+    contentParts[3] = secondTool;
+    contentParts[4] = secondLabel;
+    contentParts[5] = phase;
+    contentParts[6] = final;
+    const previousParts = [...contentParts];
+    const ctx = { options: { agent: {} }, contentParts };
+
+    AgentClient.prototype.rebaseActivityPhaseBounds.call(ctx, previousParts);
+    expect(phase.activity_start_index).toBe(0);
+
+    contentParts[0] = firstTool;
+    const phaseChildren = contentParts.slice(
+      phase.activity_start_index,
+      contentParts.indexOf(phase),
+    );
+    expect(phaseChildren.map((part) => part?.tool_call?.id).filter(Boolean)).toEqual([
+      'tool-1',
+      'tool-2',
+    ]);
+  });
+});
+
+describe('AgentClient - activity phase completion', () => {
+  it('completes an uninterrupted root run', () => {
+    const complete = jest.fn();
+    AgentClient.prototype.completeActivityPhase.call(
+      {},
+      { getInterrupt: () => undefined },
+      { complete },
+    );
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains phase state when the root run pauses for HITL', () => {
+    const complete = jest.fn();
+    AgentClient.prototype.completeActivityPhase.call(
+      {},
+      { getInterrupt: () => ({ payload: { type: 'tool_approval' } }) },
+      { complete },
+    );
+    expect(complete).not.toHaveBeenCalled();
   });
 });
 
@@ -2884,6 +3288,102 @@ describe('AgentClient - titleConvo', () => {
       expect(parallelAgent2.instructions).toContain('Parallel agent 2 instructions');
       expect(parallelAgent2.instructions).not.toContain(memoryContent);
       expect(parallelAgent2.additional_instructions ?? '').not.toContain(memoryContent);
+    });
+
+    it('applies scoped context to graph-only members without promoting them', async () => {
+      client.useMemory = jest.fn().mockResolvedValue(undefined);
+      const graphMember = {
+        id: 'graph-member',
+        name: 'Graph Member',
+        instructions: 'Graph member instructions',
+        provider: EModelEndpoint.openAI,
+      };
+      mockAgent.subagentGraphConfigs = [
+        {
+          definition: { type: 'review_team' },
+          memberConfigs: [mockAgent, graphMember],
+        },
+      ];
+      client.agentConfigs = new Map();
+      mockBuildAgentScopedContext.mockResolvedValueOnce(
+        new Map([['graph-member', 'Graph member context']]),
+      );
+
+      await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            parentMessageId: null,
+            sender: 'User',
+            text: 'Hello',
+            isCreatedByUser: true,
+          },
+        ],
+        null,
+        { instructions: 'Base instructions', additional_instructions: null },
+      );
+
+      expect(mockBuildAgentScopedContext).toHaveBeenCalledWith(
+        expect.objectContaining({ agentIds: ['primary-agent', 'graph-member'] }),
+      );
+      expect(graphMember.additional_instructions).toContain('Graph member context');
+      expect(client.agentConfigs).toEqual(new Map());
+    });
+
+    it('applies scoped context to graph members resolved by a lazy child', async () => {
+      client.useMemory = jest.fn().mockResolvedValue(undefined);
+      const graphMember = {
+        id: 'lazy-graph-member',
+        name: 'Lazy Graph Member',
+        instructions: 'Lazy graph member instructions',
+        provider: EModelEndpoint.openAI,
+      };
+      const resolvedChild = {
+        id: 'lazy-child',
+        name: 'Lazy Child',
+        instructions: 'Lazy child instructions',
+        provider: EModelEndpoint.openAI,
+        subagentGraphConfigs: [
+          {
+            definition: { type: 'lazy_team' },
+            memberConfigs: [graphMember],
+          },
+        ],
+      };
+      const descriptor = {
+        id: 'lazy-child',
+        resolve: jest.fn().mockResolvedValue(resolvedChild),
+      };
+      mockAgent.lazySubagentConfigs = [descriptor];
+      client.agentConfigs = new Map();
+      mockBuildAgentScopedContext.mockResolvedValueOnce(new Map()).mockResolvedValueOnce(
+        new Map([
+          ['lazy-child', 'Lazy child context'],
+          ['lazy-graph-member', 'Lazy graph member context'],
+        ]),
+      );
+
+      await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            parentMessageId: null,
+            sender: 'User',
+            text: 'Hello',
+            isCreatedByUser: true,
+          },
+        ],
+        null,
+        { instructions: 'Base instructions', additional_instructions: null },
+      );
+      const resolved = await descriptor.resolve({ signal: new AbortController().signal });
+
+      expect(resolved).toBe(resolvedChild);
+      expect(resolvedChild.additional_instructions).toContain('Lazy child context');
+      expect(graphMember.additional_instructions).toContain('Lazy graph member context');
+      expect(mockBuildAgentScopedContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({ agentIds: ['lazy-child', 'lazy-graph-member'] }),
+      );
     });
 
     it('should pass memory context to parallel agents when automatic memory updates are enabled', async () => {

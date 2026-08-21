@@ -8,9 +8,9 @@ import MarketplaceItem, { marketplaceSearchMatches } from './Marketplace';
 import { useModelSelectorContext } from '../ModelSelectorContext';
 import { CustomMenuItem as MenuItem } from '../CustomMenu';
 import { shouldRenderEndpointOption } from '../utils';
+import { cn, getSpecAgentAvatarURL } from '~/utils';
 import SpecDescription from './SpecDescription';
 import SpecIcon from './SpecIcon';
-import { cn } from '~/utils';
 
 interface SearchResultsProps {
   results: (TModelSpec | Endpoint)[] | null;
@@ -25,6 +25,7 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
     handleSelectModel,
     handleSelectEndpoint,
     endpointsConfig,
+    agentsMap,
   } = useModelSelectorContext();
 
   const {
@@ -77,7 +78,11 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
               >
                 {(spec.showIconInMenu ?? true) && (
                   <div className="flex-shrink-0">
-                    <SpecIcon currentSpec={spec} endpointsConfig={endpointsConfig} />
+                    <SpecIcon
+                      currentSpec={spec}
+                      endpointsConfig={endpointsConfig}
+                      agentAvatarURL={getSpecAgentAvatarURL(spec, agentsMap)}
+                    />
                   </div>
                 )}
                 <div className="flex min-w-0 flex-col gap-1">
@@ -198,7 +203,10 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
                         <span>{modelName}</span>
                       </div>
                       {isGlobal && (
-                        <EarthIcon className="ml-auto size-4 text-green-400" aria-hidden="true" />
+                        <EarthIcon
+                          className="ml-auto size-4 text-accent-primary"
+                          aria-hidden="true"
+                        />
                       )}
                       {isModelSelected && (
                         <>
@@ -227,7 +235,7 @@ export function SearchResults({ results, localize, searchValue }: SearchResultsP
                 <div className="flex items-center gap-2">
                   {endpoint.icon && (
                     <div
-                      className="flex items-center justify-center overflow-hidden rounded-full border border-gray-200 p-1 dark:border-gray-700"
+                      className="flex items-center justify-center overflow-hidden rounded-full border border-border-light p-1"
                       style={{ borderRadius: '50%' }}
                     >
                       {endpoint.icon}
