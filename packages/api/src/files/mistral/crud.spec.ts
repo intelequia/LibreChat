@@ -10,10 +10,29 @@ jest.mock('form-data', () => {
     getLength: jest.fn().mockReturnValue(100),
   }));
 });
-jest.mock('undici', () => ({
-  fetch: jest.fn(),
-  ProxyAgent: jest.fn().mockImplementation((url) => ({ proxyUrl: url })),
+jest.mock('https-proxy-agent', () => ({
+  HttpsProxyAgent: jest.fn().mockImplementation((url) => ({ proxyUrl: url })),
 }));
+jest.mock('axios', () => {
+  const mockAxiosInstance = {
+    get: jest.fn().mockResolvedValue({ data: {} }),
+    post: jest.fn().mockResolvedValue({ data: {} }),
+    put: jest.fn().mockResolvedValue({ data: {} }),
+    delete: jest.fn().mockResolvedValue({ data: {} }),
+    interceptors: {
+      request: { use: jest.fn(), eject: jest.fn(), clear: jest.fn() },
+      response: { use: jest.fn(), eject: jest.fn(), clear: jest.fn() },
+    },
+    defaults: {
+      proxy: null,
+    },
+  };
+
+  return {
+    ...mockAxiosInstance,
+    create: jest.fn().mockReturnValue(mockAxiosInstance),
+  };
+});
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: {
@@ -37,7 +56,8 @@ jest.mock('~/utils/files', () => ({
 }));
 
 import * as fs from 'fs';
-import { fetch } from 'undici';
+import axios from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import type { Readable } from 'stream';
 import type {
   MistralFileUploadResponse,
@@ -75,16 +95,7 @@ interface MockReadStream extends Partial<Readable> {
   pending?: boolean;
 }
 
-const mockFetch = jest.mocked(fetch);
-
-// Helper to create mock fetch responses
-const createMockResponse = (data: unknown, status = 200, ok = true) => ({
-  ok,
-  status,
-  json: jest.fn().mockResolvedValue(data),
-  text: jest.fn().mockResolvedValue(JSON.stringify(data)),
-  headers: new Headers(),
-});
+const mockAxios = jest.mocked(axios);
 
 const mockLoadAuthValues = jest.fn();
 
@@ -150,7 +161,7 @@ describe('MistralOCR Service', () => {
         filename: 'test.pdf',
         purpose: 'ocr',
       };
-      mockFetch.mockResolvedValueOnce(createMockResponse(mockResponse) as never);
+      mockAxios.post!.mockResolvedValueOnce({ data: mockResponse });
 
       try {
         const result = await uploadDocumentToMistral({
@@ -162,16 +173,14 @@ describe('MistralOCR Service', () => {
         // Check that createReadStream was called with the correct file path
         expect(jest.mocked(fs).createReadStream).toHaveBeenCalledWith('/path/to/test.pdf');
 
-        // Check that fetch was called correctly
-        expect(mockFetch).toHaveBeenCalledWith(
+        // Since we're mocking FormData, check that axios was called correctly
+        expect(mockAxios.post).toHaveBeenCalledWith(
           'https://api.mistral.ai/v1/files',
+          expect.anything(),
           expect.objectContaining({
-            method: 'POST',
             headers: expect.objectContaining({
               Authorization: 'Bearer test-api-key',
             }),
-            maxBodyLength: Infinity,
-            maxContentLength: Infinity,
             maxRedirects: 0,
             httpAgent: expect.anything(),
             httpsAgent: expect.anything(),
