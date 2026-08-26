@@ -1,0 +1,88 @@
+trigger:
+  branches:
+    include:
+      - preview
+      - latest
+
+pr: none
+
+variables:
+  - group: intelewriter-acr
+  - name: vmImageName
+    value: ubuntu-latest
+
+pool:
+  vmImage: $(vmImageName)
+
+steps:
+  - checkout: self
+    fetchDepth: 1
+
+  - task: AzureCLI@2
+    displayName: Build, push, and retain Docker images
+    inputs:
+      azureSubscription: $(AZURE_SERVICE_CONNECTION)
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+
+        if [[ "$SOURCE_BRANCH" != "preview" && "$SOURCE_BRANCH" != "latest" ]]; then
+          echo "Unsupported source branch: $SOURCE_BRANCH"
+          exit 1
+        fi
+
+        if ! [[ "$RETAINED_VERSIONS" =~ ^[1-9][0-9]*$ ]]; then
+          echo "RETAINED_VERSIONS must be a positive integer"
+          exit 1
+        fi
+
+        short_sha="${SOURCE_VERSION:0:12}"
+        immutable_tag="${SOURCE_BRANCH}-${BUILD_ID}-${short_sha}"
+        image="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}"
+        build_date="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+        az acr login --name "$ACR_NAME"
+
+        docker buildx build \
+          --platform linux/amd64 \
+          --file "$SOURCE_DIRECTORY/Dockerfile" \
+          --tag "${image}:${SOURCE_BRANCH}" \
+          --tag "${image}:${immutable_tag}" \
+          --build-arg "BUILD_COMMIT=${SOURCE_VERSION}" \
+          --build-arg "BUILD_BRANCH=${SOURCE_BRANCH}" \
+          --build-arg "BUILD_DATE=${build_date}" \
+          --push \
+          "$SOURCE_DIRECTORY"
+
+        mapfile -t branch_tags < <(
+          az acr repository show-tags \
+            --name "$ACR_NAME" \
+            --repository "$IMAGE_REPOSITORY" \
+            --orderby time_desc \
+            --output tsv |
+            awk -v prefix="${SOURCE_BRANCH}-" 'index($0, prefix) == 1'
+        )
+
+        if (( ${#branch_tags[@]} <= RETAINED_VERSIONS )); then
+          echo "Retaining ${#branch_tags[@]} ${SOURCE_BRANCH} image versions"
+          exit 0
+        fi
+
+        for ((tag_index=RETAINED_VERSIONS; tag_index<${#branch_tags[@]}; tag_index++)); do
+          tag_to_delete="${branch_tags[$tag_index]}"
+          echo "Deleting old image tag: ${tag_to_delete}"
+          az acr repository delete \
+            --name "$ACR_NAME" \
+            --image "${IMAGE_REPOSITORY}:${tag_to_delete}" \
+            --yes
+        done
+    env:
+      ACR_NAME: $(ACR_NAME)
+      ACR_LOGIN_SERVER: $(ACR_LOGIN_SERVER)
+      IMAGE_REPOSITORY: $(IMAGE_REPOSITORY)
+      RETAINED_VERSIONS: $(RETAINED_VERSIONS)
+      SOURCE_BRANCH: $(Build.SourceBranchName)
+      SOURCE_VERSION: $(Build.SourceVersion)
+      BUILD_ID: $(Build.BuildId)
+      SOURCE_DIRECTORY: $(Build.SourcesDirectory)
