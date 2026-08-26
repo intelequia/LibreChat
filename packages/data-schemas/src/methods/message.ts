@@ -1,5 +1,5 @@
 import { RetentionMode } from 'librechat-data-provider';
-import type { DeleteResult, FilterQuery, Model, PipelineStage } from 'mongoose';
+import type { DeleteResult, FilterQuery, Model } from 'mongoose';
 import type { AppConfig, IMessage } from '~/types';
 import { createTempChatExpirationDate } from '~/utils/tempChatRetention';
 import { createFallbackRetentionDate } from '~/utils/retention';
@@ -9,23 +9,49 @@ import logger from '~/config/winston';
 /** Simple UUID v4 regex to replace zod validation */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Exclusion projection for message reads that feed the chat client (the
+ * conversation GET and shared-link reads). Every excluded field is either
+ * server-internal (ids, replay signatures, legacy summarization state) or a
+ * web_search SERP vertical no citation marker or UI can address: markers
+ * resolve `search|image|news|video|ref|file` through organic/images/
+ * topStories/videos/references (all kept — `news` markers read topStories,
+ * never the `news` collection). The JSON export mirrors this cache, so
+ * fields removed here also leave user exports.
+ */
+export const CLIENT_MESSAGE_SELECT: string = [
+  '-_id',
+  '-__v',
+  '-user',
+  '-clientId',
+  '-invocationId',
+  '-conversationSignature',
+  '-summary',
+  '-summaryTokenCount',
+  '-contextMeta',
+  '-langfuseSampled',
+  '-langfuseDestinationIds',
+  '-metadata.thoughtSignatures',
+  '-attachments.web_search.knowledgeGraph',
+  '-attachments.web_search.peopleAlsoAsk',
+  '-attachments.web_search.relatedSearches',
+  '-attachments.web_search.shopping',
+  '-attachments.web_search.places',
+  '-attachments.web_search.news',
+  '-attachments.web_search.organic.sitelinks',
+  '-attachments.web_search.organic.highlights',
+  '-attachments.web_search.topStories.highlights',
+].join(' ');
+
 interface MessageQueryOptions {
   limit?: number;
   sort?: Record<string, 1 | -1> | false;
 }
 
-interface MessageTextStatsOptions {
-  limit?: number;
-}
-
-export interface MessageTextStats {
-  messageId: string;
-  textBytes: number;
-  quoteCount: number;
-  quoteBytes: number;
-  quoteLineCount: number;
-  nonStringQuoteCount: number;
-}
+export type SubagentTaskResultClaim =
+  | { status: 'not_found' }
+  | { status: 'claimed'; message: IMessage }
+  | { status: 'acquired'; message: IMessage };
 
 export interface MessageMethods {
   saveMessage(
@@ -46,11 +72,35 @@ export interface MessageMethods {
     [key: string]: unknown;
   }): Promise<IMessage | null>;
   updateMessageText(userId: string, params: { messageId: string; text: string }): Promise<void>;
+  updateToolCallResult(params: {
+    userId: string;
+    messageId: string;
+    conversationId: string;
+    toolCallId: string;
+    agentId?: string;
+    output?: string;
+    attachments?: unknown[];
+    markBackgrounded?: boolean;
+  }): Promise<{ matched: boolean; unfinished: boolean }>;
   updateMessage(
     userId: string,
     message: Partial<IMessage> & { newMessageId?: string },
     metadata?: { context?: string },
   ): Promise<Partial<IMessage>>;
+  claimSubagentTaskResult(params: {
+    userId: string;
+    conversationId: string;
+    taskId: string;
+    kind: 'manual' | 'wakeup';
+    claimId: string;
+  }): Promise<SubagentTaskResultClaim>;
+  releaseSubagentTaskResultClaim(params: {
+    userId: string;
+    conversationId: string;
+    taskId: string;
+    kind: 'manual' | 'wakeup';
+    claimId: string;
+  }): Promise<boolean>;
   deleteMessagesSince(
     userId: string,
     params: { messageId: string; conversationId: string },
@@ -60,10 +110,6 @@ export interface MessageMethods {
     select?: string,
     options?: MessageQueryOptions,
   ): Promise<IMessage[]>;
-  getMessageTextStats(
-    filter: FilterQuery<IMessage>,
-    options?: MessageTextStatsOptions,
-  ): Promise<MessageTextStats[]>;
   getMessage(params: { user: string; messageId: string }): Promise<IMessage | null>;
   getMessagesByCursor(
     filter: FilterQuery<IMessage>,
@@ -284,6 +330,173 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
   }
 
   /**
+   * Patches a persisted tool_call content part in place and appends attachments,
+   * for results that settle after the turn's message was finalized (background
+   * tool calls). Atomic single update so two tasks completing concurrently on
+   * the same message cannot lose each other's attachments, and IDEMPOTENT
+   * (attachments dedupe by `file_id ?? filepath`, scoped to this tool call so
+   * sibling calls sharing a filename keep their own entries) so it can be
+   * re-applied to heal a later full-row save that reverted the patch.
+   *
+   * Returns `matched: false` when the message row does not exist yet (the
+   * dispatch turn has not finalized) and surfaces `unfinished` when the
+   * matched row is a mid-turn partial save (client disconnect) — the eventual
+   * finalize will overwrite the patch with in-memory content, so callers
+   * should keep re-applying until a finalized row is patched.
+   */
+  async function updateToolCallResult({
+    userId,
+    messageId,
+    conversationId,
+    toolCallId,
+    agentId,
+    output,
+    attachments,
+    markBackgrounded,
+  }: {
+    userId: string;
+    messageId: string;
+    conversationId: string;
+    toolCallId: string;
+    /** Scopes the part match when provider tool-call ids repeat across
+     *  agents in one response message (e.g. `call_0` per response); a part
+     *  without agent identity matches any caller (single-agent runs). */
+    agentId?: string;
+    output?: string;
+    attachments?: unknown[];
+    /**
+     * Stamps `backgrounded: true` onto the patched tool call. Replacing the
+     * dispatch-handle output with the settled task's stdout destroys the only
+     * signal renderers had that this call ran detached (the handle JSON and
+     * the live status-marker attachment are both transient), so the patch
+     * that erases it must persist a durable one alongside.
+     */
+    markBackgrounded?: boolean;
+  }): Promise<{ matched: boolean; unfinished: boolean }> {
+    const stages: Record<string, unknown>[] = [];
+    if (output !== undefined) {
+      stages.push({
+        $set: {
+          content: {
+            $map: {
+              input: { $ifNull: ['$content', []] },
+              as: 'part',
+              in: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$$part.type', 'tool_call'] },
+                      { $eq: ['$$part.tool_call.id', toolCallId] },
+                      ...(agentId != null
+                        ? [
+                            {
+                              $in: [
+                                { $ifNull: ['$$part.agentId', '$$part.tool_call.agentId'] },
+                                [null, agentId],
+                              ],
+                            },
+                          ]
+                        : []),
+                    ],
+                  },
+                  {
+                    $mergeObjects: [
+                      '$$part',
+                      {
+                        tool_call: {
+                          $mergeObjects: [
+                            '$$part.tool_call',
+                            {
+                              output: { $literal: output },
+                              ...(markBackgrounded === true ? { backgrounded: true } : {}),
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                  '$$part',
+                ],
+              },
+            },
+          },
+        },
+      });
+    }
+    if (attachments !== undefined && attachments.length > 0) {
+      /** Dedupe key mirrors the resume merge: `file_id ?? filepath`, so
+       *  download-fallback attachments (no `file_id`, only a filepath) stay
+       *  idempotent across re-applications instead of duplicating per poll. */
+      const attachmentKeys = attachments
+        .map((attachment) => {
+          const { file_id, filepath } = attachment as { file_id?: unknown; filepath?: unknown };
+          return typeof file_id === 'string' ? file_id : filepath;
+        })
+        .filter((key): key is string => typeof key === 'string');
+      stages.push({
+        $set: {
+          attachments: {
+            $concatArrays: [
+              {
+                $filter: {
+                  input: { $ifNull: ['$attachments', []] },
+                  as: 'existing',
+                  /** Replace only THIS tool call's prior entries: sibling calls
+                   *  can legitimately share a `file_id` (the filename claim is
+                   *  per-conversation), and the client anchors attachments to
+                   *  cards by `toolCallId`. */
+                  cond: {
+                    $not: [
+                      {
+                        $and: [
+                          {
+                            $in: [
+                              { $ifNull: ['$$existing.file_id', '$$existing.filepath'] },
+                              { $literal: attachmentKeys },
+                            ],
+                          },
+                          { $eq: ['$$existing.toolCallId', toolCallId] },
+                          /** Provider tool-call ids repeat across agents in
+                           *  handoff messages; a sibling agent's attachment
+                           *  under the same id/key must survive (missing
+                           *  agent identity = legacy wildcard). */
+                          ...(agentId != null
+                            ? [
+                                {
+                                  $in: [{ $ifNull: ['$$existing.agentId', null] }, [null, agentId]],
+                                },
+                              ]
+                            : []),
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+              { $literal: attachments },
+            ],
+          },
+        },
+      });
+    }
+    if (stages.length === 0) {
+      return { matched: false, unfinished: false };
+    }
+    try {
+      const Message = mongoose.models.Message as Model<IMessage>;
+      const result = await Message.findOneAndUpdate(
+        { messageId, user: userId, conversationId },
+        stages,
+        { new: true, projection: { unfinished: 1 } },
+      ).lean<{ unfinished?: boolean } | null>();
+      return { matched: result != null, unfinished: result?.unfinished === true };
+    } catch (err) {
+      logger.error('Error updating tool call result:', err);
+      throw err;
+    }
+  }
+
+  /**
    * Updates a message and returns sanitized fields.
    */
   async function updateMessage(
@@ -312,6 +525,8 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
         tokenCount: updatedMessage.tokenCount,
         feedback: updatedMessage.feedback,
         endpoint: updatedMessage.endpoint,
+        langfuseSampled: updatedMessage.langfuseSampled,
+        langfuseDestinationIds: updatedMessage.langfuseDestinationIds,
       };
     } catch (err) {
       logger.error('Error updating message:', err);
@@ -320,6 +535,134 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
       }
       throw err;
     }
+  }
+
+  /** Atomically assigns one durable terminal child result to either its
+   * explicit poller or one idempotent automatic wakeup delivery. */
+  async function claimSubagentTaskResult({
+    userId,
+    conversationId,
+    taskId,
+    kind,
+    claimId,
+  }: {
+    userId: string;
+    conversationId: string;
+    taskId: string;
+    kind: 'manual' | 'wakeup';
+    claimId: string;
+  }): Promise<SubagentTaskResultClaim> {
+    if (
+      taskId.length === 0 ||
+      taskId.length > 256 ||
+      conversationId.length === 0 ||
+      conversationId.length > 256 ||
+      (kind !== 'manual' && kind !== 'wakeup') ||
+      claimId.length === 0 ||
+      claimId.length > 128
+    ) {
+      throw new TypeError('Invalid subagent task result claim');
+    }
+    const Message = mongoose.models.Message as Model<IMessage>;
+    const messageId = `${taskId}:assistant`;
+    const terminal = ['completed', 'error', 'cancelled'];
+    const claim = {
+      kind,
+      claimId,
+      claimedAt: new Date(),
+    };
+    const claimable = {
+      $or: [
+        { 'subagentTask.resultClaim': { $exists: false } },
+        {
+          'subagentTask.resultClaim.kind': kind,
+          'subagentTask.resultClaim.claimId': claimId,
+        },
+        ...(kind === 'manual'
+          ? [
+              {
+                'subagentTask.resultClaim.kind': { $exists: false },
+                'subagentTask.resultClaim.claimId': claimId,
+              },
+            ]
+          : []),
+      ],
+    };
+    const projection = {
+      messageId: 1,
+      conversationId: 1,
+      parentMessageId: 1,
+      sender: 1,
+      text: 1,
+      error: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      subagentTask: 1,
+    };
+    const acquired = await Message.findOneAndUpdate(
+      {
+        user: userId,
+        conversationId,
+        messageId,
+        'subagentTask.status': { $in: terminal },
+        ...claimable,
+      },
+      { $set: { 'subagentTask.resultClaim': claim } },
+      { new: true, projection },
+    ).lean<IMessage | null>();
+    if (acquired != null) {
+      return { status: 'acquired', message: acquired };
+    }
+    const existing = await Message.findOne({
+      user: userId,
+      conversationId,
+      messageId,
+      'subagentTask.status': { $in: terminal },
+    })
+      .select(projection)
+      .lean<IMessage | null>();
+    return existing == null ? { status: 'not_found' } : { status: 'claimed', message: existing };
+  }
+
+  /** Releases only the exact consumer assignment. This is used when a
+   * pre-admission automatic continuation is definitively rejected, allowing a
+   * later manual poll (or the same delivery retry) to claim the durable result. */
+  async function releaseSubagentTaskResultClaim({
+    userId,
+    conversationId,
+    taskId,
+    kind,
+    claimId,
+  }: {
+    userId: string;
+    conversationId: string;
+    taskId: string;
+    kind: 'manual' | 'wakeup';
+    claimId: string;
+  }): Promise<boolean> {
+    if (
+      taskId.length === 0 ||
+      taskId.length > 256 ||
+      conversationId.length === 0 ||
+      conversationId.length > 256 ||
+      (kind !== 'manual' && kind !== 'wakeup') ||
+      claimId.length === 0 ||
+      claimId.length > 128
+    ) {
+      throw new TypeError('Invalid subagent task result claim release');
+    }
+    const Message = mongoose.models.Message as Model<IMessage>;
+    const result = await Message.updateOne(
+      {
+        user: userId,
+        conversationId,
+        messageId: `${taskId}:assistant`,
+        'subagentTask.resultClaim.kind': kind,
+        'subagentTask.resultClaim.claimId': claimId,
+      },
+      { $unset: { 'subagentTask.resultClaim': 1 } },
+    );
+    return result.modifiedCount === 1;
   }
 
   /**
@@ -370,93 +713,6 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
       return await query.lean<IMessage[]>();
     } catch (err) {
       logger.error('Error getting messages:', err);
-      throw err;
-    }
-  }
-
-  async function getMessageTextStats(
-    filter: FilterQuery<IMessage>,
-    options: MessageTextStatsOptions = {},
-  ) {
-    try {
-      const Message = mongoose.models.Message as Model<IMessage>;
-      const pipeline: PipelineStage[] = [{ $match: filter }];
-      if (options.limit != null && options.limit > 0) {
-        pipeline.push({ $limit: options.limit });
-      }
-      pipeline.push({
-        $project: {
-          _id: 0,
-          messageId: 1,
-          textBytes: {
-            $cond: [{ $eq: [{ $type: '$text' }, 'string'] }, { $strLenBytes: '$text' }, 0],
-          },
-          quoteCount: {
-            $cond: [{ $isArray: '$quotes' }, { $size: '$quotes' }, 0],
-          },
-          quoteBytes: {
-            $cond: [
-              { $isArray: '$quotes' },
-              {
-                $sum: {
-                  $map: {
-                    input: '$quotes',
-                    as: 'quote',
-                    in: {
-                      $cond: [
-                        { $eq: [{ $type: '$$quote' }, 'string'] },
-                        { $strLenBytes: '$$quote' },
-                        0,
-                      ],
-                    },
-                  },
-                },
-              },
-              0,
-            ],
-          },
-          quoteLineCount: {
-            $cond: [
-              { $isArray: '$quotes' },
-              {
-                $sum: {
-                  $map: {
-                    input: '$quotes',
-                    as: 'quote',
-                    in: {
-                      $cond: [
-                        { $eq: [{ $type: '$$quote' }, 'string'] },
-                        { $size: { $split: ['$$quote', '\n'] } },
-                        0,
-                      ],
-                    },
-                  },
-                },
-              },
-              0,
-            ],
-          },
-          nonStringQuoteCount: {
-            $cond: [
-              { $isArray: '$quotes' },
-              {
-                $size: {
-                  $filter: {
-                    input: '$quotes',
-                    as: 'quote',
-                    cond: { $ne: [{ $type: '$$quote' }, 'string'] },
-                  },
-                },
-              },
-              0,
-            ],
-          },
-        },
-      });
-
-      return await Message.aggregate<MessageTextStats>(pipeline);
-    } catch (err) {
-      logger.error('Error getting message text stats:', err);
       throw err;
     }
   }
@@ -544,10 +800,12 @@ export function createMessageMethods(mongoose: typeof import('mongoose')): Messa
     bulkSaveMessages,
     recordMessage,
     updateMessageText,
+    updateToolCallResult,
     updateMessage,
+    claimSubagentTaskResult,
+    releaseSubagentTaskResultClaim,
     deleteMessagesSince,
     getMessages,
-    getMessageTextStats,
     getMessage,
     getMessagesByCursor,
     searchMessages,

@@ -78,6 +78,13 @@
     "authConfig": []
   },
   {
+    "name": "Ask User",
+    "pluginKey": "ask_user_question",
+    "description": "Let the agent pause mid-run to ask you a clarifying question and wait for your answer.",
+    "agentsOnly": true,
+    "authConfig": []
+  },
+  {
     "name": "Azure AI Functions",
     "pluginKey": "azure-ai-functions",
     "description": "Use Azure AI Functions to perform various tasks like sentiment analysis, text summarization, and more.",
@@ -112,13 +119,6 @@
         "description": "You need to provide your API Key for Azure AI Functions."
       }
     ]
-  },
-  {
-    "name": "Dataverse",
-    "pluginKey": "dataverse",
-    "description": "Use Dataverse plugin to connect to your Dataverse instance",
-    "icon": "/assets/Plugin-Icons/Dataverse.svg",
-    "authConfig": []
   },
   {
     "name": "Microsoft Graph",

@@ -1,5 +1,5 @@
 const { intelequiaTools } = require("./constants");
-const {bingSearchSpecification, microsoftGraphSpecification, dataverseSpecification, sharepointSpecification} = require("./pluginsAndTools/specifications")
+const { bingSearchSpecification, microsoftGraphSpecification, sharepointSpecification } = require("./pluginsAndTools/specifications")
 /**
  * Verifies if tool is defined in the tools configuration file and returns the tool instance
  * @param {*} tool 
@@ -12,7 +12,7 @@ const {bingSearchSpecification, microsoftGraphSpecification, dataverseSpecificat
 
 async function VerifyAzureAIFunctionsTool(tool, user, toolOptions, loadToolWithAuth, toolAuthFields, toolConstructors) {
   const azureOpenAIFunctions = global.myCache.get("functions");
-  if(await isToolDefinedInFunctions(tool,azureOpenAIFunctions)){
+  if (await isToolDefinedInFunctions(tool, azureOpenAIFunctions)) {
     const options = toolOptions[tool] || {};
     const toolInstance = await loadToolWithAuth(
       user,
@@ -20,10 +20,10 @@ async function VerifyAzureAIFunctionsTool(tool, user, toolOptions, loadToolWithA
       toolConstructors["AzureAIFunctions"],
       options,
     );
-    return {status:true, value:toolInstance};
+    return { status: true, value: toolInstance };
   }
-  return {status:false, value:null};
-} 
+  return { status: false, value: null };
+}
 
 /**
  * Verifies if tool is defined in intelquia tools and returns the tool instance
@@ -33,8 +33,8 @@ async function VerifyAzureAIFunctionsTool(tool, user, toolOptions, loadToolWithA
  * @Organization Intelequia
  * @Author Enrique M. Pedroza Castillo
  */
-async function VerifyIntelequiaToolInstance(tool, user, toolOptions, loadToolWithAuth, toolAuthFields, toolConstructors){
-  if(intelequiaTools.includes(tool)){
+async function VerifyIntelequiaToolInstance(tool, user, toolOptions, loadToolWithAuth, toolAuthFields, toolConstructors) {
+  if (intelequiaTools.includes(tool)) {
     const options = toolOptions[tool] || {};
     const toolInstance = await loadToolWithAuth(
       user,
@@ -42,10 +42,10 @@ async function VerifyIntelequiaToolInstance(tool, user, toolOptions, loadToolWit
       toolConstructors[tool],
       options,
     );
-    return {status:true, value:toolInstance};
+    return { status: true, value: toolInstance };
   }
 
-  return {status:false, value:null};
+  return { status: false, value: null };
 }
 
 /**
@@ -57,7 +57,7 @@ async function VerifyIntelequiaToolInstance(tool, user, toolOptions, loadToolWit
  * @Organization Intelequia
  */
 
-async function isToolDefinedInFunctions(tool,functions){
+async function isToolDefinedInFunctions(tool, functions) {
   return functions.some(f => f.name === tool);
 }
 
@@ -68,17 +68,15 @@ async function isToolDefinedInFunctions(tool,functions){
  * @Organization Intelequia
  */
 
-async function GetToolSpecification (tool){
-  switch(tool){
+async function GetToolSpecification(tool) {
+  switch (tool) {
     case "bing-search":
       return bingSearchSpecification
     case "microsoft-graph":
       return microsoftGraphSpecification
-    case "dataverse":
-      return dataverseSpecification
     case "sharepoint":
       return sharepointSpecification
-    }
+  }
 }
 
 module.exports = {

@@ -14,8 +14,12 @@ jest.mock('./run', () => ({
 
 import { Readable } from 'stream';
 import { Types } from 'mongoose';
-import { primeInvokedSkills, primeSkillFiles } from './skillFiles';
-import type { PrimeInvokedSkillsDeps, PrimeSkillFilesParams } from './skillFiles';
+import { primeInvokedSkills, primeInvokedSkillsForProfiles, primeSkillFiles } from './skillFiles';
+import type {
+  PrimeInvokedSkillsDeps,
+  PrimeInvokedSkillsForProfilesDeps,
+  PrimeSkillFilesParams,
+} from './skillFiles';
 
 const SKILL_ID = new Types.ObjectId();
 const SKILL_VERSION = 7;
@@ -85,7 +89,7 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
     });
     const batchUploadCodeEnvFiles = jest.fn().mockResolvedValue({
       storage_session_id: 'session-42',
-      files: [{ fileId: 'file-1', filename: 'brand-guidelines/references/style.md' }],
+      files: [{ fileId: 'file-1', filename: 'skills/brand-guidelines/references/style.md' }],
     });
 
     const deps = makeDeps({
@@ -93,6 +97,10 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
       listSkillFiles,
       getStrategyFunctions,
       batchUploadCodeEnvFiles,
+      codeExecutionContext: {
+        baseUrl: 'https://stateful-code.example.com',
+        executionProfile: 'stateful',
+      },
     });
 
     await primeInvokedSkills(deps);
@@ -110,9 +118,14 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
     expect(uploadArgs.kind).toBe('skill');
     expect(uploadArgs.id).toBe(SKILL_ID.toString());
     expect(uploadArgs.version).toBe(SKILL_VERSION);
+    expect(uploadArgs.codeApiBaseUrl).toBe('https://stateful-code.example.com');
+    expect(uploadArgs.executionProfile).toBe('stateful');
     expect(uploadArgs.files).toHaveLength(fileRecords.length + 1);
     expect(uploadArgs.files.map((f: { filename: string }) => f.filename)).toEqual(
-      expect.arrayContaining(['brand-guidelines/SKILL.md', 'brand-guidelines/references/style.md']),
+      expect.arrayContaining([
+        'skills/brand-guidelines/SKILL.md',
+        'skills/brand-guidelines/references/style.md',
+      ]),
     );
   });
 
@@ -146,7 +159,7 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
     });
     const batchUploadCodeEnvFiles = jest.fn().mockResolvedValue({
       storage_session_id: 'session-42',
-      files: [{ fileId: 'file-1', filename: 'brand-guidelines/references/style.md' }],
+      files: [{ fileId: 'file-1', filename: 'skills/brand-guidelines/references/style.md' }],
     });
 
     const deps = makeDeps({
@@ -168,7 +181,7 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
          * where codeapi computed sessionKey from the storage nanoid
          * instead of the skill _id. */
         resource_id: SKILL_ID.toString(),
-        name: 'brand-guidelines/references/style.md',
+        name: 'skills/brand-guidelines/references/style.md',
         storage_session_id: 'session-42',
         kind: 'skill',
         version: SKILL_VERSION,
@@ -199,7 +212,7 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
     });
     const batchUploadCodeEnvFiles = jest.fn().mockResolvedValue({
       storage_session_id: 'session-42',
-      files: [{ fileId: 'file-1', filename: 'brand-guidelines/references/style.md' }],
+      files: [{ fileId: 'file-1', filename: 'skills/brand-guidelines/references/style.md' }],
     });
 
     /* Defer resolution so we can assert the prime hasn't returned yet
@@ -246,6 +259,7 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
           storage_session_id: 'session-42',
           file_id: 'file-1',
           version: SKILL_VERSION,
+          executionProfile: 'default',
         },
       },
     ]);
@@ -295,6 +309,7 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
         version: SKILL_VERSION,
       },
       deps.req,
+      undefined,
     );
     const codeSession = result.initialSessions?.get('execute_code');
     expect(codeSession?.files).toEqual([
@@ -303,12 +318,101 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
         /* From the cache-hit path: pulls `resource_id` directly off
          * the persisted `codeEnvRef.id` (the skill `_id`). */
         resource_id: SKILL_ID.toString(),
-        name: 'brand-guidelines/references/style.md',
+        name: 'skills/brand-guidelines/references/style.md',
         storage_session_id: 'session-cached',
         kind: 'skill',
         version: SKILL_VERSION,
       },
     ]);
+  });
+});
+
+describe('primeInvokedSkillsForProfiles', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockExtract.mockReturnValue(new Set(['brand-guidelines']));
+  });
+
+  it('uploads and seeds historical skill files separately for default and stateful profiles', async () => {
+    const listSkillFiles = jest.fn().mockResolvedValue([
+      {
+        relativePath: 'references/style.md',
+        filename: 'style.md',
+        filepath: '/storage/brand-guidelines/references/style.md',
+        source: 's3',
+        bytes: 256,
+      },
+    ]);
+    const getStrategyFunctions = jest.fn().mockReturnValue({
+      getDownloadStream: jest.fn().mockResolvedValue(Readable.from(Buffer.from('style'))),
+    });
+    const batchUploadCodeEnvFiles = jest.fn().mockImplementation(({ executionProfile }) => ({
+      storage_session_id: `${executionProfile}-session`,
+      files: [
+        {
+          fileId: `${executionProfile}-file`,
+          filename: 'skills/brand-guidelines/references/style.md',
+        },
+      ],
+    }));
+    const updateSkillFileCodeEnvIds = jest.fn().mockResolvedValue({
+      matchedCount: 1,
+      modifiedCount: 1,
+    });
+    const {
+      codeEnvAvailable: _codeEnvAvailable,
+      codeExecutionContext: _codeExecutionContext,
+      ...baseDeps
+    } = makeDeps({
+      listSkillFiles,
+      getStrategyFunctions,
+      batchUploadCodeEnvFiles,
+      updateSkillFileCodeEnvIds,
+    });
+    const statefulKey = 'execute_code:stateful:v2:user:abc';
+    const deps: PrimeInvokedSkillsForProfilesDeps = {
+      ...baseDeps,
+      executionProfiles: [
+        {
+          codeExecutionContext: {
+            baseUrl: 'https://code.example.com/v1',
+            codeSessionKey: 'execute_code',
+            executionProfile: 'default',
+            statefulSessions: false,
+          },
+          codeSessionKeys: ['execute_code'],
+        },
+        {
+          codeExecutionContext: {
+            baseUrl: 'https://stateful.example.com/v1',
+            codeSessionKey: statefulKey,
+            executionProfile: 'stateful',
+            runtimeSessionHint: 'v2:user:abc',
+            statefulSessions: true,
+          },
+          codeSessionKeys: [statefulKey],
+        },
+      ],
+    };
+
+    const result = await primeInvokedSkillsForProfiles(deps);
+
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(2);
+    expect(
+      batchUploadCodeEnvFiles.mock.calls.map(([args]) => args.executionProfile).sort(),
+    ).toEqual(['default', 'stateful']);
+    expect(result.initialSessions?.get('execute_code')?.files?.map((file) => file.id)).toEqual([
+      'default-file',
+    ]);
+    expect(result.initialSessions?.get(statefulKey)?.files?.map((file) => file.id)).toEqual([
+      'stateful-file',
+    ]);
+    expect(updateSkillFileCodeEnvIds).toHaveBeenCalledTimes(2);
+    expect(
+      updateSkillFileCodeEnvIds.mock.calls
+        .map(([updates]) => updates[0].codeEnvRef.executionProfile)
+        .sort(),
+    ).toEqual(['default', 'stateful']);
   });
 });
 
@@ -318,36 +422,34 @@ describe('primeInvokedSkills — execute_code capability gate', () => {
  * carry `resource_id` end-to-end, otherwise codeapi 400s with
  * `resource_id is invalid` (`type: 'undefined'`). Tests below lock
  * that contract on the lower-level helper directly. */
+function makeSkillFilesDeps(overrides: Partial<PrimeSkillFilesParams> = {}): PrimeSkillFilesParams {
+  return {
+    skill: {
+      _id: SKILL_ID,
+      name: 'brand-guidelines',
+      body: 'skill body',
+      version: SKILL_VERSION,
+    },
+    skillFiles: [],
+    req: { user: { id: 'user-1' } } as PrimeSkillFilesParams['req'],
+    getStrategyFunctions: jest.fn().mockReturnValue({
+      getDownloadStream: jest.fn().mockResolvedValue(Readable.from(Buffer.from(''))),
+    }),
+    batchUploadCodeEnvFiles: jest.fn().mockResolvedValue({
+      storage_session_id: 'session-fresh',
+      files: [
+        { fileId: 'file-fresh', filename: 'skills/brand-guidelines/references/style.md' },
+        { fileId: 'file-skillmd', filename: 'skills/brand-guidelines/SKILL.md' },
+      ],
+    }),
+    ...overrides,
+  };
+}
+
 describe('primeSkillFiles — resource identity propagation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
-
-  function makeSkillFilesDeps(
-    overrides: Partial<PrimeSkillFilesParams> = {},
-  ): PrimeSkillFilesParams {
-    return {
-      skill: {
-        _id: SKILL_ID,
-        name: 'brand-guidelines',
-        body: 'skill body',
-        version: SKILL_VERSION,
-      },
-      skillFiles: [],
-      req: { user: { id: 'user-1' } } as PrimeSkillFilesParams['req'],
-      getStrategyFunctions: jest.fn().mockReturnValue({
-        getDownloadStream: jest.fn().mockResolvedValue(Readable.from(Buffer.from(''))),
-      }),
-      batchUploadCodeEnvFiles: jest.fn().mockResolvedValue({
-        storage_session_id: 'session-fresh',
-        files: [
-          { fileId: 'file-fresh', filename: 'brand-guidelines/references/style.md' },
-          { fileId: 'file-skillmd', filename: 'brand-guidelines/SKILL.md' },
-        ],
-      }),
-      ...overrides,
-    };
-  }
 
   it('fresh-upload path: emits resource_id=skill._id, kind=skill, version on each file', async () => {
     const deps = makeSkillFilesDeps({
@@ -369,7 +471,7 @@ describe('primeSkillFiles — resource identity propagation', () => {
         id: 'file-fresh',
         resource_id: SKILL_ID.toString(),
         storage_session_id: 'session-fresh',
-        name: 'brand-guidelines/references/style.md',
+        name: 'skills/brand-guidelines/references/style.md',
         kind: 'skill',
         version: SKILL_VERSION,
       },
@@ -383,6 +485,7 @@ describe('primeSkillFiles — resource identity propagation', () => {
       storage_session_id: 'session-cached',
       file_id: 'file-cached',
       version: SKILL_VERSION,
+      executionProfile: 'stateful' as const,
     };
     const batchUploadCodeEnvFiles = jest.fn();
     const deps = makeSkillFilesDeps({
@@ -399,20 +502,247 @@ describe('primeSkillFiles — resource identity propagation', () => {
       batchUploadCodeEnvFiles,
       getSessionInfo: jest.fn().mockResolvedValue('2026-05-06T00:00:00Z'),
       checkIfActive: jest.fn().mockReturnValue(true),
+      codeExecutionContext: {
+        baseUrl: 'https://stateful-code.example.com',
+        executionProfile: 'stateful',
+      },
     });
 
     const result = await primeSkillFiles(deps);
 
     expect(batchUploadCodeEnvFiles).not.toHaveBeenCalled();
+    expect(deps.getSessionInfo).toHaveBeenCalledWith(cachedRef, deps.req, {
+      baseUrl: 'https://stateful-code.example.com',
+      executionProfile: 'stateful',
+    });
     expect(result?.files).toEqual([
       {
         id: 'file-cached',
         resource_id: SKILL_ID.toString(),
         storage_session_id: 'session-cached',
-        name: 'brand-guidelines/references/style.md',
+        name: 'skills/brand-guidelines/references/style.md',
         kind: 'skill',
         version: SKILL_VERSION,
       },
     ]);
+  });
+
+  it('reuploads a cached ref that belongs to the other execution profile', async () => {
+    const batchUploadCodeEnvFiles = jest.fn().mockResolvedValue({
+      storage_session_id: 'stateful-session',
+      files: [
+        {
+          fileId: 'stateful-file',
+          filename: 'skills/brand-guidelines/references/style.md',
+        },
+        { fileId: 'skill-md', filename: 'skills/brand-guidelines/SKILL.md' },
+      ],
+    });
+    const getSessionInfo = jest.fn().mockResolvedValue('2026-05-06T00:00:00Z');
+    const deps = makeSkillFilesDeps({
+      skillFiles: [
+        {
+          relativePath: 'references/style.md',
+          filename: 'style.md',
+          filepath: '/storage/brand-guidelines/references/style.md',
+          source: 's3',
+          bytes: 256,
+          codeEnvRef: {
+            kind: 'skill',
+            id: SKILL_ID.toString(),
+            storage_session_id: 'default-session',
+            file_id: 'default-file',
+            version: SKILL_VERSION,
+            executionProfile: 'default',
+          },
+        },
+      ],
+      batchUploadCodeEnvFiles,
+      getSessionInfo,
+      checkIfActive: jest.fn().mockReturnValue(true),
+      codeExecutionContext: {
+        baseUrl: 'https://stateful-code.example.com',
+        executionProfile: 'stateful',
+      },
+    });
+
+    const result = await primeSkillFiles(deps);
+
+    expect(getSessionInfo).not.toHaveBeenCalled();
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ executionProfile: 'stateful' }),
+    );
+    expect(result?.files[0].id).toBe('stateful-file');
+  });
+});
+
+/* Codeapi's upload limiter defaults to 30 requests per user per 5 minutes,
+ * and a workflow with many cold skills used to fan out one unbounded batch
+ * upload per skill. The suite below locks the three mitigations: process-
+ * wide upload slots, single-flight per (skill, version), and a single
+ * Retry-After-honoring retry on 429. */
+describe('primeSkillFiles — upload rate-limit resilience', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  function styleFileRecord() {
+    return {
+      relativePath: 'references/style.md',
+      filename: 'style.md',
+      filepath: '/storage/brand-guidelines/references/style.md',
+      source: 's3',
+      bytes: 256,
+    };
+  }
+
+  function uploadResult(skillName = 'brand-guidelines') {
+    return {
+      storage_session_id: `session-${skillName}`,
+      files: [
+        { fileId: `file-${skillName}`, filename: `skills/${skillName}/references/style.md` },
+        { fileId: `skillmd-${skillName}`, filename: `skills/${skillName}/SKILL.md` },
+      ],
+    };
+  }
+
+  function rateLimit429(retryAfter: string) {
+    const error = new Error('Request failed with status code 429') as Error & {
+      isAxiosError: boolean;
+      response: { status: number; headers: Record<string, string> };
+    };
+    error.isAxiosError = true;
+    error.response = { status: 429, headers: { 'retry-after': retryAfter } };
+    return error;
+  }
+
+  it('single-flights concurrent primes of the same skill+version, clearing the flight on settle', async () => {
+    const gate = deferred<ReturnType<typeof uploadResult>>();
+    const batchUploadCodeEnvFiles = jest.fn().mockReturnValue(gate.promise);
+
+    const first = primeSkillFiles(
+      makeSkillFilesDeps({ skillFiles: [styleFileRecord()], batchUploadCodeEnvFiles }),
+    );
+    const second = primeSkillFiles(
+      makeSkillFilesDeps({ skillFiles: [styleFileRecord()], batchUploadCodeEnvFiles }),
+    );
+    await flush();
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(1);
+
+    gate.resolve(uploadResult());
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    /* Joiners share the leader's result object, not a re-upload. */
+    expect(firstResult).toBe(secondResult);
+    expect(firstResult?.files).toHaveLength(1);
+
+    await primeSkillFiles(
+      makeSkillFilesDeps({ skillFiles: [styleFileRecord()], batchUploadCodeEnvFiles }),
+    );
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it('primes different versions of the same skill independently', async () => {
+    const batchUploadCodeEnvFiles = jest.fn().mockResolvedValue(uploadResult());
+    await Promise.all([
+      primeSkillFiles(
+        makeSkillFilesDeps({ skillFiles: [styleFileRecord()], batchUploadCodeEnvFiles }),
+      ),
+      primeSkillFiles(
+        makeSkillFilesDeps({
+          skill: {
+            _id: SKILL_ID,
+            name: 'brand-guidelines',
+            body: 'skill body',
+            version: SKILL_VERSION + 1,
+          },
+          skillFiles: [styleFileRecord()],
+          batchUploadCodeEnvFiles,
+        }),
+      ),
+    ]);
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries once on 429 within the Retry-After cap, re-acquiring streams per attempt', async () => {
+    const getDownloadStream = jest.fn(async () => Readable.from(Buffer.from('')));
+    const batchUploadCodeEnvFiles = jest
+      .fn()
+      .mockRejectedValueOnce(rateLimit429('0'))
+      .mockResolvedValueOnce(uploadResult());
+
+    const result = await primeSkillFiles(
+      makeSkillFilesDeps({
+        skillFiles: [styleFileRecord()],
+        batchUploadCodeEnvFiles,
+        getStrategyFunctions: jest.fn().mockReturnValue({ getDownloadStream }),
+      }),
+    );
+
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(2);
+    /* A consumed stream cannot be replayed — each attempt opens fresh ones. */
+    expect(getDownloadStream).toHaveBeenCalledTimes(2);
+    expect(result?.files).toHaveLength(1);
+  });
+
+  it('does not retry when Retry-After exceeds the cap', async () => {
+    const batchUploadCodeEnvFiles = jest.fn().mockRejectedValue(rateLimit429('300'));
+    const result = await primeSkillFiles(
+      makeSkillFilesDeps({ skillFiles: [styleFileRecord()], batchUploadCodeEnvFiles }),
+    );
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+  });
+
+  it('does not retry non-429 failures', async () => {
+    const batchUploadCodeEnvFiles = jest.fn().mockRejectedValue(new Error('boom'));
+    const result = await primeSkillFiles(
+      makeSkillFilesDeps({ skillFiles: [styleFileRecord()], batchUploadCodeEnvFiles }),
+    );
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+  });
+
+  it('bounds concurrent batch uploads to 3 process-wide slots', async () => {
+    const gates = Array.from({ length: 5 }, () => deferred<ReturnType<typeof uploadResult>>());
+    let uploadIndex = 0;
+    const batchUploadCodeEnvFiles = jest
+      .fn()
+      .mockImplementation(() => gates[uploadIndex++].promise);
+    const skillNames = Array.from({ length: 5 }, (_, i) => `skill-${i}`);
+
+    const primes = skillNames.map((name) =>
+      primeSkillFiles(
+        makeSkillFilesDeps({
+          skill: { _id: new Types.ObjectId(), name, body: 'skill body', version: 1 },
+          skillFiles: [styleFileRecord()],
+          batchUploadCodeEnvFiles,
+        }),
+      ),
+    );
+
+    await flush();
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(3);
+
+    gates[0].resolve(uploadResult(skillNames[0]));
+    await flush();
+    expect(batchUploadCodeEnvFiles).toHaveBeenCalledTimes(4);
+
+    for (let i = 1; i < gates.length; i++) {
+      gates[i].resolve(uploadResult(skillNames[i]));
+    }
+    const results = await Promise.all(primes);
+    expect(results.every((r) => r !== null)).toBe(true);
   });
 });

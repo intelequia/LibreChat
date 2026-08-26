@@ -12,7 +12,14 @@ const {
   writeSSE,
   createRun,
   createChunk,
+  applyContextToAgent,
   buildToolSet,
+  buildInitialToolSessions,
+  buildAgentScopedContext,
+  buildInlineMemoryContext,
+  buildAgentContextAttachmentsByAgentId,
+  AgentRunEnvelopeError,
+  createAgentRunEnvelope,
   loadSkillStates,
   sendFinalChunk,
   createSafeUser,
@@ -25,9 +32,11 @@ const {
   recordCollectedUsage,
   createSubagentUsageSink,
   getTransactionsConfig,
+  resolveAgentTokenConfig,
   resolveRecursionLimit,
   findPiiMatchInMessages,
   discoverConnectedAgents,
+  resolveSubagentGraphs,
   getRemoteAgentPermissions,
   createToolExecuteHandler,
   buildNonStreamingResponse,
@@ -35,6 +44,7 @@ const {
   resolveAgentScopedSkillIds,
   createOpenAIContentAggregator,
   isChatCompletionValidationFailure,
+  stripActivityLabelParts,
 } = require('@librechat/api');
 const {
   buildSummarizationHandlers,
@@ -42,23 +52,35 @@ const {
   createToolEndCallback,
   agentLogHandlerObj,
 } = require('~/server/controllers/agents/callbacks');
-const { loadAgentTools, loadToolsForExecution } = require('~/server/services/ToolService');
+const {
+  loadAgentTools,
+  loadToolsForExecution,
+  getAccessibleMcpServerNames,
+  isFatalAgentInitializationError,
+} = require('~/server/services/ToolService');
 const {
   findAccessibleResources,
   getEffectivePermissions,
 } = require('~/server/services/PermissionService');
-const { trackEvent } = require('~/utils/intelequia/appInsights');
+const { trackEvent, trackSpendEvent } = require('~/utils/intelequia/appInsights');
 const {
   getSkillToolDeps,
   getSkillDbMethods,
   canAuthorSkillFiles,
   withDeploymentSkillIds,
   buildAgentToolContext,
+  resolveMemoryAvailability,
   enrichLoadedToolsWithAgentContext,
 } = require('~/server/services/Endpoints/agents/skillDeps');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
+const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
+const { resolveConfigServers } = require('~/server/services/MCP');
+const { getMCPManager } = require('~/config');
 const { logViolation } = require('~/cache');
 const db = require('~/models');
+
+const filterFilesByRemoteAgentAccess = (params) =>
+  filterFilesByAgentAccess({ ...params, resourceType: ResourceType.REMOTE_AGENT });
 
 /**
  * Creates a tool loader function for the agent.
@@ -76,6 +98,8 @@ function createToolLoader(signal, definitionsOnly = true) {
     provider,
     tool_options,
     tool_resources,
+    codeExecutionContext,
+    accessibleMcpServerNames,
   }) {
     const agent = { id: agentId, tools, provider, model, tool_options };
     try {
@@ -85,10 +109,16 @@ function createToolLoader(signal, definitionsOnly = true) {
         agent,
         signal,
         tool_resources,
+        codeExecutionContext,
+        agentResourceType: ResourceType.REMOTE_AGENT,
         definitionsOnly,
+        accessibleMcpServerNames,
         streamId: null, // No resumable stream for OpenAI compat
       });
     } catch (error) {
+      if (isFatalAgentInitializationError(error)) {
+        throw error;
+      }
       logger.error('Error loading tools for agent ' + agentId, error);
     }
   };
@@ -143,29 +173,20 @@ function sendErrorResponse(res, statusCode, message, type = 'invalid_request_err
 }
 
 /**
- * OpenAI-compatible chat completions controller for agents.
+ * Runs a validated chat-completions envelope in the current process.
+ * Express remains runtime-only state while the envelope is the portable run input.
  *
- * POST /v1/chat/completions
- *
- * Request format:
- * {
- *   "model": "agent_id_here",
- *   "messages": [{"role": "user", "content": "Hello!"}],
- *   "stream": true,
- *   "conversation_id": "optional",
- *   "parent_message_id": "optional"
- * }
+ * @param {import('@librechat/api').ChatCompletionRunEnvelope} envelope
+ * @param {{req: import('express').Request, res: import('express').Response}} runtime
  */
-const OpenAIChatCompletionController = async (req, res) => {
+const executeOpenAIChatCompletion = async (envelope, { req, res }) => {
   const appConfig = req.config;
-  const requestStartTime = Date.now();
-
-  const validation = validateRequest(req.body);
-  if (isChatCompletionValidationFailure(validation)) {
-    return sendErrorResponse(res, 400, validation.error);
-  }
-
-  const request = validation.request;
+  const requestStartTime = envelope.receivedAt;
+  const request = envelope.payload;
+  const { principal } = envelope;
+  // The local executor keeps the current Express-dependent initialization path,
+  // but all request-body reads now observe the detached envelope payload.
+  req.body = request;
   const agentId = request.model;
 
   // Look up the agent
@@ -185,7 +206,9 @@ const OpenAIChatCompletionController = async (req, res) => {
     return sendErrorResponse(
       res,
       400,
-      `Message contains a ${piiHit.label}. Remove it and try again.`,
+      piiHit.misconfigured
+        ? 'Message filtering is misconfigured; contact your administrator.'
+        : `Message contains a ${piiHit.label}. Remove it and try again.`,
       'invalid_request_error',
       'message_filter_pii_block',
     );
@@ -226,7 +249,7 @@ const OpenAIChatCompletionController = async (req, res) => {
           'invalid_request_error',
         );
       }
-      if (!(await db.getConvo(req.user?.id, request.conversation_id))) {
+      if (!(await db.getConvo(principal.userId, request.conversation_id))) {
         return sendErrorResponse(res, 404, 'Conversation not found', 'invalid_request_error');
       }
     }
@@ -247,17 +270,13 @@ const OpenAIChatCompletionController = async (req, res) => {
     };
     const skillDbMethods = getSkillDbMethods();
 
-    // `filterFilesByAgentAccess` is intentionally omitted: it calls
-    // `checkPermission` with `resourceType: AGENT`, but this route
-    // authorizes callers through `REMOTE_AGENT` (via
-    // `getRemoteAgentPermissions`), so including it would silently drop
-    // owner-attached context files for any remote user who has
-    // `REMOTE_AGENT_VIEWER` but not direct `AGENT_VIEW`.
     const dbMethods = {
       getConvoFiles: db.getConvoFiles,
       getFiles: db.getFiles,
+      filterFilesByAgentAccess: filterFilesByRemoteAgentAccess,
       getUserKey: db.getUserKey,
       getMessages: db.getMessages,
+      getAccessibleMcpServerNames,
       updateFilesUsage: db.updateFilesUsage,
       getUserKeyValues: db.getUserKeyValues,
       getUserCodeFiles: db.getUserCodeFiles,
@@ -269,13 +288,19 @@ const OpenAIChatCompletionController = async (req, res) => {
     };
 
     const enabledCapabilities = new Set(agentsEConfig?.capabilities);
+    const memoryAvailable = await resolveMemoryAvailability({
+      enabledCapabilities,
+      memoryConfig: appConfig?.memory,
+      user: req.user,
+      getRoleByName: db.getRoleByName,
+    });
     const skillsCapabilityEnabled = enabledCapabilities.has(AgentCapabilities.skills);
-    const ephemeralSkillsToggle = req.body?.ephemeralAgent?.skills === true;
+    const ephemeralSkillsToggle = request.ephemeralAgent?.skills === true;
     const accessibleSkillIds = skillsCapabilityEnabled
       ? withDeploymentSkillIds(
         await findAccessibleResources({
-          userId: req.user.id,
-          role: req.user.role,
+          userId: principal.userId,
+          role: principal.role,
           resourceType: ResourceType.SKILL,
           requiredPermissions: PermissionBits.VIEW,
         }),
@@ -283,8 +308,8 @@ const OpenAIChatCompletionController = async (req, res) => {
       : [];
     const editableSkillIds = skillsCapabilityEnabled
       ? await findAccessibleResources({
-        userId: req.user.id,
-        role: req.user.role,
+        userId: principal.userId,
+        role: principal.role,
         resourceType: ResourceType.SKILL,
         requiredPermissions: PermissionBits.EDIT,
       })
@@ -294,13 +319,13 @@ const OpenAIChatCompletionController = async (req, res) => {
       : false;
 
     const { skillStates, defaultActiveOnShare } = await loadSkillStates({
-      userId: req.user.id,
+      userId: principal.userId,
       appConfig,
       getUserById: db.getUserById,
       accessibleSkillIds,
     });
 
-    const manualSkills = extractManualSkills(req.body);
+    const manualSkills = extractManualSkills(request);
 
     const primaryScopedSkillIds = resolveAgentScopedSkillIds({
       agent,
@@ -336,6 +361,13 @@ const OpenAIChatCompletionController = async (req, res) => {
           ephemeralSkillsToggle,
         }),
         codeEnvAvailable: enabledCapabilities.has(AgentCapabilities.execute_code),
+        backgroundToolsAvailable: enabledCapabilities.has(AgentCapabilities.run_in_background),
+        toolIntentsAvailable: enabledCapabilities.has(AgentCapabilities.tool_intents),
+        statefulSessionsAvailable: enabledCapabilities.has(
+          AgentCapabilities.stateful_code_sessions,
+        ),
+        allowedStatefulCodeEnvironments: agentsEConfig?.statefulCodeSessions?.allowedEnvironments,
+        memoryAvailable,
         skillStates,
         defaultActiveOnShare,
         manualSkills,
@@ -362,85 +394,109 @@ const OpenAIChatCompletionController = async (req, res) => {
       buildAgentToolContext({ agent, config: primaryConfig }),
     );
 
-    // Only run BFS discovery (and pay `getModelsConfig` upfront) when the
-    // primary has edges to follow — the common API case is single-agent.
     let handoffAgentConfigs = new Map();
     let discoveredEdges = [];
     let discoveredMCPAuthMap;
-    if (primaryConfig.edges?.length) {
+    const subagentsCapabilityEnabled = enabledCapabilities.has(AgentCapabilities.subagents);
+    const primaryHasGraphSubagents =
+      subagentsCapabilityEnabled &&
+      primaryConfig.subagents?.enabled === true &&
+      (primaryConfig.subagents.graphs?.length ?? 0) > 0;
+    if (primaryConfig.edges?.length || primaryHasGraphSubagents) {
       const modelsConfig = await getModelsConfig(req);
-      ({
-        agentConfigs: handoffAgentConfigs,
-        edges: discoveredEdges,
-        userMCPAuthMap: discoveredMCPAuthMap,
-      } = await discoverConnectedAgents(
-        {
-          req,
-          res,
-          primaryConfig,
-          endpointOption,
-          allowedProviders,
-          modelsConfig,
-          loadTools,
-          requestFiles: [],
-          conversationId,
-          parentMessageId,
-          // The route enforces REMOTE_AGENT on the primary; every discovered
-          // sub-agent must clear the same sharing boundary, not the looser
-          // in-app AGENT one.
-          resourceType: ResourceType.REMOTE_AGENT,
-          computeAccessibleSkillIds: (handoffAgent) =>
-            resolveAgentScopedSkillIds({
+      const discoveryParams = {
+        req,
+        res,
+        primaryConfig,
+        endpointOption,
+        allowedProviders,
+        modelsConfig,
+        loadTools,
+        requestFiles: [],
+        conversationId,
+        parentMessageId,
+        resourceType: ResourceType.REMOTE_AGENT,
+        computeAccessibleSkillIds: (handoffAgent) =>
+          resolveAgentScopedSkillIds({
+            agent: handoffAgent,
+            accessibleSkillIds,
+            skillsCapabilityEnabled,
+            ephemeralSkillsToggle,
+          }),
+        computeSkillAuthoringAvailable: (handoffAgent) =>
+          canAuthorSkillFiles({
+            agent: handoffAgent,
+            scopedEditableSkillIds: resolveAgentScopedSkillIds({
               agent: handoffAgent,
-              accessibleSkillIds,
+              accessibleSkillIds: editableSkillIds,
               skillsCapabilityEnabled,
               ephemeralSkillsToggle,
             }),
-          computeSkillAuthoringAvailable: (handoffAgent) =>
-            canAuthorSkillFiles({
-              agent: handoffAgent,
-              scopedEditableSkillIds: resolveAgentScopedSkillIds({
-                agent: handoffAgent,
-                accessibleSkillIds: editableSkillIds,
-                skillsCapabilityEnabled,
-                ephemeralSkillsToggle,
-              }),
-              skillCreateAllowed,
-              skillsCapabilityEnabled,
-              ephemeralSkillsToggle,
-            }),
-          skillStates,
-          defaultActiveOnShare,
-          /** @see DiscoverConnectedAgentsParams.codeEnvAvailable */
-          codeEnvAvailable: enabledCapabilities.has(AgentCapabilities.execute_code),
+            skillCreateAllowed,
+            skillsCapabilityEnabled,
+            ephemeralSkillsToggle,
+          }),
+        skillStates,
+        defaultActiveOnShare,
+        codeEnvAvailable: enabledCapabilities.has(AgentCapabilities.execute_code),
+        backgroundToolsAvailable: enabledCapabilities.has(AgentCapabilities.run_in_background),
+        toolIntentsAvailable: enabledCapabilities.has(AgentCapabilities.tool_intents),
+        statefulSessionsAvailable: enabledCapabilities.has(
+          AgentCapabilities.stateful_code_sessions,
+        ),
+        allowedStatefulCodeEnvironments: agentsEConfig?.statefulCodeSessions?.allowedEnvironments,
+        memoryAvailable,
+      };
+      const discoveryDeps = {
+        getAgent: db.getAgent,
+        checkPermission: async ({ userId, role, resourceId, requiredPermission }) => {
+          const permissions = await getRemoteAgentPermissions(
+            { getEffectivePermissions },
+            userId,
+            role,
+            resourceId,
+          );
+          return hasPermissions(permissions, requiredPermission);
         },
-        {
-          getAgent: db.getAgent,
-          // Use `getRemoteAgentPermissions` so sub-agent authorization
-          // matches what the route's `createCheckRemoteAgentAccess`
-          // middleware does for the primary: AGENT owners with the SHARE
-          // bit are treated as remotely authorized even without an
-          // explicit REMOTE_AGENT grant.
-          checkPermission: async ({ userId, role, resourceId, requiredPermission }) => {
-            const permissions = await getRemoteAgentPermissions(
-              { getEffectivePermissions },
-              userId,
-              role,
-              resourceId,
-            );
-            return hasPermissions(permissions, requiredPermission);
-          },
-          logViolation,
-          db: dbMethods,
-          onAgentInitialized: (agentId, handoffAgent, config) => {
-            agentToolContexts.set(agentId, buildAgentToolContext({ agent: handoffAgent, config }));
-          },
-          initializeAgent,
+        logViolation,
+        db: dbMethods,
+        onAgentInitialized: (loadedAgentId, loadedAgent, config) => {
+          agentToolContexts.set(
+            loadedAgentId,
+            buildAgentToolContext({ agent: loadedAgent, config }),
+          );
         },
-      ));
+        initializeAgent,
+      };
+      if (primaryConfig.edges?.length) {
+        ({
+          agentConfigs: handoffAgentConfigs,
+          edges: discoveredEdges,
+          userMCPAuthMap: discoveredMCPAuthMap,
+        } = await discoverConnectedAgents(discoveryParams, discoveryDeps));
+      }
+      if (subagentsCapabilityEnabled) {
+        discoveredMCPAuthMap = await resolveSubagentGraphs(
+          {
+            ...discoveryParams,
+            rootConfigs: [primaryConfig, ...handoffAgentConfigs.values()],
+          },
+          discoveryDeps,
+        );
+      }
     }
 
     primaryConfig.edges = discoveredEdges;
+    const endpointTokenConfigByAgentId = new Map();
+    for (const [agentId, context] of agentToolContexts) {
+      endpointTokenConfigByAgentId.set(agentId, context.endpointTokenConfig);
+    }
+    const resolveEndpointTokenConfig = (usage) =>
+      resolveAgentTokenConfig({
+        agentId: usage?.agentId,
+        byAgentId: endpointTokenConfigByAgentId,
+        fallback: primaryConfig.endpointTokenConfig,
+      });
 
     // Determine if streaming is enabled (check both request and agent config)
     const streamingDisabled = !!primaryConfig.model_parameters?.disableStreaming;
@@ -449,6 +505,11 @@ const OpenAIChatCompletionController = async (req, res) => {
     // Create tracker for streaming or aggregator for non-streaming
     const tracker = isStreaming ? createOpenAIStreamTracker() : null;
     const aggregator = isStreaming ? null : createOpenAIContentAggregator();
+    const accumulateResponseUsage = (usage) => {
+      const target = isStreaming ? tracker : aggregator;
+      target.usage.promptTokens += usage.input_tokens ?? 0;
+      target.usage.completionTokens += usage.output_tokens ?? 0;
+    };
 
     // Set up response for streaming
     if (isStreaming) {
@@ -491,15 +552,20 @@ const OpenAIChatCompletionController = async (req, res) => {
         const result = await loadToolsForExecution({
           req,
           res,
+          agentResourceType: ResourceType.REMOTE_AGENT,
+          conversationId,
           toolNames,
           agent: ctx.agent ?? agent,
           signal: abortController.signal,
           toolRegistry: ctx.toolRegistry,
+          backgroundToolNames: ctx.backgroundToolNames,
+          intentToolNames: ctx.intentToolNames,
           mcpAvailableTools: ctx.mcpAvailableTools,
           requestScopedConnections: ctx.requestScopedConnections,
           userMCPAuthMap: ctx.userMCPAuthMap,
           tool_resources: ctx.tool_resources,
           actionsEnabled: ctx.actionsEnabled,
+          accessibleMcpServerNames: ctx.accessibleMcpServerNames,
         });
         return enrichLoadedToolsWithAgentContext({
           result,
@@ -516,7 +582,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     const openaiMessages = convertMessages(request.messages);
 
     const toolSet = buildToolSet(primaryConfig);
-    const formatted = formatAgentMessages(openaiMessages, {}, toolSet);
+    const formatted = formatAgentMessages(stripActivityLabelParts(openaiMessages), {}, toolSet);
     const formattedMessages = formatted.messages;
     const initialSummary = formatted.summary;
     let indexTokenCountMap = formatted.indexTokenCountMap;
@@ -700,9 +766,7 @@ const OpenAIChatCompletionController = async (req, res) => {
           if (usage) {
             const taggedUsage = markSummarizationUsage(usage, metadata);
             collectedUsage.push(taggedUsage);
-            const target = isStreaming ? tracker : aggregator;
-            target.usage.promptTokens += taggedUsage.input_tokens ?? 0;
-            target.usage.completionTokens += taggedUsage.output_tokens ?? 0;
+            accumulateResponseUsage(taggedUsage);
           }
         },
       },
@@ -721,7 +785,7 @@ const OpenAIChatCompletionController = async (req, res) => {
     };
 
     // Create and run the agent
-    const userId = req.user?.id ?? 'api-user';
+    const userId = principal.userId;
     const agentModel = primaryConfig.model || agent.model_parameters?.model;
     const isAzureEndpoint = agent.provider === 'azureOpenAI';
 
@@ -740,11 +804,50 @@ const OpenAIChatCompletionController = async (req, res) => {
     const userMCPAuthMap = discoveredMCPAuthMap ?? primaryConfig.userMCPAuthMap;
 
     const runAgents = [primaryConfig, ...handoffAgentConfigs.values()];
+    const contextAgentsById = new Map(runAgents.map((runAgent) => [runAgent.id, runAgent]));
+    for (const runAgent of runAgents) {
+      for (const graph of runAgent.subagentGraphConfigs ?? []) {
+        for (const memberConfig of graph.memberConfigs) {
+          contextAgentsById.set(memberConfig.id, memberConfig);
+        }
+      }
+    }
+    const contextAgents = [...contextAgentsById.values()];
+    const agentScopedContext = await buildAgentScopedContext({
+      agentIds: contextAgents.map(({ id }) => id),
+      attachmentsByAgentId: buildAgentContextAttachmentsByAgentId(contextAgents),
+      req,
+    });
+    const mcpManager = getMCPManager();
+    const configServers = await resolveConfigServers(req);
+    await Promise.all(
+      contextAgents.map(async (runAgent) => {
+        const memoryContext = await buildInlineMemoryContext({
+          agent: runAgent,
+          req,
+          userId,
+          memoryAvailable,
+          getFormattedMemories: db.getFormattedMemories,
+        });
+        return applyContextToAgent({
+          agent: runAgent,
+          agentId: runAgent.id,
+          logger,
+          mcpManager,
+          configServers,
+          sharedRunContext: [memoryContext, agentScopedContext.get(runAgent.id)]
+            .filter(Boolean)
+            .join('\n\n'),
+        });
+      }),
+    );
+    const initialSessions = buildInitialToolSessions({ agents: runAgents });
 
     const run = await createRun({
       agents: runAgents,
       messages: formattedMessages,
       indexTokenCountMap,
+      initialSessions,
       initialSummary,
       runId: responseId,
       summarizationConfig,
@@ -756,10 +859,10 @@ const OpenAIChatCompletionController = async (req, res) => {
         conversationId,
       },
       user: { id: userId },
-      tenantId: req.user?.tenantId,
+      tenantId: principal.tenantId,
       /** Bills subagent child-run model calls (reported outside the
        *  streamEvents loop) into the same collectedUsage array. */
-      subagentUsageSink: createSubagentUsageSink(collectedUsage),
+      subagentUsageSink: createSubagentUsageSink(collectedUsage, accumulateResponseUsage),
     });
 
     if (!run) {
@@ -824,23 +927,17 @@ const OpenAIChatCompletionController = async (req, res) => {
           model: agentModel,
         },
       );
-      // Tokens from collectedUsage directly (usageResult.input_tokens includes cache tokens, causing inflation)
-      const promptTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_tokens) || 0), 0);
-      const cacheCreationTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_creation) || Number(u?.cache_creation_input_tokens) || 0), 0);
-      const cacheReadTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.input_token_details?.cache_read) || Number(u?.cache_read_input_tokens) || 0), 0);
-      const completionTokens = collectedUsage.reduce((sum, u) => sum + (Number(u?.output_tokens) || 0), 0);
-      await trackEvent(isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded', {
+      await trackSpendEvent({
+        eventName: isAzureEndpoint ? 'AzureApiAgentAnswerEnded' : 'ApiAgentAnswerEnded',
         userId,
         agentId,
         model: agentModel,
         conversationId,
         endpoint: agent.provider || 'unknown',
-        promptTokens,
-        cacheCreationTokens,
-        cacheReadTokens,
-        completionTokens,
-        messageTokens: promptTokens + cacheCreationTokens + cacheReadTokens + completionTokens,
-        timestamp: new Date().toISOString(),
+        collectedUsage,
+        endpointTokenConfig: primaryConfig.endpointTokenConfig,
+        resolveEndpointTokenConfig,
+        context: 'message',
       });
     } catch (err) {
       logger.error('[OpenAI API] Error recording usage:', err);
@@ -913,9 +1010,42 @@ const OpenAIChatCompletionController = async (req, res) => {
           : 500;
       const errorType =
         statusCode >= 400 && statusCode < 500 ? 'invalid_request_error' : 'server_error';
-      sendErrorResponse(res, statusCode, errorMessage, errorType);
+      const errorCode = typeof error?.code === 'string' ? error.code : null;
+      sendErrorResponse(res, statusCode, errorMessage, errorType, errorCode);
     }
   }
+};
+
+/**
+ * OpenAI-compatible chat completions ingress adapter for agents.
+ * Authentication and remote-agent authorization have already run in route middleware.
+ *
+ * POST /v1/chat/completions
+ */
+const OpenAIChatCompletionController = async (req, res) => {
+  const receivedAt = Date.now();
+  const validation = validateRequest(req.body);
+  if (isChatCompletionValidationFailure(validation)) {
+    return sendErrorResponse(res, 400, validation.error);
+  }
+
+  let envelope;
+  try {
+    envelope = createAgentRunEnvelope({
+      protocol: 'chat.completions',
+      requestId: req.requestId ?? req.id ?? `agent-run-${nanoid()}`,
+      receivedAt,
+      principal: req.user,
+      payload: validation.request,
+    });
+  } catch (error) {
+    if (error instanceof AgentRunEnvelopeError) {
+      return sendErrorResponse(res, 400, error.message, 'invalid_request_error');
+    }
+    throw error;
+  }
+
+  return executeOpenAIChatCompletion(envelope, { req, res });
 };
 
 /**

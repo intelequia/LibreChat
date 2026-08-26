@@ -20,6 +20,7 @@
  */
 import { nanoid } from 'nanoid';
 import { AgentCapabilities } from 'librechat-data-provider';
+import type { StatefulCodeEnvironment } from 'librechat-data-provider';
 import type { Response as ServerResponse, Request } from 'express';
 import type {
   ChatCompletionResponse,
@@ -69,15 +70,17 @@ export interface ChatCompletionDependencies {
   /** Create agent run */
   createRun?: CreateRunFn;
   /**
-   * App config. Optional, but required for agents with `execute_code` in
-   * their tools: the helper derives `codeEnvAvailable` from
+   * App config. Optional for basic chat, but required for tenant-scoped
+   * Langfuse fanout and for agents with `execute_code` in their tools:
+   * tenant Langfuse keys are forwarded to `createRun`, and the helper derives
+   * `codeEnvAvailable` from
    * `appConfig?.endpoints?.agents?.capabilities` and forwards it into
    * `deps.initializeAgent`. When `appConfig` is omitted, the resolved
    * `codeEnvAvailable` is `undefined`, so `initializeAgent` skips the
    * `execute_code` → `bash_tool` + `read_file` expansion entirely and
    * code-requesting agents silently lose sandbox tools. Pass `appConfig`
    * (even a minimal shape with just `endpoints.agents.capabilities`) to
-   * keep code execution working.
+   * keep tenant tracing and code execution working.
    */
   appConfig?: AppConfig;
   /** Tool execute options for event-driven tool execution */
@@ -118,6 +121,8 @@ interface InitializedAgent {
   toolContextMap: Record<string, unknown>;
   maxContextTokens: number;
   userMCPAuthMap?: Record<string, Record<string, string>>;
+  /** Names of tools with the host-injected `intent` label param (see `agents/intent.ts`). */
+  intentToolNames?: string[];
   [key: string]: unknown;
 }
 
@@ -144,6 +149,34 @@ interface InitializeAgentParams {
    * skips the expansion (same semantics as the in-repo controllers).
    */
   codeEnvAvailable?: boolean;
+  /**
+   * Whether the admin-level `stateful_code_sessions` capability is enabled.
+   * Threaded to `initializeAgent` alongside `codeEnvAvailable` so this
+   * OpenAI-compatible route resolves stateful sessions identically to the
+   * in-repo controllers; absent / `undefined` disables the feature.
+   */
+  statefulSessionsAvailable?: boolean;
+  /** Deployment allowlist carried explicitly because this route's Request has no req.config. */
+  allowedStatefulCodeEnvironments?: readonly StatefulCodeEnvironment[];
+  /**
+   * Whether the admin-level `run_in_background` capability is enabled.
+   * Gates `applyBackgroundToolCalls` in `initializeAgent` (the injected
+   * `run_in_background` param + the `check_background_task` poll tool);
+   * absent / `undefined` disables background tool calls on this route.
+   */
+  backgroundToolsAvailable?: boolean;
+  /**
+   * Whether the admin-level `tool_intents` capability is enabled. Gates
+   * `applyIntentLabels` in `initializeAgent` (the injected `intent` label
+   * param); absent / `undefined` disables intent labels on this route.
+   *
+   * Boundary: injection and the capability-off sanitize operate on the
+   * `toolDefinitions`/`toolRegistry` surfaces. A custom `LoadToolsFn` that
+   * returns only structured tool INSTANCES bypasses both — such loaders
+   * must provide definition/registry surfaces to participate in intent
+   * labels (matching how the in-repo tool loader behaves).
+   */
+  toolIntentsAvailable?: boolean;
 }
 
 /**
@@ -176,6 +209,7 @@ type CreateRunFn = (params: {
   requestBody: Record<string, unknown>;
   user: Record<string, unknown>;
   tenantId?: string;
+  appConfig?: Pick<AppConfig, 'endpoints' | 'langfuse'>;
   tokenCounter?: (message: unknown) => number;
 }) => Promise<{
   Graph?: unknown;
@@ -435,12 +469,31 @@ export async function createAgentChatCompletion(
      * use.
      */
     const agentsConfig = (deps.appConfig?.endpoints as Record<string, unknown> | undefined)?.agents;
-    const codeEnvAvailable =
+    const capabilityEnabled = (capability: AgentCapabilities): boolean | undefined =>
       agentsConfig != null && typeof agentsConfig === 'object'
-        ? ((agentsConfig as { capabilities?: string[] }).capabilities ?? []).includes(
-            AgentCapabilities.execute_code,
-          )
+        ? ((agentsConfig as { capabilities?: string[] }).capabilities ?? []).includes(capability)
         : undefined;
+    const codeEnvAvailable = capabilityEnabled(AgentCapabilities.execute_code);
+    /** Mirror `codeEnvAvailable` for the stateful-session gate so this route
+     *  also carries each agent's trusted stateful endpoint/profile selection
+     *  into tool loading and prewarming. */
+    const statefulSessionsAvailable = capabilityEnabled(AgentCapabilities.stateful_code_sessions);
+    const allowedStatefulCodeEnvironments =
+      agentsConfig != null && typeof agentsConfig === 'object'
+        ? (
+            agentsConfig as {
+              statefulCodeSessions?: {
+                allowedEnvironments?: readonly StatefulCodeEnvironment[];
+              };
+            }
+          ).statefulCodeSessions?.allowedEnvironments
+        : undefined;
+    /** Same gate as the in-repo controllers: without it, agents that opted
+     *  tools in via tool_options.run_in_background silently lose the
+     *  background param + poll tool on this route. */
+    const backgroundToolsAvailable = capabilityEnabled(AgentCapabilities.run_in_background);
+    /** Same gate for the injected `intent` label param. */
+    const toolIntentsAvailable = capabilityEnabled(AgentCapabilities.tool_intents);
 
     // Initialize the agent first to check for disableStreaming
     const initializedAgent = await deps.initializeAgent({
@@ -457,6 +510,10 @@ export async function createAgentChatCompletion(
       allowedProviders,
       isInitialAgent: true,
       codeEnvAvailable,
+      statefulSessionsAvailable,
+      allowedStatefulCodeEnvironments,
+      backgroundToolsAvailable,
+      toolIntentsAvailable,
     });
 
     // Determine if streaming is enabled (check both request and agent config)
@@ -526,6 +583,12 @@ export async function createAgentChatCompletion(
         },
         user: safeUser,
         tenantId: typeof reqUser?.tenantId === 'string' ? reqUser.tenantId : undefined,
+        appConfig: deps.appConfig
+          ? {
+              endpoints: deps.appConfig.endpoints,
+              langfuse: deps.appConfig.langfuse,
+            }
+          : undefined,
       });
 
       if (run) {
@@ -537,6 +600,13 @@ export async function createAgentChatCompletion(
               thread_id: conversationId,
               user_id: userId,
               user: safeUser,
+              /** Same per-agent channel the in-repo controllers thread via
+               *  `loadTools`: without it, the executor's PTC path cannot
+               *  strip host-injected `intent` params from the schemas the
+               *  sandbox bridge advertises on this route. */
+              ...(initializedAgent.intentToolNames?.length
+                ? { intentToolNames: initializedAgent.intentToolNames }
+                : {}),
             },
             signal: abortController.signal,
             streamMode: 'values',
@@ -581,7 +651,27 @@ export async function createAgentChatCompletion(
       writeSSE(res, '[DONE]');
       res.end();
     } else {
-      sendErrorResponse(res, 500, errorMessage, 'server_error');
+      const candidateStatus =
+        error != null && typeof error === 'object'
+          ? ((error as { status?: unknown; statusCode?: unknown }).status ??
+            (error as { statusCode?: unknown }).statusCode)
+          : undefined;
+      const statusCode =
+        typeof candidateStatus === 'number' &&
+        Number.isInteger(candidateStatus) &&
+        candidateStatus >= 400 &&
+        candidateStatus < 600
+          ? candidateStatus
+          : 500;
+      const errorType =
+        statusCode >= 400 && statusCode < 500 ? 'invalid_request_error' : 'server_error';
+      const errorCode =
+        error != null &&
+        typeof error === 'object' &&
+        typeof (error as { code?: unknown }).code === 'string'
+          ? (error as { code: string }).code
+          : null;
+      sendErrorResponse(res, statusCode, errorMessage, errorType, errorCode);
     }
   }
 }

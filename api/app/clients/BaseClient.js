@@ -22,7 +22,9 @@ const {
   getReferencedQuotes,
   encodeAndFormatAudios,
   encodeAndFormatVideos,
+  getTransactionsConfig,
   encodeAndFormatDocuments,
+  getLangfuseTraceMessageFields,
 } = require('@librechat/api');
 const {
   Constants,
@@ -38,6 +40,7 @@ const {
   supportsBalanceCheck,
   isBedrockDocumentType,
   getEndpointFileConfig,
+  stripReasoningLabelMetadata,
 } = require('librechat-data-provider');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { logViolation } = require('~/cache');
@@ -51,6 +54,16 @@ const collectHistoricalFileRefs = (message) => {
   }
   if (Array.isArray(message.attachments)) {
     refs.push(...message.attachments);
+  }
+  /** Steer parts carry their own attachment refs inside assistant content;
+   *  collecting them here folds the steer replay stamp's lookup into this
+   *  single per-turn query (see `stampSteerPartMedia`). */
+  if (Array.isArray(message.content)) {
+    for (const part of message.content) {
+      if (part?.type === ContentTypes.STEER && Array.isArray(part.files)) {
+        refs.push(...part.files);
+      }
+    }
   }
   return refs;
 };
@@ -260,11 +273,19 @@ class BaseClient {
    * @param {string} [messageId]
    * @returns {Promise<void>}
    */
-  async recordTokenUsage({ model, balance, promptTokens, completionTokens, messageId }) {
+  async recordTokenUsage({
+    model,
+    balance,
+    messageId,
+    transactions,
+    promptTokens,
+    completionTokens,
+  }) {
     logger.debug('[BaseClient] `recordTokenUsage` not implemented.', {
       model,
       balance,
       messageId,
+      transactions,
       promptTokens,
       completionTokens,
     });
@@ -390,6 +411,7 @@ class BaseClient {
       parentMessageId,
       responseMessageId,
     } = await this.setMessageOptions(opts);
+    this.options.startupTelemetry?.mark('history_loaded');
 
     const userMessage = opts.isEdited
       ? this.currentMessages[this.currentMessages.length - 2]
@@ -579,11 +601,18 @@ class BaseClient {
       } else if (editedContent != null) {
         // Handle editedContent for content parts
         if (editedContent && latestMessage.content && Array.isArray(latestMessage.content)) {
-          const { index, text, type } = editedContent;
+          const { index, type } = editedContent;
+          const text = editedContent[type];
           if (index >= 0 && index < latestMessage.content.length) {
             const contentPart = latestMessage.content[index];
             if (type === ContentTypes.THINK && contentPart.type === ContentTypes.THINK) {
               contentPart[ContentTypes.THINK] = text;
+              delete contentPart.reasoning_label;
+              delete contentPart.reasoning_label_step_id;
+              delete contentPart.reasoning_label_attempts;
+              delete contentPart.reasoning_label_submitted_chars;
+              delete contentPart.reasoning_label_revision;
+              delete contentPart.reasoning_label_status;
             } else if (type === ContentTypes.TEXT && contentPart.type === ContentTypes.TEXT) {
               contentPart[ContentTypes.TEXT] = text;
             }
@@ -611,6 +640,7 @@ class BaseClient {
       this.getBuildMessagesOptions(opts),
       opts,
     );
+    this.options.startupTelemetry?.mark('messages_built');
 
     if (tokenCountMap && tokenCountMap[userMessage.messageId]) {
       userMessage.tokenCount = tokenCountMap[userMessage.messageId];
@@ -694,7 +724,7 @@ class BaseClient {
     }
 
     const balanceConfig = getBalanceConfig(appConfig);
-
+    const transactionsConfig = getTransactionsConfig(appConfig);
     if (
       balanceConfig?.enabled &&
       supportsBalanceCheck[this.options.endpointType ?? this.options.endpoint]
@@ -743,12 +773,19 @@ class BaseClient {
       this.abortController.requestCompleted = true;
     }
 
+    const isAgentResponse =
+      this.clientName === EModelEndpoint.agents || isAgentsEndpoint(this.options.endpoint);
+    const langfuseTraceFields = isAgentResponse
+      ? await getLangfuseTraceMessageFields(appConfig, responseMessageId)
+      : undefined;
+
     /** @type {TMessage} */
     const responseMessage = {
       messageId: responseMessageId,
       conversationId,
       parentMessageId: userMessage.messageId,
       isCreatedByUser: false,
+      ...(langfuseTraceFields ?? {}),
       isEdited,
       model: this.getResponseModel(),
       sender: this.sender,
@@ -809,6 +846,7 @@ class BaseClient {
           promptTokens,
           completionTokens,
           balance: balanceConfig,
+          transactions: transactionsConfig,
           /** Note: When using agents, responseMessage.model is the agent ID, not the model */
           model: this.model,
           messageId: this.responseMessageId,
@@ -862,6 +900,19 @@ class BaseClient {
 
     if (this.contextMeta) {
       responseMessage.contextMeta = this.contextMeta;
+    }
+
+    /** Resumable generation controllers must win the generation's terminal
+     * CAS before this outcome-defining `unfinished:false` write can begin.
+     * The hook is deliberately narrow: ordinary clients omit it, and `false`
+     * means another terminal owner (for example Stop) already won, so this
+     * stale completion must return without writing the response row. */
+    if (typeof opts.beforeResponsePersistence === 'function') {
+      const ownsTerminalPersistence = await opts.beforeResponsePersistence(responseMessage);
+      if (ownsTerminalPersistence === false) {
+        responseMessage.databasePromise = Promise.resolve({ persistenceSkipped: true });
+        return responseMessage;
+      }
     }
 
     responseMessage.databasePromise = this.saveMessageToDatabase(
@@ -1202,6 +1253,8 @@ class BaseClient {
             !item.type ||
             item.type === ContentTypes.THINK ||
             item.type === ContentTypes.ERROR ||
+            // UI-only progress headers — never model input, never billed output
+            item.type === ContentTypes.ACTIVITY_LABEL ||
             item.type === ContentTypes.IMAGE_URL
           ) {
             continue;
@@ -1265,36 +1318,78 @@ class BaseClient {
       return existingContent.concat(newCompletion);
     }
 
-    if (editedType !== ContentTypes.TEXT && editedType !== ContentTypes.THINK) {
-      return existingContent.concat(newCompletion);
-    }
-
     const lastIndex = existingContent.length - 1;
     const lastExisting = existingContent[lastIndex];
     const firstNew = newCompletion[0];
+    /** Phased and legacy/unphased text are distinct semantic streams. Merging
+     *  either direction would stamp retained text with the wrong phase. */
+    const textPhaseCompatible =
+      editedType !== ContentTypes.TEXT ||
+      (lastExisting?.phase ?? null) === (firstNew?.phase ?? null);
+    const mergesFirstPart =
+      (editedType === ContentTypes.TEXT || editedType === ContentTypes.THINK) &&
+      lastExisting?.type === firstNew?.type &&
+      firstNew?.type === editedType &&
+      textPhaseCompatible;
+    /** Phase bounds are completion-local while the run streams. Persist them
+     *  in the same absolute index space as the edited response assembled
+     *  here. When the first new text/think part merges into the retained tail,
+     *  every completion index shifts by prefixLength - 1; otherwise it shifts
+     *  by the full retained prefix. */
+    const phaseIndexOffset = mergesFirstPart ? lastIndex : existingContent.length;
+    const adjustedCompletion = newCompletion.map((part) => {
+      if (
+        part?.type !== ContentTypes.ACTIVITY_LABEL ||
+        part.activity_label_type !== 'phase' ||
+        typeof part.activity_start_index !== 'number'
+      ) {
+        return part;
+      }
+      return {
+        ...part,
+        activity_start_index: part.activity_start_index + phaseIndexOffset,
+        ...(typeof part.activity_end_index === 'number' && {
+          activity_end_index: part.activity_end_index + phaseIndexOffset,
+        }),
+      };
+    });
 
-    if (lastExisting?.type !== firstNew?.type || firstNew?.type !== editedType) {
-      return existingContent.concat(newCompletion);
+    if (editedType !== ContentTypes.TEXT && editedType !== ContentTypes.THINK) {
+      return existingContent.concat(adjustedCompletion);
+    }
+
+    if (!mergesFirstPart) {
+      return existingContent.concat(adjustedCompletion);
     }
 
     const mergedContent = [...existingContent];
     if (editedType === ContentTypes.TEXT) {
       mergedContent[lastIndex] = {
         ...mergedContent[lastIndex],
+        ...(firstNew.phase != null && { phase: firstNew.phase }),
         [ContentTypes.TEXT]:
-          (mergedContent[lastIndex][ContentTypes.TEXT] || '') + (firstNew[ContentTypes.TEXT] || ''),
+          (mergedContent[lastIndex][ContentTypes.TEXT] || '') +
+          (adjustedCompletion[0][ContentTypes.TEXT] || ''),
       };
     } else {
       mergedContent[lastIndex] = {
-        ...mergedContent[lastIndex],
+        ...stripReasoningLabelMetadata(mergedContent[lastIndex]),
+        ...(adjustedCompletion[0].reasoning_label_step_id != null && {
+          reasoning_label: adjustedCompletion[0].reasoning_label,
+          reasoning_label_step_id: adjustedCompletion[0].reasoning_label_step_id,
+          reasoning_label_attempts: adjustedCompletion[0].reasoning_label_attempts,
+          reasoning_label_submitted_chars: adjustedCompletion[0].reasoning_label_submitted_chars,
+          reasoning_label_revision: adjustedCompletion[0].reasoning_label_revision,
+          reasoning_label_status: adjustedCompletion[0].reasoning_label_status,
+        }),
         [ContentTypes.THINK]:
           (mergedContent[lastIndex][ContentTypes.THINK] || '') +
-          (firstNew[ContentTypes.THINK] || ''),
+          (adjustedCompletion[0][ContentTypes.THINK] || ''),
       };
     }
 
     // Add remaining completion items
-    return mergedContent.concat(newCompletion.slice(1));
+    return mergedContent.concat(adjustedCompletion.slice(1));
   }
 
   async sendPayload(payload, opts = {}) {
@@ -1406,6 +1501,7 @@ class BaseClient {
       if (
         file.embedded === true ||
         file.metadata?.codeEnvRef != null ||
+        file.metadata?.codeEnvRefs != null ||
         file.metadata?.fileIdentifier != null
       ) {
         allFiles.push(file);
@@ -1500,6 +1596,9 @@ class BaseClient {
         }
       }
     }
+    /** Owner-scoped docs for THIS turn, including steer-part refs — the steer
+     *  replay stamp consumes this instead of issuing a second query. */
+    this.authorizedHistoricalFiles = authorizedFilesById;
 
     /**
      *
@@ -1551,8 +1650,10 @@ class BaseClient {
         return message;
       }
 
-      await this.addFileContextToMessage(message, contextFiles);
-      await this.processAttachments(message, contextFiles);
+      await Promise.all([
+        this.addFileContextToMessage(message, contextFiles),
+        this.processAttachments(message, contextFiles),
+      ]);
 
       this.message_file_map[message.messageId] = contextFiles;
       return message;

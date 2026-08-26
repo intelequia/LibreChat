@@ -1,5 +1,13 @@
-const { Constants } = require('librechat-data-provider');
+const { Constants, ContentTypes } = require('librechat-data-provider');
 const { FakeClient, initializeFakeClient } = require('./FakeClient');
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 jest.mock('~/db/connect');
 jest.mock('~/server/services/Config', () => ({
@@ -683,6 +691,53 @@ describe('BaseClient', () => {
       );
     });
 
+    it('applies edited reasoning content from its typed payload before regeneration', async () => {
+      const responseMessageId = 'response-with-reasoning';
+      const newHistory = [
+        ...messageHistory,
+        {
+          role: 'assistant',
+          isCreatedByUser: false,
+          messageId: responseMessageId,
+          parentMessageId: '3',
+          content: [
+            {
+              type: ContentTypes.THINK,
+              think: 'Original reasoning',
+              phase: 'analysis',
+              reasoning_label: 'Inspecting the original path',
+              reasoning_label_step_id: 'old-step',
+              reasoning_label_attempts: 2,
+              reasoning_label_submitted_chars: 18,
+              reasoning_label_revision: 2,
+              reasoning_label_status: 'complete',
+            },
+            { type: ContentTypes.TEXT, text: 'Original response' },
+          ],
+        },
+      ];
+
+      TestClient = initializeFakeClient(apiKey, options, newHistory);
+      await TestClient.sendMessage('test message', {
+        isEdited: true,
+        overrideParentMessageId: 'user-message-id',
+        parentMessageId: '3',
+        responseMessageId,
+        editedContent: {
+          index: 0,
+          type: ContentTypes.THINK,
+          [ContentTypes.THINK]: 'Updated reasoning',
+        },
+      });
+
+      const editedResponse = TestClient.currentMessages[TestClient.currentMessages.length - 1];
+      expect(editedResponse.content[0]).toEqual({
+        type: ContentTypes.THINK,
+        think: 'Updated reasoning',
+        phase: 'analysis',
+      });
+    });
+
     test('setOptions is called with the correct arguments only when replaceOptions is set to true', async () => {
       TestClient.setOptions = jest.fn();
       const opts = { conversationId: '123', parentMessageId: '456', replaceOptions: true };
@@ -744,6 +799,170 @@ describe('BaseClient', () => {
         saveOptions,
         user,
       );
+    });
+
+    test('does not start the completed response write when terminal ownership is denied', async () => {
+      const hookStarted = deferred();
+      const terminalDecision = deferred();
+      const beforeResponsePersistence = jest.fn(() => {
+        hookStarted.resolve();
+        return terminalDecision.promise;
+      });
+      const saveSpy = jest.spyOn(TestClient, 'saveMessageToDatabase');
+
+      const responsePromise = TestClient.sendMessage('Race Stop against completion.', {
+        user: {},
+        beforeResponsePersistence,
+      });
+      await hookStarted.promise;
+
+      expect(beforeResponsePersistence).toHaveBeenCalledTimes(1);
+      expect(
+        saveSpy.mock.calls.filter(([message]) => message?.isCreatedByUser === false),
+      ).toHaveLength(0);
+
+      terminalDecision.resolve(false);
+      const response = await responsePromise;
+
+      expect(beforeResponsePersistence).toHaveBeenCalledWith(response);
+      expect(
+        saveSpy.mock.calls.filter(([message]) => message?.isCreatedByUser === false),
+      ).toHaveLength(0);
+      expect(TestClient.savedMessageIds.has(response.messageId)).toBe(false);
+      await expect(response.databasePromise).resolves.toEqual({ persistenceSkipped: true });
+    });
+
+    test('starts the completed response write only after terminal ownership is granted', async () => {
+      const hookStarted = deferred();
+      const terminalDecision = deferred();
+      const beforeResponsePersistence = jest.fn(() => {
+        hookStarted.resolve();
+        return terminalDecision.promise;
+      });
+      const saveSpy = jest.spyOn(TestClient, 'saveMessageToDatabase');
+
+      const responsePromise = TestClient.sendMessage('Complete after winning ownership.', {
+        user: {},
+        beforeResponsePersistence,
+      });
+      await hookStarted.promise;
+      expect(
+        saveSpy.mock.calls.filter(([message]) => message?.isCreatedByUser === false),
+      ).toHaveLength(0);
+
+      terminalDecision.resolve(true);
+      const response = await responsePromise;
+
+      expect(
+        saveSpy.mock.calls.filter(([message]) => message?.isCreatedByUser === false),
+      ).toHaveLength(1);
+      await expect(response.databasePromise).resolves.toEqual(expect.any(Object));
+    });
+
+    test('persists the generation-time Langfuse sampling decision for agent responses', async () => {
+      const previousSampleRate = process.env.LANGFUSE_SAMPLE_RATE;
+      process.env.LANGFUSE_SAMPLE_RATE = '0';
+      TestClient.options.endpoint = 'agents';
+      const saveSpy = jest.spyOn(TestClient, 'saveMessageToDatabase');
+
+      try {
+        const response = await TestClient.sendMessage('Hello, world!', { user: {} });
+
+        expect(response.langfuseSampled).toBe(false);
+        expect(response.langfuseDestinationIds).toEqual([]);
+        expect(saveSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            langfuseSampled: false,
+            langfuseDestinationIds: [],
+          }),
+          expect.any(Object),
+          expect.any(Object),
+        );
+      } finally {
+        if (previousSampleRate == null) {
+          delete process.env.LANGFUSE_SAMPLE_RATE;
+        } else {
+          process.env.LANGFUSE_SAMPLE_RATE = previousSampleRate;
+        }
+      }
+    });
+
+    test('persists the Langfuse sampling decision for agent clients using a provider endpoint', async () => {
+      const previousSampleRate = process.env.LANGFUSE_SAMPLE_RATE;
+      const previousClientName = TestClient.clientName;
+      const previousEndpoint = TestClient.options.endpoint;
+      process.env.LANGFUSE_SAMPLE_RATE = '0';
+      TestClient.clientName = 'agents';
+      TestClient.options.endpoint = 'bedrock';
+      const saveSpy = jest.spyOn(TestClient, 'saveMessageToDatabase');
+
+      try {
+        const response = await TestClient.sendMessage('Hello, world!', { user: {} });
+
+        expect(response.langfuseSampled).toBe(false);
+        expect(response.langfuseDestinationIds).toEqual([]);
+        expect(saveSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            endpoint: 'bedrock',
+            langfuseSampled: false,
+            langfuseDestinationIds: [],
+          }),
+          expect.any(Object),
+          expect.any(Object),
+        );
+      } finally {
+        if (previousSampleRate == null) {
+          delete process.env.LANGFUSE_SAMPLE_RATE;
+        } else {
+          process.env.LANGFUSE_SAMPLE_RATE = previousSampleRate;
+        }
+        TestClient.clientName = previousClientName;
+        TestClient.options.endpoint = previousEndpoint;
+      }
+    });
+
+    test('persists no Langfuse destination when a sampled trace has no configured export', async () => {
+      const envKeys = [
+        'LANGFUSE_PUBLIC_KEY',
+        'LANGFUSE_SECRET_KEY',
+        'LANGFUSE_FANOUT_ENABLED',
+        'LANGFUSE_FANOUT_COLLECTOR_URL',
+        'TENANT_ISOLATION_STRICT',
+      ];
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+      const previousSampleRate = process.env.LANGFUSE_SAMPLE_RATE;
+      envKeys.forEach((key) => delete process.env[key]);
+      process.env.LANGFUSE_SAMPLE_RATE = '1';
+      TestClient.options.endpoint = 'agents';
+      const saveSpy = jest.spyOn(TestClient, 'saveMessageToDatabase');
+
+      try {
+        const response = await TestClient.sendMessage('Hello, world!', { user: {} });
+
+        expect(response.langfuseSampled).toBe(true);
+        expect(response.langfuseDestinationIds).toEqual([]);
+        expect(saveSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            langfuseSampled: true,
+            langfuseDestinationIds: [],
+          }),
+          expect.any(Object),
+          expect.any(Object),
+        );
+      } finally {
+        for (const [key, value] of Object.entries(previousEnv)) {
+          if (value == null) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+        if (previousSampleRate == null) {
+          delete process.env.LANGFUSE_SAMPLE_RATE;
+        } else {
+          process.env.LANGFUSE_SAMPLE_RATE = previousSampleRate;
+        }
+      }
     });
 
     test('should handle existing conversation when getConvo retrieves one', async () => {
@@ -836,6 +1055,15 @@ describe('BaseClient', () => {
         anotherExistingField: 'anotherValue',
         temperature: 0.7,
         modelLabel: 'GPT-3.5',
+        subagentThread: {
+          rootConversationId: 'root-conversation',
+          parentConversationId: 'parent-conversation',
+          parentMessageId: 'parent-message',
+          parentToolCallId: 'parent-tool-call',
+          subagentType: 'researcher',
+          subagentKind: 'agent',
+          depth: 1,
+        },
       };
 
       getConvo.mockResolvedValue(existingConvo);
@@ -870,6 +1098,7 @@ describe('BaseClient', () => {
 
       // Only check that someExistingField is in unsetFields
       expect(saveOptions.unsetFields).toHaveProperty('someExistingField', 1);
+      expect(saveOptions.unsetFields).not.toHaveProperty('subagentThread');
 
       // Mock saveConvo to return the expected fields
       saveConvo.mockImplementation((req, fields) => {
@@ -903,6 +1132,18 @@ describe('BaseClient', () => {
       const opts = {};
       await TestClient.sendMessage('Hello, world!', opts);
       expect(TestClient.sendCompletion).toHaveBeenCalledWith(payload, opts);
+    });
+
+    test('records history and message-build startup milestones', async () => {
+      const startupTelemetry = { mark: jest.fn() };
+      TestClient.options.startupTelemetry = startupTelemetry;
+
+      await TestClient.sendMessage('Hello, world!', {});
+
+      expect(startupTelemetry.mark.mock.calls.map(([milestone]) => milestone)).toEqual([
+        'history_loaded',
+        'messages_built',
+      ]);
     });
 
     test('getTokenCount for response is called with the correct arguments', async () => {
@@ -1085,6 +1326,80 @@ describe('BaseClient', () => {
       expect(TestClient.recordTokenUsage).toHaveBeenCalledWith(
         expect.objectContaining({
           model: instanceModel,
+        }),
+      );
+    });
+  });
+
+  /**
+   * The `transactions.enabled` guard lives in `createTransaction`, which reads it off
+   * the object it is handed. Dropping the config anywhere between here and there
+   * silently re-enables the writes rather than failing, so pin the wiring itself.
+   */
+  describe('recordTokenUsage transactions config', () => {
+    let priorEndpoint;
+    let priorEndpointType;
+
+    const arrangeFallbackPath = () => {
+      TestClient.getTokenCountForResponse = jest.fn().mockReturnValue(50);
+      TestClient.recordTokenUsage = jest.fn().mockResolvedValue(undefined);
+      TestClient.buildMessages.mockReturnValue({
+        prompt: [],
+        tokenCountMap: { res: 50 },
+      });
+    };
+
+    /** `options` is shared across this file's tests, so an endpoint left behind by an earlier
+     * case would route the balance-enabled arrangement into `checkBalance`. */
+    beforeEach(() => {
+      priorEndpoint = TestClient.options.endpoint;
+      priorEndpointType = TestClient.options.endpointType;
+      delete TestClient.options.endpoint;
+      delete TestClient.options.endpointType;
+    });
+
+    afterEach(() => {
+      delete TestClient.options.req;
+      TestClient.options.endpoint = priorEndpoint;
+      TestClient.options.endpointType = priorEndpointType;
+    });
+
+    test('should forward the resolved transactions config to recordTokenUsage', async () => {
+      TestClient.options.req = { config: { transactions: { enabled: false } } };
+      arrangeFallbackPath();
+
+      await TestClient.sendMessage('Hello', {});
+
+      expect(TestClient.recordTokenUsage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactions: { enabled: false },
+        }),
+      );
+    });
+
+    test('should default to enabled transactions when no app config is present', async () => {
+      arrangeFallbackPath();
+
+      await TestClient.sendMessage('Hello', {});
+
+      expect(TestClient.recordTokenUsage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactions: { enabled: true },
+        }),
+      );
+    });
+
+    test('should forward transactions as enabled when balance tracking overrides the setting', async () => {
+      TestClient.options.req = {
+        config: { transactions: { enabled: false }, balance: { enabled: true } },
+      };
+      arrangeFallbackPath();
+
+      await TestClient.sendMessage('Hello', {});
+
+      expect(TestClient.recordTokenUsage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactions: { enabled: true },
         }),
       );
     });
@@ -1476,6 +1791,45 @@ describe('BaseClient', () => {
       expect(JSON.stringify(secondMessage)).not.toContain('second-forged');
     });
 
+    test('extracts historical file context while encoding provider attachments', async () => {
+      getFiles.mockResolvedValueOnce([ownerFile]);
+      const fileContext = deferred();
+      const providerAttachments = deferred();
+      let completed = false;
+
+      TestClient.addFileContextToMessage.mockImplementation(async (message) => {
+        await fileContext.promise;
+        message.fileContext = 'authorized owner text';
+      });
+      TestClient.processAttachments.mockImplementation(() => providerAttachments.promise);
+
+      const messagesPromise = TestClient.addPreviousAttachments([
+        {
+          messageId: 'msg-concurrent-file-work',
+          files: [{ file_id: 'owner-file', filename: 'owner.txt' }],
+        },
+      ]).then((messages) => {
+        completed = true;
+        return messages;
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(TestClient.addFileContextToMessage).toHaveBeenCalledTimes(1);
+      expect(TestClient.processAttachments).toHaveBeenCalledTimes(1);
+
+      providerAttachments.resolve([ownerFile]);
+      await Promise.resolve();
+      expect(completed).toBe(false);
+
+      fileContext.resolve();
+      const [message] = await messagesPromise;
+
+      expect(message.fileContext).toBe('authorized owner text');
+      expect(TestClient.message_file_map['msg-concurrent-file-work']).toEqual([ownerFile]);
+    });
+
     test('preserves download-only historical attachments without trusting file fields', async () => {
       const [message] = await TestClient.addPreviousAttachments([
         {
@@ -1606,6 +1960,120 @@ describe('BaseClient', () => {
       );
       expect(userSave[0].text).toBe('Just a question');
       expect(userSave[0].quotes).toBeUndefined();
+    });
+  });
+
+  describe('mergeEditedContent phase boundaries', () => {
+    test('carries the new reasoning label when adjacent THINK parts merge', () => {
+      const existing = [
+        {
+          type: ContentTypes.THINK,
+          think: 'Retained reasoning. ',
+          reasoning_label: 'Inspecting the old path',
+          reasoning_label_step_id: 'old-step',
+          reasoning_label_attempts: 1,
+          reasoning_label_submitted_chars: 18,
+          reasoning_label_revision: 1,
+          reasoning_label_status: 'complete',
+        },
+      ];
+      const completion = [
+        {
+          type: ContentTypes.THINK,
+          think: 'Continued reasoning.',
+          reasoning_label: 'Tracing the regenerated path',
+          reasoning_label_step_id: 'new-step',
+          reasoning_label_attempts: 3,
+          reasoning_label_submitted_chars: 20,
+          reasoning_label_revision: 2,
+          reasoning_label_status: 'streaming',
+        },
+      ];
+
+      expect(TestClient.mergeEditedContent(existing, completion, ContentTypes.THINK)).toEqual([
+        {
+          ...completion[0],
+          think: 'Retained reasoning. Continued reasoning.',
+        },
+      ]);
+    });
+
+    test('clears a retained reasoning label when the merged THINK has no label', () => {
+      const existing = [
+        {
+          type: ContentTypes.THINK,
+          think: 'Retained reasoning. ',
+          agentId: 'agent-1',
+          reasoning_label: 'Inspecting the old path',
+          reasoning_label_step_id: 'old-step',
+          reasoning_label_attempts: 3,
+          reasoning_label_submitted_chars: 18,
+          reasoning_label_revision: 2,
+          reasoning_label_status: 'complete',
+        },
+      ];
+      const completion = [
+        {
+          type: ContentTypes.THINK,
+          think: 'Continued without a generated title.',
+          agentId: 'agent-1',
+        },
+      ];
+
+      expect(TestClient.mergeEditedContent(existing, completion, ContentTypes.THINK)).toEqual([
+        {
+          type: ContentTypes.THINK,
+          think: 'Retained reasoning. Continued without a generated title.',
+          agentId: 'agent-1',
+        },
+      ]);
+    });
+
+    test('does not merge commentary into a final answer', () => {
+      const existing = [
+        { type: ContentTypes.TEXT, text: 'Checked the deployment. ', phase: 'commentary' },
+      ];
+      const completion = [
+        { type: ContentTypes.TEXT, text: 'Everything is healthy.', phase: 'final_answer' },
+        {
+          type: ContentTypes.ACTIVITY_LABEL,
+          activity_label_type: 'phase',
+          activity_start_index: 0,
+          activity_end_index: 1,
+          activity_label: 'Verified deployment health',
+        },
+      ];
+
+      expect(TestClient.mergeEditedContent(existing, completion, ContentTypes.TEXT)).toEqual([
+        existing[0],
+        completion[0],
+        { ...completion[1], activity_start_index: 1, activity_end_index: 2 },
+      ]);
+    });
+
+    test.each([
+      [undefined, 'commentary'],
+      ['commentary', undefined],
+    ])('does not merge phased and unphased text (%s → %s)', (existingPhase, completionPhase) => {
+      const existing = [
+        {
+          type: ContentTypes.TEXT,
+          text: 'Retained text. ',
+          ...(existingPhase != null && { phase: existingPhase }),
+        },
+      ];
+      const completion = [
+        {
+          type: ContentTypes.TEXT,
+          text: 'New text.',
+          ...(completionPhase != null && { phase: completionPhase }),
+        },
+      ];
+
+      expect(TestClient.mergeEditedContent(existing, completion, ContentTypes.TEXT)).toEqual([
+        existing[0],
+        completion[0],
+      ]);
     });
   });
 });

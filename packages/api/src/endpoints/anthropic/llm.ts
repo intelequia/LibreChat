@@ -2,8 +2,10 @@ import { Agent } from 'undici';
 import { logger } from '@librechat/data-schemas';
 import { AnthropicClientOptions } from '@librechat/agents';
 import {
-  anthropicSettings,
+  clampOutputConfigEffort,
   omitsSamplingParameters,
+  isThinkingDisabled,
+  anthropicSettings,
   removeNullishValues,
   ThinkingDisplay,
   AuthKeys,
@@ -145,8 +147,19 @@ function getLLMConfig(
       ? ((persistedThinking as { display: string }).display as ThinkingDisplay | string)
       : undefined;
 
+  /**
+   * `thinking` may round-trip as the full Anthropic object rather than a
+   * boolean. Normalize to a flag so a persisted `{ type: 'disabled' }` (e.g. a
+   * Sonnet 5 "thinking off" config stored back into `model_parameters`) is
+   * treated as off — a truthy object would otherwise flip thinking back on.
+   */
+  const thinkingFlag =
+    typeof persistedThinking === 'object' && persistedThinking != null
+      ? (persistedThinking as { type?: string }).type !== 'disabled'
+      : (persistedThinking ?? anthropicSettings.thinking.default);
+
   const systemOptions = {
-    thinking: options.modelOptions?.thinking ?? anthropicSettings.thinking.default,
+    thinking: thinkingFlag,
     promptCache: options.modelOptions?.promptCache ?? anthropicSettings.promptCache.default,
     promptCacheTtl:
       options.modelOptions?.promptCacheTtl ?? anthropicSettings.promptCacheTtl.default,
@@ -243,6 +256,16 @@ function getLLMConfig(
     if (requestOptions.invocationKwargs?.output_config) {
       delete requestOptions.invocationKwargs.output_config;
     }
+  }
+
+  /**
+   * Opus 5 rejects `xhigh`/`max` effort while thinking is disabled (400).
+   * `configureReasoning` returns before setting effort on the disabled path, so
+   * the value applied just above is the one that would ship — clamp it to the
+   * highest level the model accepts in that combination.
+   */
+  if (isThinkingDisabled(requestOptions.thinking)) {
+    clampOutputConfigEffort(resolvedModel, requestOptions.invocationKwargs?.output_config);
   }
 
   const hasActiveThinking = requestOptions.thinking != null;

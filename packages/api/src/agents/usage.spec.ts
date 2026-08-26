@@ -5,6 +5,7 @@ import type { BulkWriteDeps, PricingFns } from './transactions';
 import {
   computeUsageCostUSD,
   aggregateEmittedUsage,
+  createDetachedSubagentUsageRecorder,
   createSubagentUsageSink,
   recordCollectedUsage,
   resolveAgentTokenConfig,
@@ -13,6 +14,7 @@ import {
   computeSummaryUsedTokens,
   priorRunOutputTokens,
 } from './usage';
+import { runWithDetachedSubagentUsage } from './subagentTaskContext';
 
 describe('recordCollectedUsage', () => {
   let mockSpendTokens: jest.Mock;
@@ -1472,7 +1474,9 @@ describe('createSubagentUsageSink', () => {
   it('tags the child agent id so the host can price with the subagent endpoint config', () => {
     const collectedUsage: UsageMetadata[] = [];
     const emitted: UsageMetadata[] = [];
-    const sink = createSubagentUsageSink(collectedUsage, (u) => emitted.push(u));
+    const sink = createSubagentUsageSink(collectedUsage, (u) => {
+      emitted.push(u);
+    });
 
     sink(makeEvent({ subagentAgentId: 'agent_xyz' }));
 
@@ -1480,6 +1484,30 @@ describe('createSubagentUsageSink', () => {
     /** The same tagged object is handed to onUsage (the live emitter). */
     expect(emitted[0]).toBe(collectedUsage[0]);
     expect(emitted[0].agentId).toBe('agent_xyz');
+  });
+
+  it('prices graph usage with the member agent instead of the synthetic execution subject', () => {
+    const collectedUsage: UsageMetadata[] = [];
+    const sink = createSubagentUsageSink(collectedUsage);
+
+    sink(
+      makeEvent({
+        subagentKind: 'graph',
+        subagentAgentId: 'graph:research_team',
+        memberAgentId: 'agent_writer',
+      }),
+    );
+
+    expect(collectedUsage[0].agentId).toBe('agent_writer');
+  });
+
+  it('falls back to the execution subject when the member agent id is empty', () => {
+    const collectedUsage: UsageMetadata[] = [];
+    const sink = createSubagentUsageSink(collectedUsage);
+
+    sink(makeEvent({ subagentAgentId: 'agent_researcher', memberAgentId: '' }));
+
+    expect(collectedUsage[0].agentId).toBe('agent_researcher');
   });
 
   it('preserves cache token details from the child call', () => {
@@ -1522,6 +1550,55 @@ describe('createSubagentUsageSink', () => {
     sink(makeEvent({ usage: undefined as unknown as SubagentUsageEvent['usage'] }));
 
     expect(collectedUsage).toEqual([]);
+  });
+
+  it('routes detached usage to its awaited billing and durable child collectors', async () => {
+    const collectedUsage: UsageMetadata[] = [];
+    const detachedUsage: UsageMetadata[] = [];
+    const emitted: UsageMetadata[] = [];
+    const recordDetachedUsage = jest.fn().mockResolvedValue(undefined);
+    const sink = createSubagentUsageSink(
+      collectedUsage,
+      (usage) => {
+        emitted.push(usage);
+      },
+      recordDetachedUsage,
+    );
+
+    await runWithDetachedSubagentUsage(detachedUsage, async () => {
+      await sink(makeEvent());
+    });
+
+    expect(collectedUsage).toEqual([]);
+    expect(detachedUsage).toHaveLength(1);
+    expect(emitted[0]).toBe(detachedUsage[0]);
+    expect(recordDetachedUsage).toHaveBeenCalledWith(detachedUsage[0]);
+
+    /** The same sink still batches ordinary foreground subagents with the parent. */
+    await sink(makeEvent({ subagentRunId: 'foreground-child' }));
+    expect(collectedUsage).toHaveLength(1);
+    expect(recordDetachedUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('still records detached usage when the auxiliary emitter throws', async () => {
+    const collectedUsage: UsageMetadata[] = [];
+    const detachedUsage: UsageMetadata[] = [];
+    const recordDetachedUsage = jest.fn().mockResolvedValue(undefined);
+    const sink = createSubagentUsageSink(
+      collectedUsage,
+      () => {
+        throw new Error('parent transport was disposed');
+      },
+      recordDetachedUsage,
+    );
+
+    await runWithDetachedSubagentUsage(detachedUsage, async () => {
+      await sink(makeEvent());
+    });
+
+    expect(collectedUsage).toEqual([]);
+    expect(detachedUsage).toHaveLength(1);
+    expect(recordDetachedUsage).toHaveBeenCalledWith(detachedUsage[0]);
   });
 
   it('round-trips into recordCollectedUsage as billed subagent transactions', async () => {
@@ -1608,6 +1685,41 @@ describe('computeUsageCostUSD', () => {
       pricing,
     );
     expect(cost).toBeCloseTo((1000 * 3 + 2000 * 3.75 + 10000 * 0.3 + 500 * 15) / 1e6);
+  });
+
+  it('routes nested cache_write_tokens to the write bucket, not the input rate', () => {
+    /** OpenAI GPT-5.6 reports cache writes as `cache_write_tokens`. Those 2000
+     *  tokens must bill at the write rate (3.75), not fold into input (3);
+     *  inputOnly = 13000 - 2000 write - 10000 read = 1000. */
+    const cost = computeUsageCostUSD(
+      {
+        input_tokens: 13000,
+        output_tokens: 500,
+        model: 'gpt-5.6',
+        provider: 'openAI',
+        input_token_details: { cache_read: 10000, cache_write_tokens: 2000 },
+      },
+      pricing,
+    );
+    expect(cost).toBeCloseTo((1000 * 3 + 2000 * 3.75 + 10000 * 0.3 + 500 * 15) / 1e6);
+  });
+
+  it('routes top-level cache_write_tokens to the write bucket alongside the premium input tier', () => {
+    /** Top-level `cache_write_tokens` (Chat/Responses flattened shape) is also
+     *  recognized; inputOnly = 280000 - 5000 - 15000 = 260000, above the premium
+     *  threshold so input/completion price at the premium tier (8 / 40). */
+    const cost = computeUsageCostUSD(
+      {
+        input_tokens: 280000,
+        output_tokens: 500,
+        model: 'gpt-5.6',
+        provider: 'openAI',
+        input_token_details: { cache_read: 15000 },
+        cache_write_tokens: 5000,
+      },
+      pricing,
+    );
+    expect(cost).toBeCloseTo((260000 * 8 + 5000 * 3.75 + 15000 * 0.3 + 500 * 40) / 1e6);
   });
 });
 
@@ -2061,6 +2173,16 @@ describe('resolveAgentTokenConfig', () => {
     );
   });
 
+  it('observes a selected lazy subagent added after the resolver is created', () => {
+    const byAgentId = new Map([['primary', primary]]);
+    const resolveForUsage = (agentId: string) =>
+      resolveAgentTokenConfig({ agentId, byAgentId, fallback: primary });
+
+    byAgentId.set('lazy-subagent', subagent);
+
+    expect(resolveForUsage('lazy-subagent')).toBe(subagent);
+  });
+
   it('returns undefined for a known agent with no configured rates (built-in pricing)', () => {
     /** A known non-custom agent (e.g. a normal OpenAI agent) is recorded with an
      *  undefined config; it must NOT inherit the custom-primary rates. */
@@ -2089,5 +2211,80 @@ describe('resolveAgentTokenConfig', () => {
 
   it('returns the fallback when there is no per-agent map (single-endpoint graphs)', () => {
     expect(resolveAgentTokenConfig({ agentId: 'primary', fallback: primary })).toBe(primary);
+  });
+});
+
+describe('createDetachedSubagentUsageRecorder', () => {
+  it('snapshots per-agent pricing and records each call as subagent usage', async () => {
+    const spendTokens = jest.fn().mockResolvedValue(undefined);
+    const childConfig = { 'child-model': { prompt: 0.01, completion: 0.02, context: 4096 } };
+    const configs = new Map([['child-agent', childConfig]]);
+    const recorder = createDetachedSubagentUsageRecorder(
+      {
+        spendTokens,
+        spendStructuredTokens: jest.fn().mockResolvedValue(undefined),
+      },
+      {
+        user: 'user-1',
+        conversationId: 'parent-1',
+        messageId: 'response-1',
+        model: 'parent-model',
+        endpointTokenConfigByAgentId: configs,
+      },
+    );
+    configs.set('child-agent', {
+      'child-model': { prompt: 99, completion: 99, context: 4096 },
+    });
+
+    await recorder({
+      usage_type: 'subagent',
+      input_tokens: 12,
+      output_tokens: 4,
+      model: 'child-model',
+      agentId: 'child-agent',
+    });
+
+    expect(spendTokens).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: 'user-1',
+        conversationId: 'parent-1',
+        messageId: 'response-1',
+        context: 'subagent',
+        model: 'child-model',
+        endpointTokenConfig: childConfig,
+      }),
+      { promptTokens: 12, completionTokens: 4 },
+    );
+  });
+
+  it('does not recreate billing records after the owning principal is fenced or deleted', async () => {
+    const spendTokens = jest.fn().mockResolvedValue(undefined);
+    const updateBalance = jest.fn().mockResolvedValue(undefined);
+    const insertMany = jest.fn().mockResolvedValue(undefined);
+    const recorder = createDetachedSubagentUsageRecorder(
+      {
+        spendTokens,
+        spendStructuredTokens: jest.fn().mockResolvedValue(undefined),
+        bulkWriteOps: { updateBalance, insertMany },
+        isPrincipalActive: jest.fn().mockResolvedValue(false),
+      },
+      {
+        user: 'deleted-user',
+        conversationId: 'parent-1',
+        messageId: 'response-1',
+        model: 'child-model',
+      },
+    );
+
+    await recorder({
+      usage_type: 'subagent',
+      input_tokens: 12,
+      output_tokens: 4,
+      model: 'child-model',
+    });
+
+    expect(spendTokens).not.toHaveBeenCalled();
+    expect(updateBalance).not.toHaveBeenCalled();
+    expect(insertMany).not.toHaveBeenCalled();
   });
 });

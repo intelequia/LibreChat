@@ -3,6 +3,14 @@ import { atom, getDefaultStore } from 'jotai';
 import type { TMessage, TContextUsageEvent } from 'librechat-data-provider';
 import type { BranchTotals, BranchUsage } from '~/utils/tokens';
 import { EMPTY_BRANCH, EMPTY_USAGE } from '~/utils/tokens';
+import { createStorageAtom } from './jotai-utils';
+
+/** Sticky preference: does the context popover open with the breakdown showing?
+ *  The gauge alone is the default; a user who wants the detail sets it once. */
+export const contextBreakdownExpandedAtom = createStorageAtom<boolean>(
+  'contextBreakdownExpanded',
+  false,
+);
 
 /** Latest backend context snapshot, anchored to the run's user message for staleness checks */
 export interface ContextSnapshot extends TContextUsageEvent {
@@ -125,6 +133,43 @@ export function migrateUsageFolded(fromId: string, toId: string): void {
  */
 export function clearUsageFolded(conversationId: string): void {
   foldedUsageKeys.delete(conversationId);
+}
+
+/**
+ * Per-agent/model instruction+tool overhead — the system prompt + tool-schema
+ * tokens the next call always sends — cached from the breakdown the live
+ * `ON_CONTEXT_USAGE` event emits. Keyed by agent/model (NOT per conversation),
+ * so a snapshot-less branch (import / never-generated) can reuse the overhead
+ * once the same agent has run anywhere this session, making its prune budget and
+ * gauge account for the fixed overhead the client can't otherwise know. Never
+ * cleared on convo switch; bounded by the number of distinct configs used.
+ */
+const modelOverhead = new Map<string, number>();
+
+/** Stable cache key the writer (usage handler) and reader (estimate) build
+ *  identically. An agent resolves to its real provider/model only after its data
+ *  loads, so the reader (resolved) and writer (raw `agents` submission) would key
+ *  differently — key by `agentId` when present so both agree; non-agent configs
+ *  key by endpoint:model. */
+export function overheadKey(
+  endpoint?: string | null,
+  model?: string | null,
+  agentId?: string | null,
+): string {
+  if (agentId != null && agentId !== '') {
+    return `agent:${agentId}`;
+  }
+  return `${endpoint ?? ''}::${model ?? ''}`;
+}
+
+export function setModelOverhead(key: string, tokens: number): void {
+  if (tokens > 0) {
+    modelOverhead.set(key, tokens);
+  }
+}
+
+export function getModelOverhead(key: string): number {
+  return modelOverhead.get(key) ?? 0;
 }
 
 /** Jotai atomFamily entries are never GC'd — call on conversation switch/cleanup */

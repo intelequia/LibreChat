@@ -1,3 +1,5 @@
+require('../config/credentials');
+
 const telemetry = require('./telemetry');
 
 let appInsights = require('applicationinsights');
@@ -41,12 +43,27 @@ const {
   GenerationJobManager,
   QUERY_DEVTOOLS_HEADER,
   createStreamServices,
+  agentStartupIngressMiddleware,
+  agentStartupTelemetryMiddleware,
   initializeFileStorage,
   initializeDeploymentSkills,
+  initializeDeploymentPlugins,
+  getDeploymentPluginSkills,
+  getDeploymentPluginHookCapabilities,
+  registerDeploymentPluginHooks,
+  hasDeploymentPluginHooks,
+  setPluginHookSource,
+  loadToolApprovalHooks,
   maybeInjectQueryDevtoolsBootstrap,
   preAuthTenantMiddleware,
+  requestContextMiddleware,
+  registerShutdownTask,
+  configureServerTimeouts,
   setupGracefulShutdown,
   updateInterfacePermissions,
+  configureMessageFilterRegexValidator,
+  configureFileConfigRegexEngine,
+  waitForKeyvRedisClient,
 } = require('@librechat/api');
 const { connectDb, indexSync } = require('~/db');
 const {
@@ -58,20 +75,28 @@ const {
 const initializeOAuthReconnectManager = require('./services/initializeOAuthReconnectManager');
 const { capabilityContextMiddleware } = require('./middleware/roles/capabilities');
 const createValidateImageRequest = require('./middleware/validateImageRequest');
-const { startExpiredFileSweep } = require('./services/Files/process');
 const { initializeGitHubSkillSync } = require('./services/Skills/sync');
+const { initializeAgentTriggerService } = require('./services/Agents/triggers');
+const { initializeScheduleEngine, recordExpiredScheduleApproval } = require('./services/Schedules');
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
+const { startExpiredFileSweep } = require('./services/Files/process');
 const { checkMigrations } = require('./services/start/migration');
 const optionalJwtAuth = require('./middleware/optionalJwtAuth');
 const initializeMCPs = require('./services/initializeMCPs');
+const { configureSubagentTaskRouting } = require('./services/Endpoints/agents/subagentThreadStore');
 const configureSocialLogins = require('./socialLogins');
 const createSpaFallback = require('./utils/fallback');
 const { getAppConfig } = require('./services/Config');
 const staticCache = require('./utils/staticCache');
 const noIndex = require('./middleware/noIndex');
 const routes = require('./routes');
+
+/** Route admin file-config MIME patterns through a linear-time engine (ReDoS-safe) on upload. */
+configureFileConfigRegexEngine();
+
+/** Reject messageFilter PII patterns the RE2 runtime engine cannot compile, at config load. */
+configureMessageFilterRegexValidator();
 const NodeCache = require('node-cache');
-const { intelequiaConfigLoader } = require('~/utils');
 
 global.myCache = new NodeCache();
 const { PORT, HOST, ALLOW_SOCIAL_LOGIN, DISABLE_COMPRESSION, TRUST_PROXY } = process.env ?? {};
@@ -83,9 +108,12 @@ const trusted_proxy = Number(TRUST_PROXY) || 1; /* trust first proxy by default 
 
 const app = express();
 let serverReady = false;
+let schedulesReady = false;
 
 const SERVER_NOT_READY_CODE = 'SERVER_NOT_READY';
 const CHAT_START_RETRY_AFTER_SECONDS = '1';
+const SCHEDULES_NOT_READY_CODE = 'SCHEDULES_NOT_READY';
+const SCHEDULE_ENGINE_OPTIONAL_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'DELETE']);
 
 const rejectChatStartsUntilReady = (req, res, next) => {
   if (serverReady || req.method !== 'POST' || req.path === '/abort') {
@@ -99,16 +127,43 @@ const rejectChatStartsUntilReady = (req, res, next) => {
   });
 };
 
+const rejectScheduleWritesUntilReady = (req, res, next) => {
+  if (schedulesReady || SCHEDULE_ENGINE_OPTIONAL_METHODS.has(req.method)) {
+    return next();
+  }
+  res.set('Retry-After', CHAT_START_RETRY_AFTER_SECONDS);
+  return res.status(503).json({
+    code: SCHEDULES_NOT_READY_CODE,
+    error: 'Scheduler is still starting. Please retry shortly.',
+  });
+};
+
 const configureGenerationStreams = () => {
   const streamServices = createStreamServices();
   GenerationJobManager.configure({
     ...streamServices,
     cleanupOnComplete: !isEnabled(process.env.STREAM_KEEP_COMPLETED_JOBS),
   });
+  GenerationJobManager.setApprovalExpiredHandler(recordExpiredScheduleApproval);
   GenerationJobManager.initialize();
+  // Stop active generations and close their SSE streams while the HTTP server drains.
+  registerShutdownTask(
+    'generation job manager prepare',
+    () => GenerationJobManager.prepareForShutdown(),
+    {
+      phase: 'pre-drain',
+      priority: 100,
+    },
+  );
+  // Tear down stream resources before shared caches and telemetry exporters shut down.
+  registerShutdownTask('generation job manager', () => GenerationJobManager.destroy(), {
+    priority: 100,
+  });
 };
 
 const startServer = async () => {
+  await waitForKeyvRedisClient();
+  await configureSubagentTaskRouting();
   const { metricsMiddleware, metricsRouter } = createMetrics();
   if (!process.env.METRICS_SECRET) {
     logger.warn('[metrics] METRICS_SECRET is not set - /metrics will return 401 for all requests');
@@ -127,10 +182,15 @@ const startServer = async () => {
   app.disable('x-powered-by');
   app.set('trust proxy', trusted_proxy);
 
-  if (isEnabled(process.env.TENANT_ISOLATION_STRICT)) {
+  if (isEnabled(process.env.TRUST_TENANT_HEADER)) {
     logger.warn(
-      '[Security] TENANT_ISOLATION_STRICT is active. Ensure your reverse proxy strips or sets ' +
-      'the X-Tenant-Id header — untrusted clients must not be able to set it directly.',
+      '[Security] TRUST_TENANT_HEADER is active. Ensure your reverse proxy strips and sets ' +
+      'X-Tenant-Id — untrusted clients must not be able to supply it directly.',
+    );
+  } else if (isEnabled(process.env.TENANT_ISOLATION_STRICT)) {
+    logger.warn(
+      '[Security] TENANT_ISOLATION_STRICT is active while TRUST_TENANT_HEADER is disabled. ' +
+      'Pre-authentication tenant headers will be ignored.',
     );
   }
 
@@ -144,9 +204,35 @@ const startServer = async () => {
   });
   const appConfig = await getAppConfig({ baseOnly: true });
   initializeFileStorage(appConfig);
-  await initializeDeploymentSkills({ projectRoot: path.resolve(__dirname, '../..') });
+  const projectRoot = path.resolve(__dirname, '../..');
+  // Plugin hooks execute only when the operator opts in via DEPLOYMENT_PLUGIN_HOOKS;
+  // without it, declared hook documents load as parsed-but-inert with a warning.
+  await initializeDeploymentPlugins({
+    projectRoot,
+    hookCapabilities: getDeploymentPluginHookCapabilities(),
+  });
+  // Hand the run seam its plugin-hook source without a packages/api-internal
+  // agents -> plugins import (see agents/hooks/source.ts).
+  setPluginHookSource({
+    hasHooks: hasDeploymentPluginHooks,
+    register: registerDeploymentPluginHooks,
+  });
+  await initializeDeploymentSkills({
+    projectRoot,
+    additionalSkills: getDeploymentPluginSkills(),
+  });
   initializeGitHubSkillSync(appConfig);
   startExpiredFileSweep({ appConfig, loadAppConfig: getAppConfig });
+  // Register any programmatic tool-approval policy hooks declared in
+  // `endpoints.agents.toolApproval.hooks`. Honor the `enabled` kill switch: when tool
+  // approval is off we pass no hooks, so a disabled endpoint imports/runs nothing (and any
+  // previously loaded batch is unregistered). Hooks are read from the BASE config only —
+  // they register once, process-wide; per-user/tenant differences belong inside the hook
+  // (via its context), not in per-override module lists.
+  const toolApproval = appConfig?.endpoints?.agents?.toolApproval;
+  await loadToolApprovalHooks(toolApproval?.enabled ? toolApproval.hooks : undefined, {
+    basePath: path.resolve(__dirname, '../..'),
+  });
   await runAsSystem(async () => {
     await performStartupChecks(appConfig);
     await updateInterfacePermissions({ appConfig, getRoleByName, updateAccessPermissions });
@@ -195,6 +281,8 @@ const startServer = async () => {
   });
 
   /* Middleware */
+  app.use(requestContextMiddleware);
+  app.use('/api/agents/chat', agentStartupIngressMiddleware);
   app.use(metricsMiddleware);
   app.use(noIndex);
   app.use(express.json({ limit: '3mb' }));
@@ -232,6 +320,7 @@ const startServer = async () => {
   if (telemetry.enabled) {
     app.use(telemetry.telemetryMiddleware);
   }
+  app.use('/api/agents/chat', agentStartupTelemetryMiddleware);
 
   if (!ALLOW_SOCIAL_LOGIN) {
     console.warn('Social logins are disabled. Set ALLOW_SOCIAL_LOGIN=true to enable them.');
@@ -259,8 +348,10 @@ const startServer = async () => {
   app.use('/oauth', preAuthTenantMiddleware, routes.oauth);
   /* API Endpoints */
   app.use('/api/auth', preAuthTenantMiddleware, routes.auth);
+  app.use('/api/admin/insights', routes.insights);
   app.use('/api/admin', routes.adminAuth);
   app.use('/api/admin/config', routes.adminConfig);
+  app.use('/api/admin/langfuse', routes.adminLangfuse);
   app.use('/api/admin/grants', routes.adminGrants);
   app.use('/api/admin/groups', routes.adminGroups);
   app.use('/api/admin/roles', routes.adminRoles);
@@ -284,7 +375,6 @@ const startServer = async () => {
   app.use('/api/models', routes.models);
   app.use('/api/config', preAuthTenantMiddleware, optionalJwtAuth, routes.config);
   app.use('/api/assistants', routes.assistants);
-  app.use('/api/azureAgents', routes.azureAgents);
   app.use('/api/files', await routes.files.initialize());
   app.use('/images/', createValidateImageRequest(appConfig.secureImageLinks), routes.staticRoute);
   app.use('/api/share', preAuthTenantMiddleware, routes.share);
@@ -293,6 +383,7 @@ const startServer = async () => {
   app.use('/api/agents', routes.agents);
   app.use('/api/banner', routes.banner);
   app.use('/api/memories', routes.memories);
+  app.use('/api/schedules', rejectScheduleWritesUntilReady, routes.schedules);
   app.use('/api/permissions', routes.accessPermissions);
 
   app.use('/api/tags', routes.tags);
@@ -300,15 +391,6 @@ const startServer = async () => {
   app.use('/api/rum', routes.rum);
 
   app.use('/metrics', metricsRouter);
-  app.use('/intelequia/config', routes.intelequiaConfig);
-
-  /**
-   * Load permission configuration files from remote repository
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  if (process.env.ENABLE_PERMISSION_MANAGE == "true")
-    await intelequiaConfigLoader();
 
   /** 404 for unmatched API routes */
   app.use('/api', apiNotFound);
@@ -358,6 +440,11 @@ const startServer = async () => {
       if (inspectFlags || isEnabled(process.env.MEM_DIAG)) {
         memoryDiagnostics.start();
       }
+      await initializeAgentTriggerService({ address: server.address() });
+      schedulesReady = (await initializeScheduleEngine()) != null;
+      if (!schedulesReady) {
+        logger.warn('[schedules] write routes remain unavailable because the engine did not arm.');
+      }
       serverReady = true;
       logger.info('Server readiness checks passing.');
     } catch (initErr) {
@@ -365,6 +452,14 @@ const startServer = async () => {
       logger.error('Post-listen initialization failed:', initErr);
       process.exit(1);
     }
+  });
+
+  configureServerTimeouts(server);
+  logger.info('HTTP server timeout configuration', {
+    keepAliveTimeout: server.keepAliveTimeout,
+    keepAliveTimeoutBuffer: server.keepAliveTimeoutBuffer,
+    headersTimeout: server.headersTimeout,
+    requestTimeout: server.requestTimeout,
   });
 
   setupGracefulShutdown(server);

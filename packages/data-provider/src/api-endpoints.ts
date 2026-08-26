@@ -42,6 +42,7 @@ const buildQuery = (params: Record<string, unknown>): string => {
 
 export const health = () => `${BASE_URL}/health`;
 export const user = () => `${BASE_URL}/api/user`;
+export const userPreferences = () => `${user()}/preferences`;
 
 export const balance = () => `${BASE_URL}/api/balance`;
 
@@ -71,6 +72,7 @@ export const messagesBranch = () => `${messagesRoot}/branch`;
 
 const shareRoot = `${BASE_URL}/api/share`;
 export const shareMessages = (shareId: string) => `${shareRoot}/${shareId}`;
+export const forkSharedMessages = (shareId: string) => `${shareRoot}/${shareId}/fork`;
 export const sharedStartupConfig = (shareId: string) => `${shareMessages(shareId)}/config`;
 export const getSharedLink = (conversationId: string) => `${shareRoot}/link/${conversationId}`;
 export const getSharedLinks = (
@@ -79,10 +81,7 @@ export const getSharedLinks = (
   sortDirection: 'asc' | 'desc',
   search?: string,
   cursor?: string,
-) =>
-  `${shareRoot}?pageSize=${pageSize}&sortBy=${sortBy}&sortDirection=${sortDirection}${
-    search ? `&search=${search}` : ''
-  }${cursor ? `&cursor=${cursor}` : ''}`;
+) => `${shareRoot}${buildQuery({ pageSize, sortBy, sortDirection, search, cursor })}`;
 export const createSharedLink = (conversationId: string) => `${shareRoot}/${conversationId}`;
 export const updateSharedLink = (shareId: string) => `${shareRoot}/${shareId}`;
 /** Share-scoped file routes: serve snapshotted files via shared-link permission. */
@@ -123,6 +122,7 @@ export const genTitle = (conversationId: string) =>
 export const updateConversation = () => `${conversationsRoot}/update`;
 
 export const archiveConversation = () => `${conversationsRoot}/archive`;
+export const archiveAllConversations = () => `${conversationsRoot}/archive/all`;
 export const pinConversation = () => `${conversationsRoot}/pin`;
 
 export const deleteConversation = () => `${conversationsRoot}`;
@@ -158,8 +158,6 @@ export const deletePreset = () => `${BASE_URL}/api/presets/delete`;
 export const aiEndpoints = () => `${BASE_URL}/api/endpoints`;
 
 export const tokenConfig = () => `${BASE_URL}/api/endpoints/token-config`;
-
-export const contextProjection = () => `${BASE_URL}/api/endpoints/context-projection`;
 
 export const models = () => `${BASE_URL}/api/models`;
 
@@ -231,6 +229,9 @@ export const cancelMCPOAuth = (serverName: string) => {
   return `${BASE_URL}/api/mcp/oauth/cancel/${serverName}`;
 };
 
+export const mcpOAuthStatus = (flowId: string) =>
+  `${BASE_URL}/api/mcp/oauth/status/${encodeURIComponent(flowId)}`;
+
 export const mcpOAuthBind = (serverName: string) => `${BASE_URL}/api/mcp/${serverName}/oauth/bind`;
 
 export const actionOAuthBind = (actionId: string) =>
@@ -241,37 +242,6 @@ export const config = (context?: StartupConfigContext) =>
 
 export const prompts = () => `${BASE_URL}/api/prompts`;
 
-export const azureAgents = ({
-  path = '',
-  options,
-  endpoint,
-  isAvatar,
-}: {
-  path?: string;
-  options?: object;
-  endpoint?: AssistantsEndpoint;
-  isAvatar?: boolean;
-}) => {
-  let url = isAvatar === true ? `${images()}/azureAgents` : `/api/azureAgents`;
-
-  if (path && path !== '') {
-    url += `/${path}`;
-  }
-
-  if (endpoint) {
-    options = {
-      ...(options ?? {}),
-      endpoint,
-    };
-  }
-
-  if (options && Object.keys(options).length > 0) {
-    const queryParams = new URLSearchParams(options as Record<string, string>).toString();
-    url += `?${queryParams}`;
-  }
-
-  return url;
-};
 export const addPromptToGroup = (groupId: string) =>
   `${BASE_URL}/api/prompts/groups/${groupId}/prompts`;
 
@@ -346,6 +316,8 @@ export const fileDownload = (userId: string, fileId: string) =>
 export const filePreview = (fileId: string) =>
   `${BASE_URL}/api/files/${encodeURIComponent(fileId)}/preview`;
 export const fileConfig = () => `${BASE_URL}/api/files/config`;
+/** Owner-scoped usage touch so queued attachments outlive the upload-window TTL. */
+export const fileUsage = () => `${BASE_URL}/api/files/usage`;
 export const agentFiles = (agentId: string) => `${BASE_URL}/api/files/agent/${agentId}`;
 
 export const images = () => `${files()}/images`;
@@ -420,6 +392,11 @@ export const getCategories = () => `${BASE_URL}/api/categories`;
 
 export const getAllPromptGroups = () => `${prompts()}/all`;
 
+/* Scheduled chats */
+export const schedules = () => `${BASE_URL}/api/schedules`;
+export const schedule = (id: string) => `${schedules()}/${encodeURIComponent(id)}`;
+export const runSchedule = (id: string) => `${schedule(id)}/run`;
+
 /* Skills */
 export const skills = () => `${BASE_URL}/api/skills`;
 export const importSkill = () => `${skills()}/import`;
@@ -448,6 +425,9 @@ export const skillFiles = (id: string) => `${getSkill(id)}/files`;
 export const skillFile = (id: string, relativePath: string) =>
   `${skillFiles(id)}/${encodeURIComponent(relativePath)}`;
 
+export const insights = () => `${BASE_URL}/api/admin/insights`;
+export const insightsAccess = () => `${insights()}/access`;
+
 export const adminSkillsSync = () => `${BASE_URL}/api/admin/skills/sync`;
 export const adminSkillsSyncStatus = () => `${adminSkillsSync()}/status`;
 export const adminSkillsSyncRun = () => `${adminSkillsSync()}/run`;
@@ -469,6 +449,17 @@ export const skillTree = ({ skillId, path = '' }: { skillId: string; path?: stri
 
 /* Skill active states (per-user overrides) */
 export const skillStates = () => `${BASE_URL}/api/user/settings/skills/active`;
+
+/* Langfuse connection (admin) */
+export const adminLangfuseConnection = () => `${BASE_URL}/api/admin/langfuse/connection`;
+export const adminLangfuseConnectionTest = () => `${adminLangfuseConnection()}/test`;
+export const adminLangfuseSessionLink = (conversationId: string) =>
+  `${adminLangfuseConnection()}/session/${encodeURIComponent(conversationId)}`;
+
+/* Tool favorites (starred marketplace items) */
+export const toolFavorites = () => `${BASE_URL}/api/user/settings/favorites/tools`;
+export const toolFavorite = (itemType: string, itemId: string) =>
+  `${toolFavorites()}/${itemType}/${encodeURIComponent(itemId)}`;
 
 /* Roles */
 export const roles = () => `${BASE_URL}/api/roles`;
@@ -517,7 +508,8 @@ export const verifyTwoFactorTemp = () => `${BASE_URL}/api/auth/2fa/verify-temp`;
 
 /* Memories */
 export const memories = () => `${BASE_URL}/api/memories`;
-export const memory = (key: string) => `${memories()}/${encodeURIComponent(key)}`;
+export const memory = (key: string, agentId?: string) =>
+  `${memories()}/${encodeURIComponent(key)}${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''}`;
 export const memoryPreferences = () => `${memories()}/preferences`;
 
 export const searchPrincipals = (params: q.PrincipalSearchParams) => {

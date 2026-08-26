@@ -97,6 +97,13 @@ const messageSchema: Schema<IMessage> = new Schema(
       default: undefined,
       required: false,
     },
+    langfuseSampled: {
+      type: Boolean,
+    },
+    langfuseDestinationIds: {
+      type: [String],
+      default: undefined,
+    },
     _meiliIndex: {
       type: Boolean,
       required: false,
@@ -117,6 +124,41 @@ const messageSchema: Schema<IMessage> = new Schema(
       type: String,
     },
     metadata: { type: mongoose.Schema.Types.Mixed },
+    subagentTranscript: {
+      type: {
+        taskId: { type: String, required: true },
+        mode: { type: String, enum: ['append', 'replace'], required: true },
+        messagesJson: { type: String, required: true },
+      },
+      _id: false,
+      select: false,
+      default: undefined,
+    },
+    /** Durable, server-only marker used to make detached retries at-most-once. */
+    subagentTask: {
+      type: {
+        attemptKey: { type: String, required: true },
+        parentRunId: { type: String },
+        requestFingerprint: { type: String },
+        status: {
+          type: String,
+          enum: ['running', 'completed', 'error', 'cancelled'],
+          required: true,
+        },
+        resultClaim: {
+          type: {
+            kind: { type: String, enum: ['manual', 'wakeup'], required: true },
+            claimId: { type: String, required: true },
+            claimedAt: { type: Date, required: true },
+          },
+          _id: false,
+          default: undefined,
+        },
+      },
+      _id: false,
+      select: false,
+      default: undefined,
+    },
     contextMeta: {
       type: {
         calibrationRatio: { type: Number },
@@ -191,6 +233,24 @@ const messageSchema: Schema<IMessage> = new Schema(
 messageSchema.index({ expiredAt: 1 }, { expireAfterSeconds: 0 });
 messageSchema.index({ createdAt: 1 });
 messageSchema.index({ messageId: 1, user: 1, tenantId: 1 }, { unique: true });
+messageSchema.index({ tenantId: 1, isTemporary: 1, createdAt: -1, _id: -1 });
+messageSchema.index({
+  tenantId: 1,
+  isTemporary: 1,
+  isCreatedByUser: 1,
+  user: 1,
+  createdAt: -1,
+  _id: -1,
+});
+
+/**
+ * Serves the conversation fetch ({conversationId, user} filter + createdAt
+ * sort) from the index alone; without it Mongo fetches every full document in
+ * the conversation and sorts them in memory. tenantId is deliberately not in
+ * the middle: untenanted deployments issue no tenantId predicate, and a gap in
+ * the prefix would push the sort back into memory for them.
+ */
+messageSchema.index({ conversationId: 1, user: 1, createdAt: 1 });
 
 // index for MeiliSearch sync operations
 messageSchema.index({ _meiliIndex: 1, isTemporary: 1, expiredAt: 1 });

@@ -3,8 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { RetentionMode } from 'librechat-data-provider';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import type { IMessage } from '..';
+import { createMessageMethods, CLIENT_MESSAGE_SELECT } from './message';
 import { tenantStorage, runAsSystem } from '~/config/tenantContext';
-import { createMessageMethods } from './message';
 import { createModels } from '../models';
 import logger from '~/config/winston';
 
@@ -21,13 +21,17 @@ let mongoServer: InstanceType<typeof MongoMemoryServer>;
 let Message: mongoose.Model<IMessage>;
 let saveMessage: ReturnType<typeof createMessageMethods>['saveMessage'];
 let getMessages: ReturnType<typeof createMessageMethods>['getMessages'];
-let getMessageTextStats: ReturnType<typeof createMessageMethods>['getMessageTextStats'];
 let updateMessage: ReturnType<typeof createMessageMethods>['updateMessage'];
+let updateToolCallResult: ReturnType<typeof createMessageMethods>['updateToolCallResult'];
 let deleteMessages: ReturnType<typeof createMessageMethods>['deleteMessages'];
 let bulkSaveMessages: ReturnType<typeof createMessageMethods>['bulkSaveMessages'];
 let updateMessageText: ReturnType<typeof createMessageMethods>['updateMessageText'];
 let deleteMessagesSince: ReturnType<typeof createMessageMethods>['deleteMessagesSince'];
 let recordMessage: ReturnType<typeof createMessageMethods>['recordMessage'];
+let claimSubagentTaskResult: ReturnType<typeof createMessageMethods>['claimSubagentTaskResult'];
+let releaseSubagentTaskResultClaim: ReturnType<
+  typeof createMessageMethods
+>['releaseSubagentTaskResultClaim'];
 
 beforeAll(async () => {
   mongoServer = await MongoMemoryServer.create();
@@ -40,13 +44,15 @@ beforeAll(async () => {
   const methods = createMessageMethods(mongoose);
   saveMessage = methods.saveMessage;
   getMessages = methods.getMessages;
-  getMessageTextStats = methods.getMessageTextStats;
   updateMessage = methods.updateMessage;
+  updateToolCallResult = methods.updateToolCallResult;
   deleteMessages = methods.deleteMessages;
   bulkSaveMessages = methods.bulkSaveMessages;
   updateMessageText = methods.updateMessageText;
   deleteMessagesSince = methods.deleteMessagesSince;
   recordMessage = methods.recordMessage;
+  claimSubagentTaskResult = methods.claimSubagentTaskResult;
+  releaseSubagentTaskResultClaim = methods.releaseSubagentTaskResultClaim;
 
   await mongoose.connect(mongoUri);
 });
@@ -160,10 +166,279 @@ describe('Message Operations', () => {
       expect(updatedMessage?.text).toBe('Updated text');
     });
 
+    it('returns the generation-time Langfuse routing decisions with feedback updates', async () => {
+      await saveMessage(mockCtx, {
+        ...mockMessageData,
+        langfuseSampled: true,
+        langfuseDestinationIds: ['destination-1'],
+      });
+
+      const result = await updateMessage(mockCtx.userId, {
+        messageId: 'msg123',
+        feedback: { rating: 'thumbsUp', tag: undefined },
+      });
+
+      expect(result?.langfuseSampled).toBe(true);
+      expect(result?.langfuseDestinationIds).toEqual(['destination-1']);
+    });
+
     it('should throw an error if message is not found', async () => {
       await expect(
         updateMessage(mockCtx.userId, { messageId: 'nonexistent', text: 'Test' }),
       ).rejects.toThrow('Message not found or user not authorized.');
+    });
+  });
+
+  describe('updateToolCallResult', () => {
+    const toolCallContent = () => [
+      { type: 'text', text: 'intro' },
+      {
+        type: 'tool_call',
+        tool_call: {
+          id: 'call_bg',
+          name: 'execute_code',
+          args: '{"lang":"py","code":"print(1)"}',
+          output: '{"background_task_id":"task-1"}',
+          progress: 1,
+        },
+      },
+      {
+        type: 'tool_call',
+        tool_call: { id: 'call_other', name: 'execute_code', args: '{}', output: 'untouched' },
+      },
+    ];
+
+    it('patches only the matching tool_call part and appends attachments atomically', async () => {
+      await saveMessage(mockCtx, { ...mockMessageData, content: toolCallContent() });
+
+      const result = await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        output: 'stdout:\nhello',
+        attachments: [{ file_id: 'f1', toolCallId: 'call_bg' }],
+      });
+      expect(result).toEqual({ matched: true, unfinished: false });
+
+      const saved = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      const content = saved?.content as Array<{
+        type: string;
+        tool_call?: { id: string; output?: string };
+      }>;
+      expect(content[1].tool_call?.output).toBe('stdout:\nhello');
+      expect(content[2].tool_call?.output).toBe('untouched');
+      expect(saved?.attachments).toEqual([{ file_id: 'f1', toolCallId: 'call_bg' }]);
+    });
+
+    it('appends to existing attachments instead of replacing them', async () => {
+      await saveMessage(mockCtx, {
+        ...mockMessageData,
+        content: toolCallContent(),
+        attachments: [{ file_id: 'existing' }] as unknown as IMessage['attachments'],
+      });
+
+      await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        attachments: [{ file_id: 'f2' }],
+      });
+
+      const saved = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      expect(saved?.attachments).toEqual([{ file_id: 'existing' }, { file_id: 'f2' }]);
+    });
+
+    it('is idempotent: re-applying the same patch does not duplicate attachments', async () => {
+      await saveMessage(mockCtx, { ...mockMessageData, content: toolCallContent() });
+
+      const patch = {
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        output: 'stdout:\nhello',
+        attachments: [{ file_id: 'f1', toolCallId: 'call_bg' }],
+      };
+      await updateToolCallResult(patch);
+      await updateToolCallResult(patch);
+
+      const saved = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      expect(saved?.attachments).toEqual([{ file_id: 'f1', toolCallId: 'call_bg' }]);
+      const content = saved?.content as Array<{ tool_call?: { output?: string } }>;
+      expect(content[1].tool_call?.output).toBe('stdout:\nhello');
+    });
+
+    it('dedupes download-fallback attachments (no file_id) by filepath on re-apply', async () => {
+      await saveMessage(mockCtx, { ...mockMessageData, content: toolCallContent() });
+
+      const patch = {
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        attachments: [
+          {
+            filepath: '/api/files/code/download/sess-1/f1',
+            filename: 'big.zip',
+            toolCallId: 'call_bg',
+          },
+          { file_id: 'f2', toolCallId: 'call_bg' },
+        ],
+      };
+      await updateToolCallResult(patch);
+      await updateToolCallResult(patch);
+
+      const saved = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      expect(saved?.attachments).toEqual([
+        {
+          filepath: '/api/files/code/download/sess-1/f1',
+          filename: 'big.zip',
+          toolCallId: 'call_bg',
+        },
+        { file_id: 'f2', toolCallId: 'call_bg' },
+      ]);
+    });
+
+    it('returns false when the message row does not exist yet (caller retries)', async () => {
+      const result = await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'missing-msg',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        output: 'stdout',
+      });
+      expect(result.matched).toBe(false);
+    });
+
+    it('scopes the patch by agentId when provider ids repeat across agents', async () => {
+      /* Handoff runs append multiple agents' parts to ONE response message,
+       * and provider ids like call_0 repeat per model response. */
+      await saveMessage(mockCtx, {
+        ...mockMessageData,
+        content: [
+          {
+            type: 'tool_call',
+            agentId: 'agent_a',
+            tool_call: { id: 'call_0', name: 'execute_code', output: 'handle-a' },
+          },
+          {
+            type: 'tool_call',
+            agentId: 'agent_b',
+            tool_call: { id: 'call_0', name: 'execute_code', output: 'handle-b' },
+          },
+        ],
+      });
+
+      const result = await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_0',
+        agentId: 'agent_b',
+        output: 'stdout-b',
+      });
+      expect(result.matched).toBe(true);
+
+      const saved = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      const content = saved?.content as Array<{ tool_call?: { output?: string } }>;
+      expect(content[0].tool_call?.output).toBe('handle-a');
+      expect(content[1].tool_call?.output).toBe('stdout-b');
+    });
+
+    it('flags unfinished partial rows so callers keep re-applying until finalize', async () => {
+      await saveMessage(mockCtx, {
+        ...mockMessageData,
+        content: toolCallContent(),
+        unfinished: true,
+      } as Parameters<typeof saveMessage>[1]);
+
+      const result = await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        output: 'stdout:\nhello',
+      });
+      /** The patch still lands (idempotent), but the finalize save will
+       *  overwrite this partial row with in-memory content. */
+      expect(result).toEqual({ matched: true, unfinished: true });
+    });
+
+    it('keeps a sibling AGENT’s attachment when both id and file key collide', async () => {
+      /* Handoff agents can share a provider tool-call id AND a claimed
+       * file_id (same filename in one conversation); the second agent's
+       * anchor must not evict the first agent's card-scoped attachment. */
+      await saveMessage(mockCtx, { ...mockMessageData, content: toolCallContent() });
+
+      await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        agentId: 'agent_a',
+        attachments: [{ file_id: 'shared', toolCallId: 'call_bg', agentId: 'agent_a' }],
+      });
+      await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        agentId: 'agent_b',
+        attachments: [{ file_id: 'shared', toolCallId: 'call_bg', agentId: 'agent_b' }],
+      });
+
+      const saved = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      expect(saved?.attachments).toEqual([
+        { file_id: 'shared', toolCallId: 'call_bg', agentId: 'agent_a' },
+        { file_id: 'shared', toolCallId: 'call_bg', agentId: 'agent_b' },
+      ]);
+    });
+
+    it('keeps a sibling tool call’s attachment when file ids repeat across calls', async () => {
+      await saveMessage(mockCtx, { ...mockMessageData, content: toolCallContent() });
+
+      await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        attachments: [{ file_id: 'shared', toolCallId: 'call_bg' }],
+      });
+      /** A second background call regenerated the same filename — same
+       *  claimed file_id, different tool call. The first card must keep
+       *  its attachment (the client anchors by toolCallId). */
+      await updateToolCallResult({
+        userId: 'user123',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_other',
+        attachments: [{ file_id: 'shared', toolCallId: 'call_other' }],
+      });
+
+      const saved = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      expect(saved?.attachments).toEqual([
+        { file_id: 'shared', toolCallId: 'call_bg' },
+        { file_id: 'shared', toolCallId: 'call_other' },
+      ]);
+    });
+
+    it('does not match another user’s message', async () => {
+      await saveMessage(mockCtx, { ...mockMessageData, content: toolCallContent() });
+
+      const result = await updateToolCallResult({
+        userId: 'someone-else',
+        messageId: 'msg123',
+        conversationId: mockMessageData.conversationId as string,
+        toolCallId: 'call_bg',
+        output: 'hijacked',
+      });
+      expect(result.matched).toBe(false);
+
+      const saved = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      const content = saved?.content as Array<{ tool_call?: { output?: string } }>;
+      expect(content[1].tool_call?.output).toBe('{"background_task_id":"task-1"}');
     });
   });
 
@@ -215,6 +490,140 @@ describe('Message Operations', () => {
         conversationId: 'convo123',
       });
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe('CLIENT_MESSAGE_SELECT projection', () => {
+    it('strips server-internal fields and dead SERP verticals, keeping rendered data', async () => {
+      const conversationId = uuidv4();
+      await Message.create({
+        messageId: 'projected-msg',
+        conversationId,
+        user: 'user123',
+        isCreatedByUser: false,
+        sender: 'Agent',
+        text: 'visible text',
+        content: [{ type: 'text', text: 'part text' }],
+        tokenCount: 42,
+        conversationSignature: 'sig',
+        clientId: 'client-1',
+        invocationId: 7,
+        summary: 'legacy summary',
+        summaryTokenCount: 11,
+        contextMeta: { anything: true },
+        langfuseSampled: true,
+        langfuseDestinationIds: ['lf-1'],
+        metadata: {
+          usage: { input: 10, output: 20 },
+          thoughtSignatures: { tool_1: 'opaque' },
+        },
+        subagentTask: {
+          attemptKey: 'private-attempt',
+          requestFingerprint: 'private-fingerprint',
+          status: 'running',
+        },
+        attachments: [
+          {
+            type: 'web_search',
+            toolCallId: 'tool_1',
+            web_search: {
+              turn: 0,
+              organic: [
+                {
+                  title: 'Result',
+                  link: 'https://example.com',
+                  snippet: 'snippet',
+                  sitelinks: [{ title: 'sub', link: 'https://example.com/sub' }],
+                  highlights: ['raw scrape'],
+                },
+              ],
+              topStories: [{ title: 'Story', link: 'https://example.com/s', highlights: ['x'] }],
+              references: [{ link: 'https://example.com', title: 'Result', type: 'link' }],
+              images: [{ imageUrl: 'https://example.com/i.png' }],
+              answerBox: { answer: '42' },
+              knowledgeGraph: { title: 'KG' },
+              peopleAlsoAsk: [{ question: 'q' }],
+              relatedSearches: ['related'],
+              news: [{ title: 'n' }],
+              videos: [{ title: 'v' }],
+              places: [{ title: 'p' }],
+              shopping: [{ title: 's' }],
+            },
+          },
+        ],
+      });
+
+      const [message] = await getMessages(
+        { conversationId, user: 'user123' },
+        CLIENT_MESSAGE_SELECT,
+      );
+
+      expect(message.text).toBe('visible text');
+      expect(message.content).toHaveLength(1);
+      expect(message.tokenCount).toBe(42);
+      const metadata = message.metadata as Record<string, unknown>;
+      expect(metadata.usage).toBeDefined();
+      expect(metadata.thoughtSignatures).toBeUndefined();
+
+      const hidden = message as unknown as Record<string, unknown>;
+      for (const field of [
+        '_id',
+        'user',
+        'conversationSignature',
+        'clientId',
+        'invocationId',
+        'summary',
+        'summaryTokenCount',
+        'contextMeta',
+        'langfuseSampled',
+        'langfuseDestinationIds',
+        'subagentTask',
+      ]) {
+        expect(hidden[field]).toBeUndefined();
+      }
+
+      type ProjectedWebSearch = {
+        turn: number;
+        organic: Array<Record<string, unknown>>;
+        topStories: Array<Record<string, unknown>>;
+        references: unknown[];
+        images: unknown[];
+      } & Record<string, unknown>;
+      const webSearch = (message.attachments?.[0] as { web_search: ProjectedWebSearch }).web_search;
+      expect(webSearch.turn).toBe(0);
+      expect(webSearch.organic[0].title).toBe('Result');
+      expect(webSearch.organic[0].link).toBe('https://example.com');
+      expect(webSearch.organic[0].snippet).toBe('snippet');
+      expect(webSearch.organic[0].sitelinks).toBeUndefined();
+      expect(webSearch.organic[0].highlights).toBeUndefined();
+      expect(webSearch.topStories[0].title).toBe('Story');
+      expect(webSearch.topStories[0].highlights).toBeUndefined();
+      expect(webSearch.references).toHaveLength(1);
+      expect(webSearch.images).toHaveLength(1);
+      /** `videos` stays: `turn…video…` citation markers resolve against it
+       *  (the clipboard refTypeMap addresses it explicitly). */
+      expect(webSearch.videos).toHaveLength(1);
+      expect(webSearch.answerBox).toBeDefined();
+      for (const vertical of [
+        'knowledgeGraph',
+        'peopleAlsoAsk',
+        'relatedSearches',
+        'news',
+        'places',
+        'shopping',
+      ]) {
+        expect(webSearch[vertical]).toBeUndefined();
+      }
+    });
+  });
+
+  describe('conversation fetch index', () => {
+    it('declares the compound index that serves the conversation fetch and its sort', () => {
+      const indexes = Message.schema.indexes() as Array<[Record<string, number>, unknown]>;
+      expect(indexes).toContainEqual([
+        { conversationId: 1, user: 1, createdAt: 1 },
+        expect.anything(),
+      ]);
     });
   });
 
@@ -272,31 +681,6 @@ describe('Message Operations', () => {
       expect(messages).toHaveLength(2);
       expect(messages[0].text).toBe('First message');
       expect(messages[1].text).toBe('Second message');
-    });
-
-    it('should retrieve message text stats without returning message bodies', async () => {
-      const conversationId = uuidv4();
-
-      await saveMessage(mockCtx, {
-        messageId: 'msg1',
-        conversationId,
-        text: 'hello',
-        quotes: ['a\nb', ''],
-        user: 'user123',
-      });
-
-      const stats = await getMessageTextStats({ conversationId, user: 'user123' }, { limit: 1 });
-
-      expect(stats).toEqual([
-        {
-          messageId: 'msg1',
-          textBytes: 5,
-          quoteCount: 2,
-          quoteBytes: 3,
-          quoteLineCount: 3,
-          nonStringQuoteCount: 0,
-        },
-      ]);
     });
   });
 
@@ -1169,6 +1553,209 @@ describe('Message Operations', () => {
       const doc = await Message.findOne({ messageId }).lean();
       expect(doc?.text).toBe('Updated');
       expect(doc?.tenantId).toBeUndefined();
+    });
+  });
+  describe('claimSubagentTaskResult', () => {
+    const terminalResult = async (taskId: string, conversationId: string, status: string) =>
+      saveMessage({ userId: 'user123' }, {
+        messageId: `${taskId}:assistant`,
+        conversationId,
+        text: 'child result',
+        subagentTask: { attemptKey: `${taskId}:attempt`, status },
+      } as Partial<IMessage>);
+
+    it('hands one terminal result to a single polling invocation', async () => {
+      const taskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(taskId, conversationId, 'completed');
+
+      const first = await claimSubagentTaskResult({
+        userId: 'user123',
+        conversationId,
+        taskId,
+        kind: 'manual',
+        claimId: 'poll-1',
+      });
+      expect(first.status).toBe('acquired');
+      expect(first.status === 'acquired' && first.message.text).toBe('child result');
+
+      /** The same invocation retrying recovers the result it never received. */
+      const retried = await claimSubagentTaskResult({
+        userId: 'user123',
+        conversationId,
+        taskId,
+        kind: 'manual',
+        claimId: 'poll-1',
+      });
+      expect(retried.status).toBe('acquired');
+
+      /** Another invocation is told it was collected instead of handed a copy. */
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId,
+          kind: 'manual',
+          claimId: 'poll-2',
+        }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+    });
+
+    it('elects either a manual poll or one idempotent automatic wakeup', async () => {
+      const manualTaskId = uuidv4();
+      const wakeupTaskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(manualTaskId, conversationId, 'completed');
+      await terminalResult(wakeupTaskId, conversationId, 'completed');
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId: manualTaskId,
+          kind: 'manual',
+          claimId: 'poll-1',
+        }),
+      ).resolves.toMatchObject({ status: 'acquired' });
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId: manualTaskId,
+          kind: 'wakeup',
+          claimId: 'delivery-1',
+        }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+
+      const wakeupClaim = {
+        userId: 'user123',
+        conversationId,
+        taskId: wakeupTaskId,
+        kind: 'wakeup' as const,
+        claimId: 'delivery-2',
+      };
+      await expect(claimSubagentTaskResult(wakeupClaim)).resolves.toMatchObject({
+        status: 'acquired',
+      });
+      await expect(claimSubagentTaskResult(wakeupClaim)).resolves.toMatchObject({
+        status: 'acquired',
+      });
+      await expect(
+        claimSubagentTaskResult({ ...wakeupClaim, claimId: 'delivery-3' }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+      await expect(
+        claimSubagentTaskResult({ ...wakeupClaim, kind: 'manual', claimId: 'poll-2' }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+    });
+
+    it('preserves and upgrades retries of legacy manual claims without a kind', async () => {
+      const taskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(taskId, conversationId, 'completed');
+      await claimSubagentTaskResult({
+        userId: 'user123',
+        conversationId,
+        taskId,
+        kind: 'manual',
+        claimId: 'legacy-poll',
+      });
+      await Message.collection.updateOne(
+        { user: 'user123', conversationId, messageId: `${taskId}:assistant` },
+        { $unset: { 'subagentTask.resultClaim.kind': '' } },
+      );
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId,
+          kind: 'manual',
+          claimId: 'legacy-poll',
+        }),
+      ).resolves.toMatchObject({
+        status: 'acquired',
+        message: { subagentTask: { resultClaim: { kind: 'manual', claimId: 'legacy-poll' } } },
+      });
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId,
+          kind: 'wakeup',
+          claimId: 'legacy-poll',
+        }),
+      ).resolves.toMatchObject({ status: 'claimed' });
+    });
+
+    it('releases only the exact rejected wakeup so manual collection can take over', async () => {
+      const taskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(taskId, conversationId, 'completed');
+      const wakeup = {
+        userId: 'user123',
+        conversationId,
+        taskId,
+        kind: 'wakeup' as const,
+        claimId: 'delivery-1',
+      };
+      await expect(claimSubagentTaskResult(wakeup)).resolves.toMatchObject({
+        status: 'acquired',
+      });
+      await expect(
+        releaseSubagentTaskResultClaim({ ...wakeup, claimId: 'another-delivery' }),
+      ).resolves.toBe(false);
+      await expect(releaseSubagentTaskResultClaim(wakeup)).resolves.toBe(true);
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId,
+          kind: 'manual',
+          claimId: 'poll-after-rejection',
+        }),
+      ).resolves.toMatchObject({ status: 'acquired' });
+    });
+
+    it('reports a result that is missing or still running as not found', async () => {
+      const runningTaskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(runningTaskId, conversationId, 'running');
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId: runningTaskId,
+          kind: 'manual',
+          claimId: 'poll-1',
+        }),
+      ).resolves.toEqual({ status: 'not_found' });
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'user123',
+          conversationId,
+          taskId: uuidv4(),
+          kind: 'manual',
+          claimId: 'poll-1',
+        }),
+      ).resolves.toEqual({ status: 'not_found' });
+    });
+
+    it('never hands one owner’s result to another user', async () => {
+      const taskId = uuidv4();
+      const conversationId = uuidv4();
+      await terminalResult(taskId, conversationId, 'completed');
+
+      await expect(
+        claimSubagentTaskResult({
+          userId: 'other-user',
+          conversationId,
+          taskId,
+          kind: 'manual',
+          claimId: 'poll-1',
+        }),
+      ).resolves.toEqual({ status: 'not_found' });
     });
   });
 });

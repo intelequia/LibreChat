@@ -5,6 +5,7 @@ const {
   mergeHeaders,
   getAnthropicModels,
   getBedrockModels,
+  getAppConfigOptionsFromUser,
   getOpenAIModels,
   getGoogleModels,
 } = require('@librechat/api');
@@ -18,13 +19,7 @@ const { getAppConfig } = require('./app');
  */
 async function loadDefaultModels(req) {
   try {
-    const appConfig =
-      req.config ??
-      (await getAppConfig({
-        role: req.user?.role,
-        userId: req.user?.id,
-        tenantId: req.user?.tenantId,
-      }));
+    const appConfig = req.config ?? (await getAppConfig(getAppConfigOptionsFromUser(req.user)));
     const vertexConfig = appConfig?.endpoints?.[EModelEndpoint.anthropic]?.vertexConfig;
 
     /** Forward configured custom headers (endpoint over global `all`) so model
@@ -39,7 +34,7 @@ async function loadDefaultModels(req) {
       appConfig?.endpoints?.[EModelEndpoint.anthropic]?.headers,
     );
 
-    const [openAI, anthropic, azureOpenAI, assistants, azureAssistants, azureAgents, google, bedrock] =
+    const [openAI, anthropic, azureOpenAI, assistants, azureAssistants, google, bedrock] =
       await Promise.all([
         getOpenAIModels({ user: req.user.id, headers: openAIHeaders, userObject: req.user }).catch(
           (error) => {
@@ -74,10 +69,6 @@ async function loadDefaultModels(req) {
           logger.error('Error fetching Azure OpenAI Assistants API models:', error);
           return [];
         }),
-        getOpenAIModels({ azureAgents: true }).catch((error) => {
-          logger.error('Error fetching Azure OpenAI Agents API models:', error);
-          return [];
-        }),
         Promise.resolve(getGoogleModels()).catch((error) => {
           logger.error('Error getting Google models:', error);
           return [];
@@ -95,7 +86,6 @@ async function loadDefaultModels(req) {
       [EModelEndpoint.azureOpenAI]: azureOpenAI,
       [EModelEndpoint.assistants]: assistants,
       [EModelEndpoint.azureAssistants]: azureAssistants,
-      [EModelEndpoint.azureAgents]: azureAgents,
       [EModelEndpoint.bedrock]: bedrock,
     };
   } catch (error) {

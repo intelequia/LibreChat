@@ -9,7 +9,6 @@ const {
 } = require('~/server/services/Endpoints/azureAssistants');
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
 const { hasCapability } = require('~/server/middleware/roles/capabilities');
-const { checkGroupPermissions } = require('~/utils');
 const { getEndpointsConfig } = require('~/server/services/Config');
 
 /**
@@ -54,13 +53,7 @@ const listAllAssistants = async ({ req, res, version, query }) => {
   let afterToken = query.after;
   let hasMore = true;
 
-  /**
-   * Verify if there are any function permission
-   * @Organization Intelequia
-   * @Author Enrique M. Pedroza Castillo
-   */
-  let permissionsNodeName = "permissions";
-  if (global.myCache.get(permissionsNodeName)) {
+  while (hasMore) {
     const response = await openai.beta.assistants.list({
       ...query,
       after: afterToken,
@@ -68,35 +61,17 @@ const listAllAssistants = async ({ req, res, version, query }) => {
 
     const { body } = response;
 
-    /**
-     * Get all assistats allowed by the user groups
-     * @Organization Intelequia
-     * @Author Enrique M. Pedroza Castillo
-     */
-    const allowedAssistants = await checkGroupPermissions(req.user._id.toString(), body.data, permissionsNodeName);
+    allAssistants.push(...body.data);
+    hasMore = body.has_more;
 
-    allowedAssistants.forEach((assistant) => allAssistants.push(assistant));
-  } else {
-    while (hasMore) {
-      const response = await openai.beta.assistants.list({
-        ...query,
-        after: afterToken,
-      });
+    if (!first_id) {
+      first_id = body.first_id;
+    }
 
-      const { body } = response;
-
-      allAssistants.push(...body.data);
-      hasMore = body.has_more;
-
-      if (!first_id) {
-        first_id = body.first_id;
-      }
-
-      if (hasMore) {
-        afterToken = body.last_id;
-      } else {
-        last_id = body.last_id;
-      }
+    if (hasMore) {
+      afterToken = body.last_id;
+    } else {
+      last_id = body.last_id;
     }
   }
 
@@ -203,7 +178,7 @@ async function getOpenAIClient({ req, res, endpointOption, initAppClient, overri
     result = await initializeClient({ req, res, version, endpointOption, initAppClient });
   } else if (endpoint === EModelEndpoint.azureAssistants) {
     result = await initAzureClient({ req, res, version, endpointOption, initAppClient });
-  } else if (endpoint === EModelEndpoint.azureAgents) {
+  } else {
     throw new Error(`[${req.baseUrl}] Endpoint ${endpoint} is not supported for assistants.`);
   }
 

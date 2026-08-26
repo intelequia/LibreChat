@@ -1,3 +1,8 @@
+jest.mock('./prewarm', () => ({
+  markSandboxReady: jest.fn(),
+}));
+
+import { Readable } from 'stream';
 import { Constants } from '@librechat/agents';
 import { logger } from '@librechat/data-schemas';
 import type {
@@ -5,7 +10,9 @@ import type {
   ToolExecuteResult,
   ToolCallRequest,
 } from '@librechat/agents';
+import type { CodeExecutionContext } from './execution';
 import { createToolExecuteHandler, ToolExecuteOptions } from './handlers';
+import { markSandboxReady } from './prewarm';
 
 function createMockTool(
   name: string,
@@ -553,6 +560,48 @@ describe('createToolExecuteHandler', () => {
       return createToolExecuteHandler({ loadTools, getSkillByName });
     }
 
+    /** Skill with one bundled file plus every dep the priming gate requires,
+     *  so the handler actually attempts the batch upload. */
+    function createPrimingSkillHandler(
+      skillName: string,
+      batchUploadCodeEnvFiles: NonNullable<ToolExecuteOptions['batchUploadCodeEnvFiles']>,
+    ) {
+      const loadTools: ToolExecuteOptions['loadTools'] = jest.fn(async () => ({
+        loadedTools: [],
+        configurable: {
+          accessibleSkillIds: skillsInScope(),
+          codeEnvAvailable: true,
+          req: { user: { id: 'user-1' } },
+        },
+      }));
+      const getSkillByName: ToolExecuteOptions['getSkillByName'] = jest.fn(async () => ({
+        _id: `${skillName}-id` as unknown as never,
+        name: skillName,
+        body: 'skill body',
+        fileCount: 1,
+        version: 1,
+      }));
+      const listSkillFiles: ToolExecuteOptions['listSkillFiles'] = jest.fn(async () => [
+        {
+          relativePath: 'references/style.md',
+          filename: 'style.md',
+          filepath: `/storage/${skillName}/references/style.md`,
+          source: 's3',
+          bytes: 256,
+        },
+      ]);
+      const getStrategyFunctions: ToolExecuteOptions['getStrategyFunctions'] = jest.fn(() => ({
+        getDownloadStream: jest.fn(async () => Readable.from(Buffer.from(''))),
+      }));
+      return createToolExecuteHandler({
+        loadTools,
+        getSkillByName,
+        listSkillFiles,
+        getStrategyFunctions,
+        batchUploadCodeEnvFiles,
+      });
+    }
+
     it('rejects with a clear error when the named skill has disableModelInvocation=true', async () => {
       const getSkillByName = jest.fn(async () => ({
         _id: 'skill-id' as unknown as never,
@@ -684,6 +733,63 @@ describe('createToolExecuteHandler', () => {
         | { preferUserInvocable?: boolean }
         | undefined;
       expect(callOptions).not.toHaveProperty('preferUserInvocable', true);
+    });
+
+    it('appends an unavailability note when file priming fails, so the model avoids dead sandbox paths', async () => {
+      const batchUploadCodeEnvFiles = jest.fn(async () => {
+        throw new Error('Request failed with status code 429');
+      });
+      const handler = createPrimingSkillHandler('note-fail-skill', batchUploadCodeEnvFiles);
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_prime_fail',
+          name: Constants.SKILL_TOOL,
+          args: { skillName: 'note-fail-skill' },
+        },
+      ]);
+
+      /* The skill body still loads (instructions inject regardless), but the
+       * tool result must say the bundled files never reached the sandbox. */
+      expect(result.status).toBe('success');
+      expect(result.content).toContain('could not be loaded into the code environment');
+      expect(result.content).toContain('/mnt/data/skills/note-fail-skill/');
+      expect(result.content).toContain('read_file');
+      expect(result.artifact).toBeUndefined();
+    });
+
+    it('omits the unavailability note when file priming succeeds', async () => {
+      const batchUploadCodeEnvFiles = jest.fn(async () => ({
+        storage_session_id: 'session-ok',
+        files: [
+          { fileId: 'file-ok', filename: 'skills/note-ok-skill/references/style.md' },
+          { fileId: 'file-skillmd', filename: 'skills/note-ok-skill/SKILL.md' },
+        ],
+      }));
+      const handler = createPrimingSkillHandler('note-ok-skill', batchUploadCodeEnvFiles);
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_prime_ok',
+          name: Constants.SKILL_TOOL,
+          args: { skillName: 'note-ok-skill' },
+        },
+      ]);
+
+      expect(result.status).toBe('success');
+      expect(result.content).not.toContain('could not be loaded');
+      expect(result.artifact).toEqual(
+        expect.objectContaining({
+          session_id: 'session-ok',
+          files: [
+            expect.objectContaining({
+              id: 'file-ok',
+              name: 'skills/note-ok-skill/references/style.md',
+              kind: 'skill',
+            }),
+          ],
+        }),
+      );
     });
 
     it("read_file pins lookup to the primed skill's _id when manually invoked this turn (no shadowing on collision)", async () => {
@@ -1095,7 +1201,7 @@ describe('createToolExecuteHandler', () => {
           args: {
             path: 'skills/new-skill/SKILL.md',
             content:
-              '---\nname: new-skill\ndescription: Use for tests\ndisable-model-invocation: true\nallowed-tools:\n  - execute_code\n---\n# New skill\n',
+              '---\nname: new-skill\ndescription: Use for tests\ndisable-model-invocation: true\nAllowed-Tools:\n  - execute_code\n---\n# New skill\n',
           },
         },
       ]);
@@ -1119,6 +1225,79 @@ describe('createToolExecuteHandler', () => {
         }),
       );
       expect(grantSkillOwner).toHaveBeenCalledWith({ req, skillId: SKILL_ID });
+    });
+
+    it('rejects case-colliding recognized frontmatter keys in create_file', async () => {
+      const createSkill = jest.fn();
+      const handler = makeAuthoringHandler({
+        getSkillByName: jest.fn(async () => null),
+        createSkill: createSkill as unknown as ToolExecuteOptions['createSkill'],
+      });
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_create_collision_skill',
+          name: 'create_file',
+          args: {
+            path: 'skills/collision-skill/SKILL.md',
+            content:
+              '---\nname: collision-skill\ndescription: Use for collision tests\nallowed-tools:\n  - read_file\nAllowed-Tools:\n  - execute_code\n---\n# Collision skill\n',
+          },
+        },
+      ]);
+
+      expect(result.status).toBe('error');
+      expect(result.errorMessage).toContain('both resolve to "allowed-tools"');
+      expect(createSkill).not.toHaveBeenCalled();
+    });
+
+    it('surfaces skill validation warnings from create_file', async () => {
+      const createSkill = jest.fn(async () => ({
+        skill: {
+          _id: SKILL_ID,
+          name: 'warning-skill',
+          body: '# Warning skill',
+          version: 1,
+        },
+        warnings: [
+          {
+            field: 'frontmatter.triger',
+            code: 'UNKNOWN_KEY',
+            severity: 'warning' as const,
+            message: '"triger" is not a recognized frontmatter key and is stored as-is',
+          },
+        ],
+      }));
+      const handler = makeAuthoringHandler({
+        getSkillByName: jest.fn(async () => null),
+        createSkill,
+      });
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_create_warning_skill',
+          name: 'create_file',
+          args: {
+            path: 'skills/warning-skill/SKILL.md',
+            content:
+              '---\nname: warning-skill\ndescription: Use for warning tests\ntriger: manual\n---\n# Warning skill\n',
+          },
+        },
+      ]);
+
+      expect(result.status).toBe('success');
+      expect(result.content).toContain('Warnings:');
+      expect(result.content).toContain('frontmatter.triger [UNKNOWN_KEY]');
+      expect(result.artifact).toMatchObject({
+        warning_count: 1,
+        warnings: [
+          expect.objectContaining({
+            field: 'frontmatter.triger',
+            code: 'UNKNOWN_KEY',
+            severity: 'warning',
+          }),
+        ],
+      });
     });
 
     it('adds required SKILL.md frontmatter when create_file only provides markdown', async () => {
@@ -1544,6 +1723,127 @@ describe('createToolExecuteHandler', () => {
       );
     });
 
+    it('coerces a stringified edits array (JSON-in-JSON) so the edit still applies', async () => {
+      const saveSkillFileContent = jest.fn();
+      const handler = makeAuthoringHandler({
+        getSkillByName: jest.fn(async () => ({
+          _id: SKILL_ID,
+          name: 'edit-skill',
+          body: '# Existing',
+          fileCount: 1,
+          version: 1,
+        })),
+        getSkillFileByPath: jest.fn(async () => ({
+          content: 'hello old\n',
+          isBinary: false,
+          mimeType: 'text/markdown',
+          bytes: 10,
+          filepath: '/tmp/a.md',
+          source: 'local',
+          relativePath: 'references/a.md',
+        })),
+        saveSkillFileContent,
+      });
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_edit_file_stringified_array',
+          name: 'edit_file',
+          args: {
+            path: 'skills/edit-skill/references/a.md',
+            edits: JSON.stringify([{ old_text: 'hello old', new_text: 'hello new' }]),
+          },
+        },
+      ]);
+
+      expect(result.status).toBe('success');
+      expect(result.artifact).toMatchObject({
+        path: 'skills/edit-skill/references/a.md',
+        edits: 1,
+        strategies: ['exact'],
+      });
+      expect(saveSkillFileContent).toHaveBeenCalledWith(
+        expect.objectContaining({ relativePath: 'references/a.md', content: 'hello new\n' }),
+      );
+    });
+
+    it('coerces stringified entries inside an edits array', async () => {
+      const saveSkillFileContent = jest.fn();
+      const handler = makeAuthoringHandler({
+        getSkillByName: jest.fn(async () => ({
+          _id: SKILL_ID,
+          name: 'edit-skill',
+          body: '# Existing',
+          fileCount: 1,
+          version: 1,
+        })),
+        getSkillFileByPath: jest.fn(async () => ({
+          content: 'hello old\n',
+          isBinary: false,
+          mimeType: 'text/markdown',
+          bytes: 10,
+          filepath: '/tmp/a.md',
+          source: 'local',
+          relativePath: 'references/a.md',
+        })),
+        saveSkillFileContent,
+      });
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_edit_file_stringified_entry',
+          name: 'edit_file',
+          args: {
+            path: 'skills/edit-skill/references/a.md',
+            edits: [JSON.stringify({ old_text: 'hello old', new_text: 'hello new' })],
+          },
+        },
+      ]);
+
+      expect(result.status).toBe('success');
+      expect(saveSkillFileContent).toHaveBeenCalledWith(
+        expect.objectContaining({ relativePath: 'references/a.md', content: 'hello new\n' }),
+      );
+    });
+
+    it('still rejects an unparseable edits string with the explicit error', async () => {
+      const saveSkillFileContent = jest.fn();
+      const handler = makeAuthoringHandler({
+        getSkillByName: jest.fn(async () => ({
+          _id: SKILL_ID,
+          name: 'edit-skill',
+          body: '# Existing',
+          fileCount: 1,
+          version: 1,
+        })),
+        getSkillFileByPath: jest.fn(async () => ({
+          content: 'hello old\n',
+          isBinary: false,
+          mimeType: 'text/markdown',
+          bytes: 10,
+          filepath: '/tmp/a.md',
+          source: 'local',
+          relativePath: 'references/a.md',
+        })),
+        saveSkillFileContent,
+      });
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_edit_file_bad_edits',
+          name: 'edit_file',
+          args: {
+            path: 'skills/edit-skill/references/a.md',
+            edits: 'not valid json',
+          },
+        },
+      ]);
+
+      expect(result.status).toBe('error');
+      expect(result.errorMessage).toContain('non-empty edits array');
+      expect(saveSkillFileContent).not.toHaveBeenCalled();
+    });
+
     it('rejects bundled skill file writes when the skill version changed after reading', async () => {
       const getSkillByName = jest
         .fn()
@@ -1648,6 +1948,65 @@ describe('createToolExecuteHandler', () => {
           }),
         }),
       );
+    });
+
+    it('surfaces skill validation warnings from edit_file', async () => {
+      const oldBody = '---\nname: runtime-skill\ndescription: Use before\n---\n# Runtime skill\n';
+      const updatedBody =
+        '---\nname: runtime-skill\ndescription: Use after\ntriger: manual\n---\n# Runtime skill\n';
+      const updateSkill = jest.fn(async () => ({
+        status: 'updated' as const,
+        skill: {
+          _id: SKILL_ID,
+          name: 'runtime-skill',
+          body: updatedBody,
+          version: 2,
+        },
+        warnings: [
+          {
+            field: 'frontmatter.triger',
+            code: 'UNKNOWN_KEY',
+            severity: 'warning' as const,
+            message: '"triger" is not a recognized frontmatter key and is stored as-is',
+          },
+        ],
+      }));
+      const handler = makeAuthoringHandler({
+        getSkillByName: jest.fn(async () => ({
+          _id: SKILL_ID,
+          name: 'runtime-skill',
+          body: oldBody,
+          fileCount: 0,
+          version: 1,
+        })),
+        updateSkill,
+      });
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_edit_warning_skill',
+          name: 'edit_file',
+          args: {
+            path: 'skills/runtime-skill/SKILL.md',
+            old_text: 'description: Use before',
+            new_text: 'description: Use after\ntriger: manual',
+          },
+        },
+      ]);
+
+      expect(result.status).toBe('success');
+      expect(result.content).toContain('Warnings:');
+      expect(result.content).toContain('frontmatter.triger [UNKNOWN_KEY]');
+      expect(result.artifact).toMatchObject({
+        warning_count: 1,
+        warnings: [
+          expect.objectContaining({
+            field: 'frontmatter.triger',
+            code: 'UNKNOWN_KEY',
+            severity: 'warning',
+          }),
+        ],
+      });
     });
 
     it('preserves block-scalar SKILL.md descriptions when editing skills', async () => {
@@ -2238,8 +2597,10 @@ describe('createToolExecuteHandler', () => {
       activeSkillNames?: Set<string>;
       skillPrimedIdsByName?: Record<string, string>;
       skillAuthoringAvailable?: boolean;
+      codeExecutionContext?: CodeExecutionContext;
       req?: unknown;
       readSandboxFile?: ToolExecuteOptions['readSandboxFile'];
+      readSandboxImage?: ToolExecuteOptions['readSandboxImage'];
       getSkillByName?: ToolExecuteOptions['getSkillByName'];
       getAuthorSkillByName?: ToolExecuteOptions['getAuthorSkillByName'];
     }) {
@@ -2252,6 +2613,7 @@ describe('createToolExecuteHandler', () => {
           activeSkillNames: params.activeSkillNames,
           skillPrimedIdsByName: params.skillPrimedIdsByName,
           skillAuthoringAvailable: params.skillAuthoringAvailable === true,
+          codeExecutionContext: params.codeExecutionContext,
         },
       }));
       return createToolExecuteHandler({
@@ -2259,6 +2621,7 @@ describe('createToolExecuteHandler', () => {
         getSkillByName: params.getSkillByName,
         getAuthorSkillByName: params.getAuthorSkillByName,
         readSandboxFile: params.readSandboxFile,
+        readSandboxImage: params.readSandboxImage,
       });
     }
 
@@ -2289,6 +2652,102 @@ describe('createToolExecuteHandler', () => {
       });
       expect(result.status).toBe('success');
       expect(result.content).toContain('hello-world');
+    });
+
+    it('routes host file reads with the executing agent profile instead of a graph hint', async () => {
+      const readSandboxFile = jest.fn(async () => ({ content: 'stateful-data' }));
+      const handler = makeReadFileHandler({
+        codeEnvAvailable: true,
+        accessibleSkillIds: skillsInScope(),
+        codeExecutionContext: {
+          baseUrl: 'https://stateful-code.example.com',
+          codeSessionKey: 'execute_code:stateful:v1:user',
+          executionProfile: 'stateful',
+          runtimeSessionHint: 'v1:user',
+          statefulSessions: true,
+        },
+        readSandboxFile,
+      });
+
+      await invokeHandler(handler, [
+        {
+          id: 'call_profiled_read',
+          name: Constants.READ_FILE,
+          args: { path: '/mnt/data/sentinel.txt' },
+          runtimeSessionHint: 'legacy-graph-hint',
+        } as unknown as ToolCallRequest,
+      ]);
+
+      expect(readSandboxFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codeApiBaseUrl: 'https://stateful-code.example.com',
+          executionProfile: 'stateful',
+          runtime_session_hint: 'v1:user',
+        }),
+      );
+      expect(readSandboxFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ runtime_session_hint: 'legacy-graph-hint' }),
+      );
+    });
+
+    it('marks an actual sandbox read warm without marking skill-backed reads', async () => {
+      const readSandboxFile = jest.fn(async () => ({ content: 'stateful-data' }));
+      const context: CodeExecutionContext = {
+        baseUrl: 'https://stateful-code.example.com',
+        codeSessionKey: 'execute_code:stateful:v2:user:abc',
+        executionProfile: 'stateful',
+        runtimeSessionHint: 'v2:user:abc',
+        statefulSessions: true,
+      };
+      const handler = makeReadFileHandler({
+        codeEnvAvailable: true,
+        accessibleSkillIds: skillsInScope(),
+        codeExecutionContext: context,
+        readSandboxFile,
+      });
+
+      const [result] = await new Promise<ToolExecuteResult[]>((resolve, reject) => {
+        handler.handle('on_tool_execute', {
+          toolCalls: [
+            {
+              id: 'call_warm_read',
+              name: Constants.READ_FILE,
+              args: { path: '/mnt/data/sentinel.txt' },
+            },
+          ],
+          metadata: { thread_id: 'conversation-1' },
+          resolve,
+          reject,
+        } as ToolExecuteBatchRequest);
+      });
+
+      expect(result.status).toBe('success');
+      expect(markSandboxReady).toHaveBeenCalledWith('v2:user:abc');
+      expect(markSandboxReady).toHaveBeenCalledWith('conversation-1');
+
+      jest.mocked(markSandboxReady).mockClear();
+      const skillHandler = makeReadFileHandler({
+        codeEnvAvailable: true,
+        accessibleSkillIds: skillsInScope(),
+        activeSkillNames: new Set(['docs']),
+        codeExecutionContext: context,
+        getSkillByName: jest.fn(async () => ({
+          _id: '507f1f77bcf86cd799439011' as never,
+          name: 'docs',
+          body: '# Docs',
+          fileCount: 0,
+          version: 1,
+        })),
+      });
+
+      await invokeHandler(skillHandler, [
+        {
+          id: 'call_skill_read',
+          name: Constants.READ_FILE,
+          args: { path: 'docs/SKILL.md' },
+        },
+      ]);
+      expect(markSandboxReady).not.toHaveBeenCalled();
     });
 
     it('returns a clear error for /mnt/data/ when codeEnv is not available', async () => {
@@ -2453,6 +2912,106 @@ describe('createToolExecuteHandler', () => {
       );
       expect(result.status).toBe('success');
       expect(result.content).toContain('Recovered Body');
+    });
+
+    it('points the bash fallback at the skills/ mount for a binary skill file (#13961)', async () => {
+      /**
+       * Bundled skill files are primed into the sandbox under the
+       * `skills/{skillName}/...` namespace (see `primeSkillFiles`), so the
+       * binary/large bash hint must reference `/mnt/data/skills/...` — the
+       * real on-disk path — not a prefix-less `/mnt/data/{skillName}/...`
+       * that points nowhere.
+       */
+      const getSkillByName = jest.fn(async () => ({
+        _id: '507f1f77bcf86cd799439099' as unknown as never,
+        name: 'brand-skill',
+        body: '# Brand skill',
+        fileCount: 1,
+        version: 1,
+      }));
+      const getSkillFileByPath = jest.fn(async () => ({
+        content: '',
+        isBinary: true,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        bytes: 4096,
+        filepath: '/storage/brand-skill/references/guide.docx',
+        source: 'local',
+        relativePath: 'references/guide.docx',
+      }));
+      const handler = createToolExecuteHandler({
+        loadTools: jest.fn(async () => ({
+          loadedTools: [],
+          configurable: {
+            codeEnvAvailable: true,
+            accessibleSkillIds: skillsInScope(),
+            activeSkillNames: new Set(['brand-skill']),
+          },
+        })),
+        getSkillByName,
+        getSkillFileByPath,
+      });
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_binary_skill_read',
+          name: Constants.READ_FILE,
+          args: { path: 'skills/brand-skill/references/guide.docx' },
+        },
+      ]);
+
+      expect(result.status).toBe('success');
+      expect(result.content).toContain(
+        'Use bash to process: /mnt/data/skills/brand-skill/references/guide.docx',
+      );
+    });
+
+    it('canonicalizes the bash hint to skills/ even when addressed without the prefix (#13961)', async () => {
+      /**
+       * The implicit `{skillName}/...` addressing form resolves the same
+       * skill file, so its bash hint must also point at the canonical
+       * `/mnt/data/skills/...` mount rather than echoing the prefix-less
+       * `args.path`.
+       */
+      const getSkillByName = jest.fn(async () => ({
+        _id: '507f1f77bcf86cd799439099' as unknown as never,
+        name: 'brand-skill',
+        body: '# Brand skill',
+        fileCount: 1,
+        version: 1,
+      }));
+      const getSkillFileByPath = jest.fn(async () => ({
+        content: '',
+        isBinary: true,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        bytes: 4096,
+        filepath: '/storage/brand-skill/references/guide.docx',
+        source: 'local',
+        relativePath: 'references/guide.docx',
+      }));
+      const handler = createToolExecuteHandler({
+        loadTools: jest.fn(async () => ({
+          loadedTools: [],
+          configurable: {
+            codeEnvAvailable: true,
+            accessibleSkillIds: skillsInScope(),
+            activeSkillNames: new Set(['brand-skill']),
+          },
+        })),
+        getSkillByName,
+        getSkillFileByPath,
+      });
+
+      const [result] = await invokeHandler(handler, [
+        {
+          id: 'call_binary_skill_read_implicit',
+          name: Constants.READ_FILE,
+          args: { path: 'brand-skill/references/guide.docx' },
+        },
+      ]);
+
+      expect(result.status).toBe('success');
+      expect(result.content).toContain('/mnt/data/skills/brand-skill/references/guide.docx');
+      expect(result.content).not.toContain('/mnt/data/brand-skill/references/guide.docx');
     });
 
     it('routes through sandbox when skills are not effectively enabled (empty accessibleSkillIds)', async () => {
@@ -2743,16 +3302,214 @@ describe('createToolExecuteHandler', () => {
     });
 
     describe('binary file guard', () => {
+      /* 1x1 transparent PNG; decoded bytes start with the PNG magic so the
+       * handler's `sniffImageMime` resolves `image/png` regardless of the
+       * path extension. `pngBytes` feeds the integrity check that guards
+       * against codeapi truncating a large `/exec` stdout. */
+      const PNG_B64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+      const pngBytes = Buffer.from(PNG_B64, 'base64').length;
+
+      /* Minimal magic-byte headers for the other supported formats — enough
+       * for `sniffImageMime` to resolve the MIME from the actual bytes. The
+       * `read_file` MIME is always sniffed, never taken from the extension. */
+      const b64 = (bytes: number[]) => Buffer.from(bytes).toString('base64');
+      const JPEG_B64 = b64([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+      const GIF_B64 = b64([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00]);
+      /* RIFF container with a size field (bytes 4-7 LE = 12) that matches the
+       * 20-byte total, so the completeness check accepts it as intact. */
+      const WEBP_B64 = b64([
+        0x52, 0x49, 0x46, 0x46, 0x0c, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0, 0, 0, 0, 0, 0, 0, 0,
+      ]);
+      /* PNG magic header with NO IEND trailer — a truncated/interrupted write. */
+      const TRUNCATED_PNG_B64 = b64([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+      /* Plausible text bytes with no image magic — a file mislabeled `.png`. */
+      const NOT_IMAGE_B64 = Buffer.from('plainly text, not an image at all', 'utf8').toString(
+        'base64',
+      );
+
+      const imageUrlOf = (result: { artifact?: unknown }): string => {
+        const artifact = result.artifact as { content?: Array<{ image_url?: { url?: string } }> };
+        return artifact?.content?.[0]?.image_url?.url ?? '';
+      };
+
       /**
-       * Regression for the matplotlib-shape bug where `read_file` on
-       * `/mnt/data/simple_graph.png` shelled `cat` through codeapi and
-       * line-numbered the lossy-string-decoded PNG bytes back to the
-       * model. The guard short-circuits BEFORE the network call for any
-       * extension that can never round-trip through codeapi's JSON
-       * `/exec` transport, and falls back to a NUL-byte sniff after the
-       * read for unknown extensions.
+       * `read_file` on a sandbox image returns the bytes as an `image_url`
+       * artifact the model can see. The SDK folds `artifact.content` into
+       * the model-visible message and the host tool-end callback saves the
+       * same data URL as a viewable attachment. `readSandboxFile` (the text
+       * `cat` path) must NOT be used — its JSON transport corrupts image
+       * bytes, which was the matplotlib-shape mojibake regression.
        */
-      it('rejects images by extension without ever calling readSandboxFile', async () => {
+      it('returns a sandbox image as an image_url artifact the model can see', async () => {
+        const readSandboxFile = jest.fn();
+        const readSandboxImage = jest.fn(async () => ({ base64: PNG_B64, bytes: pngBytes }));
+        const handler = makeReadFileHandler({
+          codeEnvAvailable: true,
+          accessibleSkillIds: skillsInScope(),
+          readSandboxFile,
+          readSandboxImage,
+        });
+
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_png',
+            name: Constants.READ_FILE,
+            args: { path: '/mnt/data/simple_graph.png' },
+            codeSessionContext: { session_id: 'sess-Z', files: [] },
+          } as unknown as ToolCallRequest,
+        ]);
+
+        expect(readSandboxFile).not.toHaveBeenCalled();
+        expect(readSandboxImage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            file_path: '/mnt/data/simple_graph.png',
+            session_id: 'sess-Z',
+            maxBytes: expect.any(Number),
+          }),
+        );
+        expect(result.status).toBe('success');
+        expect(result.content).toContain('Image:');
+        expect(result.content).toContain('image/png');
+        expect(result.artifact).toMatchObject({
+          content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${PNG_B64}` } }],
+        });
+      });
+
+      it.each([
+        ['png', '.png', PNG_B64, 'image/png'],
+        ['jpeg', '.jpg', JPEG_B64, 'image/jpeg'],
+        ['jpeg (.jpeg)', '.jpeg', JPEG_B64, 'image/jpeg'],
+        ['gif', '.gif', GIF_B64, 'image/gif'],
+        ['webp', '.webp', WEBP_B64, 'image/webp'],
+      ])(
+        'inlines a %s image with the MIME sniffed from its bytes',
+        async (_label, ext, base64, expectedMime) => {
+          const bytes = Buffer.from(base64, 'base64').length;
+          const readSandboxImage = jest.fn(async () => ({ base64, bytes }));
+          const handler = makeReadFileHandler({
+            codeEnvAvailable: true,
+            accessibleSkillIds: skillsInScope(),
+            readSandboxImage,
+          });
+
+          const [result] = await invokeHandler(handler, [
+            {
+              id: `call_${ext}`,
+              name: Constants.READ_FILE,
+              args: { path: `/mnt/data/asset${ext}` },
+            },
+          ]);
+
+          expect(result.status).toBe('success');
+          expect(result.content).toContain(expectedMime);
+          expect(imageUrlOf(result)).toBe(`data:${expectedMime};base64,${base64}`);
+        },
+      );
+
+      it('declares the sniffed MIME, not the extension, when they disagree (.png holding JPEG bytes)', async () => {
+        /* matplotlib/PIL commonly re-encode to a different format than the
+         * filename suggests. The declared type must match the bytes or the
+         * provider rejects the image. */
+        const bytes = Buffer.from(JPEG_B64, 'base64').length;
+        const readSandboxImage = jest.fn(async () => ({ base64: JPEG_B64, bytes }));
+        const handler = makeReadFileHandler({
+          codeEnvAvailable: true,
+          accessibleSkillIds: skillsInScope(),
+          readSandboxImage,
+        });
+
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_mismatch',
+            name: Constants.READ_FILE,
+            args: { path: '/mnt/data/actually_jpeg.png' },
+          },
+        ]);
+
+        expect(result.status).toBe('success');
+        expect(imageUrlOf(result)).toBe(`data:image/jpeg;base64,${JPEG_B64}`);
+      });
+
+      it('refuses a non-image mislabeled with an image extension (bytes sniff to nothing)', async () => {
+        /* A renamed .txt/.pdf routed here by its `.png` name: the bytes match
+         * no supported image header, so we must NOT ship them declared as an
+         * image (the provider would reject) — return the bash hint instead. */
+        const bytes = Buffer.from(NOT_IMAGE_B64, 'base64').length;
+        const readSandboxImage = jest.fn(async () => ({ base64: NOT_IMAGE_B64, bytes }));
+        const handler = makeReadFileHandler({
+          codeEnvAvailable: true,
+          accessibleSkillIds: skillsInScope(),
+          readSandboxImage,
+        });
+
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_fake_png',
+            name: Constants.READ_FILE,
+            args: { path: '/mnt/data/notes.png' },
+          },
+        ]);
+
+        expect(result.status).toBe('error');
+        expect(result.artifact).toBeUndefined();
+        expect(result.errorMessage).toContain('image file');
+        expect(result.errorMessage).toContain('bash_tool');
+      });
+
+      it('refuses a truncated image (valid magic header, missing trailer)', async () => {
+        /* A PNG whose write was interrupted keeps the magic prefix but lacks
+         * the IEND trailer; shipping it would fail saveBase64Image / the next
+         * provider request, so it must degrade to the bash hint. */
+        const bytes = Buffer.from(TRUNCATED_PNG_B64, 'base64').length;
+        const readSandboxImage = jest.fn(async () => ({ base64: TRUNCATED_PNG_B64, bytes }));
+        const handler = makeReadFileHandler({
+          codeEnvAvailable: true,
+          accessibleSkillIds: skillsInScope(),
+          readSandboxImage,
+        });
+
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_truncated_png',
+            name: Constants.READ_FILE,
+            args: { path: '/mnt/data/half_written.png' },
+          },
+        ]);
+
+        expect(result.status).toBe('error');
+        expect(result.artifact).toBeUndefined();
+        expect(result.errorMessage).toContain('image file');
+        expect(result.errorMessage).toContain('bash_tool');
+      });
+
+      it('routes to the image reader case-insensitively (.PNG)', async () => {
+        const readSandboxFile = jest.fn();
+        const readSandboxImage = jest.fn(async () => ({ base64: PNG_B64, bytes: pngBytes }));
+        const handler = makeReadFileHandler({
+          codeEnvAvailable: true,
+          accessibleSkillIds: skillsInScope(),
+          readSandboxFile,
+          readSandboxImage,
+        });
+
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_uppercase',
+            name: Constants.READ_FILE,
+            args: { path: '/mnt/data/CHART.PNG' },
+          },
+        ]);
+
+        expect(readSandboxFile).not.toHaveBeenCalled();
+        expect(readSandboxImage).toHaveBeenCalledWith(
+          expect.objectContaining({ file_path: '/mnt/data/CHART.PNG' }),
+        );
+        expect(result.status).toBe('success');
+        expect(result.artifact).toBeDefined();
+      });
+
+      it('degrades to a bash-pointing image hint when no sandbox image reader is wired', async () => {
         const readSandboxFile = jest.fn();
         const handler = makeReadFileHandler({
           codeEnvAvailable: true,
@@ -2773,16 +3530,91 @@ describe('createToolExecuteHandler', () => {
         expect(result.status).toBe('error');
         expect(result.errorMessage).toContain('image file');
         expect(result.errorMessage).toContain('.png');
-        expect(result.errorMessage).toContain('already attached');
+        expect(result.errorMessage).toContain('bash_tool');
+        expect(result.errorMessage).not.toContain('already attached');
+      });
+
+      it('reports an over-limit image without transferring bytes', async () => {
+        const readSandboxImage = jest.fn(async () => ({
+          tooLarge: true as const,
+          bytes: 9_000_000,
+        }));
+        const handler = makeReadFileHandler({
+          codeEnvAvailable: true,
+          accessibleSkillIds: skillsInScope(),
+          readSandboxImage,
+        });
+
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_big',
+            name: Constants.READ_FILE,
+            args: { path: '/mnt/data/huge.png' },
+          },
+        ]);
+
+        expect(result.status).toBe('success');
+        expect(result.artifact).toBeUndefined();
+        expect(result.content).toContain('inline limit');
+        expect(result.content).toContain('bash_tool');
+      });
+
+      it('degrades to the image hint when decoded bytes are truncated (integrity guard)', async () => {
+        /* Simulate codeapi clipping a large `/exec` stdout: the reported
+         * size does not match the decoded base64 length, so the bytes are
+         * unsafe to forward and we fall back to the bash hint. */
+        const readSandboxImage = jest.fn(async () => ({ base64: PNG_B64, bytes: pngBytes + 100 }));
+        const handler = makeReadFileHandler({
+          codeEnvAvailable: true,
+          accessibleSkillIds: skillsInScope(),
+          readSandboxImage,
+        });
+
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_trunc',
+            name: Constants.READ_FILE,
+            args: { path: '/mnt/data/clipped.png' },
+          },
+        ]);
+
+        expect(result.status).toBe('error');
+        expect(result.artifact).toBeUndefined();
+        expect(result.errorMessage).toContain('image file');
         expect(result.errorMessage).toContain('bash_tool');
       });
 
-      it('rejects non-image binary types with a bash-pointing message (not the image-attachment hint)', async () => {
+      it('degrades to the image hint when the image reader throws', async () => {
+        const readSandboxImage = jest.fn(async () => {
+          throw new Error('codeapi unreachable');
+        });
+        const handler = makeReadFileHandler({
+          codeEnvAvailable: true,
+          accessibleSkillIds: skillsInScope(),
+          readSandboxImage,
+        });
+
+        const [result] = await invokeHandler(handler, [
+          {
+            id: 'call_throw',
+            name: Constants.READ_FILE,
+            args: { path: '/mnt/data/broken.png' },
+          },
+        ]);
+
+        expect(result.status).toBe('error');
+        expect(result.errorMessage).toContain('image file');
+        expect(result.errorMessage).toContain('bash_tool');
+      });
+
+      it('rejects non-image binary types with a bash-pointing message (not the image path)', async () => {
         const readSandboxFile = jest.fn();
+        const readSandboxImage = jest.fn();
         const handler = makeReadFileHandler({
           codeEnvAvailable: true,
           accessibleSkillIds: skillsInScope(),
           readSandboxFile,
+          readSandboxImage,
         });
 
         const [result] = await invokeHandler(handler, [
@@ -2794,32 +3626,12 @@ describe('createToolExecuteHandler', () => {
         ]);
 
         expect(readSandboxFile).not.toHaveBeenCalled();
+        expect(readSandboxImage).not.toHaveBeenCalled();
         expect(result.status).toBe('error');
         expect(result.errorMessage).toContain('binary file');
         expect(result.errorMessage).toContain('.zip');
         expect(result.errorMessage).not.toContain('already attached');
         expect(result.errorMessage).toContain('bash_tool');
-      });
-
-      it('is case-insensitive on the extension match (PNG vs .png)', async () => {
-        const readSandboxFile = jest.fn();
-        const handler = makeReadFileHandler({
-          codeEnvAvailable: true,
-          accessibleSkillIds: skillsInScope(),
-          readSandboxFile,
-        });
-
-        const [result] = await invokeHandler(handler, [
-          {
-            id: 'call_uppercase',
-            name: Constants.READ_FILE,
-            args: { path: '/mnt/data/CHART.PNG' },
-          },
-        ]);
-
-        expect(readSandboxFile).not.toHaveBeenCalled();
-        expect(result.status).toBe('error');
-        expect(result.errorMessage).toContain('image file');
       });
 
       it('rejects binary content (NUL bytes) post-fetch when the extension was unknown', async () => {

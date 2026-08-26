@@ -1,14 +1,87 @@
 import { logger } from '@librechat/data-schemas';
 import { isEphemeralAgentId } from 'librechat-data-provider';
 import { HumanMessage } from '@librechat/agents/langchain/messages';
-import { formatSkillCatalog, SkillToolDefinition } from '@librechat/agents';
+import { formatSkillCatalog, SkillToolDefinition, ReadFileToolDefinition } from '@librechat/agents';
 import type { LCToolRegistry, LCTool, InjectedMessage } from '@librechat/agents';
 import type { BaseMessage } from '@librechat/agents/langchain/messages';
 import type { Agent } from 'librechat-data-provider';
 import type { Types } from 'mongoose';
-import type { InitializeAgentDbMethods } from './initialize';
 import { registerCodeExecutionTools } from './tools';
 import { logAxiosError } from '~/utils';
+
+/**
+ * Load a single skill by name, constrained to an ACL-accessible ID set.
+ * Returns the full document (including `body`) so manual invocation can
+ * prime SKILL.md without a second DB round-trip.
+ *
+ * `preferUserInvocable` (manual paths): on a same-name collision,
+ * prefer the newest doc with `userInvocable !== false`.
+ * `preferModelInvocable` (model paths — `skill` / `read_file`): on a
+ * same-name collision, prefer the newest doc with
+ * `disableModelInvocation !== true`. Both fall back to the newest match
+ * so the explicit-rejection error paths still fire when only the
+ * non-preferred variant exists.
+ */
+export type TGetSkillByName = (
+  name: string,
+  accessibleIds: Types.ObjectId[],
+  options?: { preferUserInvocable?: boolean; preferModelInvocable?: boolean },
+) => Promise<{
+  _id: Types.ObjectId;
+  name: string;
+  body: string;
+  author: Types.ObjectId;
+  /**
+   * Skill-declared tool allowlist, forwarded verbatim from the skill doc.
+   * Surfaced so the resolver can carry it onto `ResolvedManualSkill` for
+   * future runtime enforcement without a second round-trip.
+   */
+  allowedTools?: string[];
+  /**
+   * Set when the skill was authored with `disable-model-invocation: true`.
+   * The skill tool handler short-circuits on this so a model that names
+   * such a skill (e.g. via hallucination or stale catalog) gets a clear
+   * rejection instead of silently executing.
+   */
+  disableModelInvocation?: boolean;
+  /**
+   * Set when the skill was authored with `user-invocable: false`. The
+   * manual-invocation resolver skips with a warn log so an API-direct
+   * caller can't bypass the popover-side filter.
+   */
+  userInvocable?: boolean;
+  /** True for deployment-directory skills that are loaded in memory. */
+  deployment?: boolean;
+} | null>;
+
+/** List skill summaries for catalog injection (paginated, omits body/frontmatter). */
+export type TListSkillsByAccess = (params: {
+  accessibleIds: Types.ObjectId[];
+  limit: number;
+  cursor?: string | null;
+}) => Promise<{
+  skills: Array<{
+    _id: Types.ObjectId;
+    name: string;
+    description: string;
+    author: Types.ObjectId;
+    /**
+     * When `true`, the skill is excluded from the catalog injected into
+     * the agent's additional_instructions and the model cannot invoke it
+     * via the `skill` tool. Manual `$` invocation is unaffected.
+     */
+    disableModelInvocation?: boolean;
+    /**
+     * When `false`, the skill is hidden from the `$` popover and rejected
+     * by the manual-invocation resolver. Defaults to `true`.
+     */
+    userInvocable?: boolean;
+    /** True for deployment-directory skills that are loaded in memory. */
+    deployment?: boolean;
+  }>;
+  has_more?: boolean;
+  after?: string | null;
+}>;
 
 const SKILL_CATALOG_LIMIT = 100;
 const MIN_SKILL_CATALOG_LIMIT = 1;
@@ -16,6 +89,13 @@ const MIN_SKILL_CATALOG_LIMIT = 1;
 const MAX_CATALOG_PAGES = 10;
 /** Page size used when paginating to fill the active-skill quota. */
 const CATALOG_PAGE_SIZE = 100;
+/**
+ * Per-entry description cap applied by `formatSkillCatalog` before the
+ * catalog is injected into agent context. `@librechat/agents` truncates
+ * silently, so this mirrors the default so we can warn when authors' skill
+ * descriptions will not reach the model verbatim.
+ */
+const SKILL_CATALOG_MAX_ENTRY_CHARS = 250;
 /** Hard ceiling on skill names a model spec can request by config. */
 const MAX_MODEL_SPEC_SKILLS = SKILL_CATALOG_LIMIT;
 /**
@@ -50,6 +130,20 @@ export const MAX_PRIMED_SKILLS_PER_TURN = 30;
  * strings can't reach `getSkillByName` / Mongo's query planner.
  */
 export const MAX_SKILL_NAME_LENGTH = 200;
+
+/**
+ * Canonical namespace prefix for skill files. Single source of truth for
+ * three layers that must agree:
+ * - the `read_file`/`create_file`/`edit_file` authoring namespace shown to
+ *   the model (`skills/{skillName}/...`),
+ * - the `handleReadFileCall` routing + bash-fallback paths in `handlers.ts`,
+ * - the physical mount layout under `/mnt/data` (see `skillFiles.ts`, which
+ *   primes bundled files at `skills/{skillName}/...` so bash and the
+ *   model-facing namespace resolve to the same path on disk).
+ *
+ * Keep the trailing slash — call sites concatenate `${SKILL_FILE_PREFIX}${skillName}/...`.
+ */
+export const SKILL_FILE_PREFIX = 'skills/';
 
 /**
  * Marker tagged onto every skill-primed message (as `additional_kwargs.source`
@@ -139,7 +233,7 @@ export interface ResolveModelSpecSkillIdsParams {
   /** Full VIEW-accessible skill IDs for this user before model-spec scoping. */
   accessibleSkillIds: Types.ObjectId[];
   /** DB lookup: name → skill doc constrained to the user's accessible IDs. */
-  getSkillByName?: InitializeAgentDbMethods['getSkillByName'];
+  getSkillByName?: TGetSkillByName;
 }
 
 /**
@@ -317,9 +411,11 @@ export interface InjectSkillCatalogParams {
   toolRegistry: LCToolRegistry | undefined;
   accessibleSkillIds: Types.ObjectId[];
   contextWindowTokens: number;
-  listSkillsByAccess: InitializeAgentDbMethods['listSkillsByAccess'];
+  listSkillsByAccess: TListSkillsByAccess | undefined;
   /** When true, registers bash_tool alongside skill + read_file. */
   codeEnvAvailable?: boolean;
+  /** When true, bash_tool registers with the hedged stateful-session description. */
+  statefulSessions?: boolean;
   /** Current user ID — used to determine skill ownership for active-state resolution. */
   userId?: string;
   /** Per-user skill overrides: `{ [skillId]: boolean }`. Missing entries use the default. */
@@ -333,6 +429,15 @@ export interface InjectSkillCatalogParams {
 export interface InjectSkillCatalogResult {
   toolDefinitions: LCTool[] | undefined;
   skillCount: number;
+  /**
+   * Tool names the skills capability manages this run: the `skill` tool (when
+   * anything is model-invocable) and `read_file` (always, for primed skill
+   * references). `bash_tool` is excluded even when this call registers it —
+   * it belongs to the `execute_code` capability, which reports it itself.
+   * `initializeAgent` records these under the `skills` marker so spec
+   * selections naming `skills` govern exactly these definitions.
+   */
+  toolNames: string[];
   /**
    * IDs of skills the runtime is authorized to resolve via `getSkillByName`.
    * Includes `disable-model-invocation: true` skills even though they're
@@ -376,6 +481,7 @@ export async function injectSkillCatalog(
     contextWindowTokens,
     listSkillsByAccess,
     codeEnvAvailable,
+    statefulSessions,
     userId,
     skillStates,
     defaultActiveOnShare = false,
@@ -387,6 +493,7 @@ export async function injectSkillCatalog(
     return {
       toolDefinitions: inputDefs,
       skillCount: 0,
+      toolNames: [],
       activeSkillIds: [],
       activeSkillNames: new Set<string>(),
     };
@@ -452,6 +559,7 @@ export async function injectSkillCatalog(
     return {
       toolDefinitions: inputDefs,
       skillCount: 0,
+      toolNames: [],
       activeSkillIds: [],
       activeSkillNames: new Set<string>(),
     };
@@ -519,9 +627,19 @@ export async function injectSkillCatalog(
    * and those reads would otherwise be impossible.
    */
   if (catalogVisibleSkills.length > 0) {
+    for (const s of catalogVisibleSkills) {
+      if (s.description.length > SKILL_CATALOG_MAX_ENTRY_CHARS) {
+        logger.warn(
+          `[injectSkillCatalog] skill "${s.name}" description truncated to ${SKILL_CATALOG_MAX_ENTRY_CHARS} chars for the model catalog (was ${s.description.length})`,
+        );
+      }
+    }
     const catalog = formatSkillCatalog(
       catalogVisibleSkills.map((s) => ({ name: s.name, description: s.description })),
-      { contextWindowTokens: contextWindowTokens || 200_000 },
+      {
+        contextWindowTokens: contextWindowTokens || 200_000,
+        maxEntryChars: SKILL_CATALOG_MAX_ENTRY_CHARS,
+      },
     );
     if (catalog) {
       agent.additional_instructions = agent.additional_instructions
@@ -569,12 +687,19 @@ export async function injectSkillCatalog(
     toolDefinitions: workingDefs,
     includeBash: codeEnvAvailable === true,
     enableToolOutputReferences: codeEnvAvailable === true,
+    statefulSessions: statefulSessions === true,
   });
   workingDefs = codeExecResult.toolDefinitions;
+
+  const toolNames =
+    catalogVisibleSkills.length > 0
+      ? [skillToolDef.name, ReadFileToolDefinition.name]
+      : [ReadFileToolDefinition.name];
 
   return {
     toolDefinitions: workingDefs,
     skillCount: catalogVisibleSkills.length,
+    toolNames,
     activeSkillIds: executableSkills.map((s) => s._id),
     activeSkillNames: new Set<string>(executableSkills.map((s) => s.name)),
   };

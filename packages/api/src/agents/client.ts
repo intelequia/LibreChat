@@ -12,6 +12,7 @@ import type { MessageContentComplex } from '@librechat/agents';
 import type { Agent, TMessage } from 'librechat-data-provider';
 import type { ServerRequest } from '~/types';
 import { logAxiosError, mergeQuotedText, formatQuotesAsMarkdown } from '~/utils';
+import { ATTACHMENT_ONLY_TEXT } from '~/files/context';
 import Tokenizer from '~/utils/tokenizer';
 
 export const omitTitleOptions: Set<string> = new Set([
@@ -69,8 +70,36 @@ export type FormattedMessageContentPart = {
 };
 
 export type FormattedMessageWithContent = {
+  role?: string;
   content?: string | FormattedMessageContentPart[];
 };
+
+/**
+ * Substitutes stand-in text for a user turn that carries attachments but has
+ * nothing the provider can see: file search and code environment files reach
+ * the model out-of-band, so the content stays empty and Anthropic rejects the
+ * message outright. Apply after the file-context and quote merges so a turn
+ * that already gained inline content is left alone. The stored `message.text`
+ * keeps its empty value, so the UI still renders the attachment on its own.
+ *
+ * Takes the turn's files rather than the message because the current turn does
+ * not carry them yet: `BaseClient` assigns `userMessage.files` only after
+ * `buildMessages` returns, so callers pass the resolved attachments instead.
+ */
+export function applyAttachmentOnlyText(
+  formattedMessage: FormattedMessageWithContent,
+  files?: TMessage['files'] | null,
+): void {
+  if (formattedMessage.role !== 'user' || !files?.length) {
+    return;
+  }
+
+  if (formattedMessage.content !== '') {
+    return;
+  }
+
+  formattedMessage.content = ATTACHMENT_ONLY_TEXT;
+}
 
 export function prependFileContext(
   formattedMessage: FormattedMessageWithContent,
@@ -285,7 +314,12 @@ export function countFormattedMessageTokens(
           continue;
         }
 
-        if (type === ContentTypes.THINK || type === ContentTypes.ERROR) {
+        if (
+          type === ContentTypes.THINK ||
+          type === ContentTypes.ERROR ||
+          // UI-only progress headers — never model input, never billed output
+          type === ContentTypes.ACTIVITY_LABEL
+        ) {
           continue;
         }
 
@@ -358,6 +392,16 @@ export function createTokenCounter(encoding: Parameters<typeof Tokenizer.getToke
 }
 
 export function logToolError(_graph: unknown, error: unknown, toolId: string): void {
+  /**
+   * A GraphInterrupt unwinding out of a tool body is the HITL pause working as
+   * designed (e.g. `ask_user_question` raising LangGraph `interrupt()`), not a
+   * tool failure — logging it as a Tool Error at error level is alarming noise.
+   * Name-based check: the class arrives from `@langchain/langgraph` inside
+   * `@librechat/agents`, so an instanceof against our own import can miss.
+   */
+  if ((error as Error | undefined)?.name === 'GraphInterrupt') {
+    return;
+  }
   logAxiosError({
     error,
     message: `[api/server/controllers/agents/client.js #chatCompletion] Tool Error "${toolId}"`,

@@ -1,18 +1,16 @@
 const intelequiaCountTokens = require('./intelequiaTokenCount');
-const intelequiaConfigLoader = require('./intelequiaConfigLoader');
-const assistantPermission = require('./asistantPermission');
+const functionConfiguration = require('./functions');
+const graph = require('./graph');
 const toolsConfigurations = require('./toolsConfigurations');
 const pluginsAndTools = require('./pluginsAndTools');
 const constants = require('./constants');
-const dynamics = require('./dynamicsToken');
 const clientConfigurationRequests = require('./clientConfigurationRequests');
 const intelequiaCitations = require('./intelequiaCitations');
 const assistantVectorStoreConfiguration = require('./assistantVectorStoreConfiguration');
 module.exports = {
   intelequiaCountTokens,
-  ...dynamics,
-  ...intelequiaConfigLoader, 
-  ...assistantPermission,
+  ...functionConfiguration,
+  ...graph,
   ...toolsConfigurations,
   ...pluginsAndTools,
   ...constants,

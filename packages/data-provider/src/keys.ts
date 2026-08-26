@@ -5,21 +5,25 @@ export enum QueryKeys {
   sharedLinks = 'sharedLinks',
   allConversations = 'allConversations',
   archivedConversations = 'archivedConversations',
+  pinnedConversations = 'pinnedConversations',
   searchConversations = 'searchConversations',
   conversation = 'conversation',
   searchEnabled = 'searchEnabled',
+  langfuseConnection = 'langfuseConnection',
+  langfuseSessionLink = 'langfuseSessionLink',
   user = 'user',
   name = 'name', // user key name
   models = 'models',
   balance = 'balance',
   endpoints = 'endpoints',
   tokenConfig = 'tokenConfig',
-  contextProjection = 'contextProjection',
   presets = 'presets',
   searchResults = 'searchResults',
   tokenCount = 'tokenCount',
   availablePlugins = 'availablePlugins',
   startupConfig = 'startupConfig',
+  insights = 'insights',
+  insightsAccess = 'insightsAccess',
   assistants = 'assistants',
   assistant = 'assistant',
   agents = 'agents',
@@ -80,12 +84,15 @@ export enum QueryKeys {
   /* Skill tree (phase 2 — filesystem-style node view) */
   skillTree = 'skillTree',
   skillNodeContent = 'skillNodeContent',
-  /* Skill favorites (star a skill in the sidebar) */
-  skillFavorites = 'skillFavorites',
+  /* Tool favorites (starred marketplace items) */
+  toolFavorites = 'toolFavorites',
   /* Per-user skill active/inactive overrides */
   skillStates = 'skillStates',
   /* General user favorites */
   favorites = 'favorites',
+  /* Scheduled chats */
+  schedules = 'schedules',
+  schedule = 'schedule',
 }
 
 // Dynamic query keys that require parameters
@@ -94,10 +101,13 @@ export const DynamicQueryKeys = {
 } as const;
 
 export enum MutationKeys {
+  updateLangfuseConnection = 'updateLangfuseConnection',
+  testLangfuseConnection = 'testLangfuseConnection',
   createAgentApiKey = 'createAgentApiKey',
   deleteAgentApiKey = 'deleteAgentApiKey',
   fileUpload = 'fileUpload',
   fileDelete = 'fileDelete',
+  fileUsage = 'fileUsage',
   updatePreset = 'updatePreset',
   deletePreset = 'deletePreset',
   loginUser = 'loginUser',
@@ -114,6 +124,7 @@ export enum MutationKeys {
   deleteAgentAction = 'deleteAgentAction',
   revertAgentVersion = 'revertAgentVersion',
   deleteUser = 'deleteUser',
+  updateUserPreferences = 'updateUserPreferences',
   updateRole = 'updateRole',
   enableTwoFactor = 'enableTwoFactor',
   verifyTwoFactor = 'verifyTwoFactor',
@@ -129,4 +140,9 @@ export enum MutationKeys {
   deleteSkillNode = 'deleteSkillNode',
   updateSkillNodeContent = 'updateSkillNodeContent',
   convoPin = 'convoPin',
+  archiveAllConversations = 'archiveAllConversations',
+  createSchedule = 'createSchedule',
+  updateSchedule = 'updateSchedule',
+  deleteSchedule = 'deleteSchedule',
+  runSchedule = 'runSchedule',
 }

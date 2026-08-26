@@ -300,14 +300,27 @@ describe('Skill routes', () => {
       expect(res.status).toBe(400);
     });
 
-    it('rejects frontmatter with unknown keys', async () => {
+    it('accepts frontmatter with unknown keys and warns about them', async () => {
+      const res = await createSkillAsOwner({
+        name: 'unknown-key-frontmatter-skill',
+        frontmatter: { 'not-a-real-key': 'value' },
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'UNKNOWN_KEY', severity: 'warning' }),
+        ]),
+      );
+    });
+
+    it('rejects malformed frontmatter with 400', async () => {
       const res = await createSkillAsOwner({
         name: 'bad-frontmatter-skill',
-        frontmatter: { 'not-a-real-key': 'value' },
+        frontmatter: { 'user-invocable': 'yes' },
       });
       expect(res.status).toBe(400);
       expect(res.body.issues).toEqual(
-        expect.arrayContaining([expect.objectContaining({ code: 'UNKNOWN_KEY' })]),
+        expect.arrayContaining([expect.objectContaining({ code: 'INVALID_TYPE' })]),
       );
     });
 
@@ -528,7 +541,25 @@ describe('Skill routes', () => {
     });
   });
 
-  describe('GET /api/skills/:id/files/:relativePath', () => {
+  describe('GET /api/skills/:id/files/*relativePath', () => {
+    const { upsertSkillFile, updateSkillFileContent } = require('~/models');
+
+    async function seedNestedFile(skillId, relativePath, content) {
+      await upsertSkillFile({
+        skillId,
+        relativePath,
+        file_id: `file-${relativePath}`,
+        filename: relativePath.split('/').pop(),
+        filepath: `/tmp/${relativePath}`,
+        source: 'local',
+        mimeType: 'text/markdown',
+        bytes: content.length,
+        author: testUsers.owner._id,
+      });
+      // Seed cached content so the handler returns it without streaming
+      await updateSkillFileContent(skillId, relativePath, { content, isBinary: false });
+    }
+
     it('returns SKILL.md content from skill body', async () => {
       const created = await createSkillAsOwner();
       const res = await request(app).get(`/api/skills/${created.body._id}/files/SKILL.md`);
@@ -539,6 +570,39 @@ describe('Skill routes', () => {
       expect(res.body.content).toBeDefined();
     });
 
+    it('returns a nested file when the path is percent-encoded (%2F)', async () => {
+      const created = await createSkillAsOwner();
+      await seedNestedFile(created.body._id, 'references/working-patterns.md', 'nested body');
+      const res = await request(app).get(
+        `/api/skills/${created.body._id}/files/references%2Fworking-patterns.md`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.relativePath).toBe('references/working-patterns.md');
+      expect(res.body.content).toBe('nested body');
+    });
+
+    it('returns a nested file when a proxy decoded %2F to a literal slash', async () => {
+      const created = await createSkillAsOwner();
+      await seedNestedFile(created.body._id, 'references/working-patterns.md', 'nested body');
+      const res = await request(app).get(
+        `/api/skills/${created.body._id}/files/references/working-patterns.md`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.relativePath).toBe('references/working-patterns.md');
+      expect(res.body.content).toBe('nested body');
+    });
+
+    it('returns a deeply nested file (multiple subfolders)', async () => {
+      const created = await createSkillAsOwner();
+      await seedNestedFile(created.body._id, 'assets/img/icons/logo.md', 'deep');
+      const res = await request(app).get(
+        `/api/skills/${created.body._id}/files/assets/img/icons/logo.md`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.body.relativePath).toBe('assets/img/icons/logo.md');
+      expect(res.body.content).toBe('deep');
+    });
+
     it('returns 404 for a nonexistent file', async () => {
       const created = await createSkillAsOwner();
       const res = await request(app).get(
@@ -546,9 +610,17 @@ describe('Skill routes', () => {
       );
       expect(res.status).toBe(404);
     });
+
+    it('returns 404 for a path traversal attempt', async () => {
+      const created = await createSkillAsOwner();
+      const res = await request(app).get(
+        `/api/skills/${created.body._id}/files/references%2F..%2F..%2Fetc%2Fpasswd`,
+      );
+      expect(res.status).toBe(404);
+    });
   });
 
-  describe('DELETE /api/skills/:id/files/:relativePath', () => {
+  describe('DELETE /api/skills/:id/files/*relativePath', () => {
     const { upsertSkillFile } = require('~/models');
 
     it('deletes an existing skill file, bumps skill version, and returns 200', async () => {
@@ -582,6 +654,34 @@ describe('Skill routes', () => {
       const afterSkill = await request(app).get(`/api/skills/${created.body._id}`);
       expect(afterSkill.body.fileCount).toBe(0);
       expect(afterSkill.body.version).toBe(3);
+    });
+
+    it('deletes a nested file when a proxy decoded %2F to a literal slash', async () => {
+      const created = await createSkillAsOwner();
+      await upsertSkillFile({
+        skillId: created.body._id,
+        relativePath: 'references/notes.md',
+        file_id: 'file-2',
+        filename: 'notes.md',
+        filepath: '/tmp/notes.md',
+        source: 'local',
+        mimeType: 'text/markdown',
+        bytes: 12,
+        author: testUsers.owner._id,
+      });
+
+      const res = await request(app).delete(
+        `/api/skills/${created.body._id}/files/references/notes.md`,
+      );
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        skillId: created.body._id,
+        relativePath: 'references/notes.md',
+        deleted: true,
+      });
+
+      const afterSkill = await request(app).get(`/api/skills/${created.body._id}`);
+      expect(afterSkill.body.fileCount).toBe(0);
     });
 
     it('returns 404 when the file does not exist', async () => {

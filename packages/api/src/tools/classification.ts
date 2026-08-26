@@ -8,12 +8,12 @@
 import { logger } from '@librechat/data-schemas';
 import { Constants } from 'librechat-data-provider';
 import {
+  Providers,
   createToolSearch,
   ToolSearchToolDefinition,
   BashProgrammaticToolCallingDefinition,
   createBashProgrammaticToolCallingTool,
 } from '@librechat/agents';
-import type { AgentToolOptions } from 'librechat-data-provider';
 import type {
   LCToolRegistry,
   JsonSchemaType,
@@ -21,6 +21,9 @@ import type {
   GenericTool,
   LCTool,
 } from '@librechat/agents';
+import type { AgentToolOptions } from 'librechat-data-provider';
+import type { CodeExecutionContext } from '~/agents/execution';
+import { sanitizeGeminiSchema } from '~/mcp/zod';
 
 export type { LCTool, LCToolRegistry, AllowedCaller, JsonSchemaType };
 
@@ -99,6 +102,8 @@ interface MCPToolInstance {
   mcp?: boolean;
   /** Original JSON schema attached at MCP tool creation time */
   mcpJsonSchema?: JsonSchemaType;
+  /** Server this tool came from, carried from resolution instead of re-parsed */
+  mcpRawServerName?: string;
 }
 
 /**
@@ -119,7 +124,7 @@ export function extractMCPToolDefinition(tool: MCPToolInstance): ToolDefinition 
     def.parameters = tool.mcpJsonSchema;
   }
 
-  const serverName = getServerNameFromTool(tool.name);
+  const serverName = tool.mcpRawServerName ?? getServerNameFromTool(tool.name);
   if (serverName) {
     def.serverName = serverName;
   }
@@ -191,8 +196,12 @@ export interface BuildToolClassificationParams {
   codeExecutionEnabled?: boolean;
   /** When true, skip creating tool instances (for event-driven mode) */
   definitionsOnly?: boolean;
+  /** Agent provider — Gemini/Vertex rejects union types, so injected tool schemas get sanitized */
+  provider?: Providers | string;
   /** Optional host-supplied Code API auth headers for remote programmatic execution. */
   authHeaders?: () => Promise<Record<string, string>> | Record<string, string>;
+  /** Trusted Code API route selected for the executing agent. */
+  codeExecutionContext?: CodeExecutionContext;
 }
 
 /** Result from building tool classification */
@@ -253,6 +262,7 @@ export async function buildToolClassification(
 ): Promise<BuildToolClassificationResult> {
   const {
     agentId,
+    provider,
     loadedTools,
     agentToolOptions,
     definitionsOnly = false,
@@ -260,7 +270,9 @@ export async function buildToolClassification(
     programmaticToolsEnabled = false,
     codeExecutionEnabled = false,
     authHeaders,
+    codeExecutionContext,
   } = params;
+  const isGoogle = provider === Providers.GOOGLE || provider === Providers.VERTEXAI;
   const additionalTools: GenericTool[] = [];
 
   const mcpTools = loadedTools.filter(isMCPTool);
@@ -311,11 +323,22 @@ export async function buildToolClassification(
 
   /** Tool search uses local mode (no API key needed) */
   if (hasDeferredTools) {
+    /**
+     * The ToolSearch schema declares `mcp_server` as a string/array union, which
+     * `zod_to_gemini_parameters` rejects — collapse it for Gemini/Vertex agents.
+     */
+    const toolSearchParameters = (isGoogle
+      ? sanitizeGeminiSchema(ToolSearchToolDefinition.schema as Record<string, unknown>)
+      : ToolSearchToolDefinition.schema) as unknown as LCTool['parameters'];
+
     if (!definitionsOnly) {
       const toolSearchTool = createToolSearch({
         mode: 'local',
         toolRegistry,
       });
+      if (isGoogle) {
+        toolSearchTool.schema = toolSearchParameters as typeof toolSearchTool.schema;
+      }
       additionalTools.push(toolSearchTool);
     }
 
@@ -323,7 +346,7 @@ export async function buildToolClassification(
     toolDefinitions.push({
       name: ToolSearchToolDefinition.name,
       description: ToolSearchToolDefinition.description,
-      parameters: ToolSearchToolDefinition.schema as unknown as LCTool['parameters'],
+      parameters: toolSearchParameters,
     });
     toolRegistry.set(ToolSearchToolDefinition.name, {
       name: ToolSearchToolDefinition.name,
@@ -355,9 +378,18 @@ export async function buildToolClassification(
   }
 
   try {
-    const ptcTool = createBashProgrammaticToolCallingTool({ authHeaders } as Parameters<
-      typeof createBashProgrammaticToolCallingTool
-    >[0] & { authHeaders?: BuildToolClassificationParams['authHeaders'] });
+    const profileParams = codeExecutionContext
+      ? {
+          baseUrl: codeExecutionContext.baseUrl,
+          executionProfile: codeExecutionContext.executionProfile,
+          runtimeSessionHint: codeExecutionContext.runtimeSessionHint,
+        }
+      : {};
+    const ptcTool = createBashProgrammaticToolCallingTool({
+      authHeaders,
+      ...profileParams,
+    } as Parameters<typeof createBashProgrammaticToolCallingTool>[0] &
+      typeof profileParams & { authHeaders?: BuildToolClassificationParams['authHeaders'] });
     additionalTools.push(ptcTool);
 
     /** Add PTC definition for event-driven mode */

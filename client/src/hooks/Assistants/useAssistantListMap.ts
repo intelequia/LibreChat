@@ -17,8 +17,6 @@ export default function useAssistantListMap<T = AssistantListItem[] | null>(
     res: AssistantListResponse,
   ) => T,
 ): Record<AssistantsEndpoint, T | null> {
-
-  
   const { data: assistantsList = null } = useListAssistantsQuery(
     EModelEndpoint.assistants,
     undefined,
@@ -35,20 +33,12 @@ export default function useAssistantListMap<T = AssistantListItem[] | null>(
     },
   );
 
-  const { data: azureAgents = null } = useListAssistantsQuery(
-    EModelEndpoint.azureAgents,
-    undefined,
-    {
-      select: selector,
-    },
-  );
   const assistantListMap = useMemo(() => {
     return {
       [EModelEndpoint.assistants]: assistantsList as T,
       [EModelEndpoint.azureAssistants]: azureAssistants as T,
-      [EModelEndpoint.azureAgents]: azureAgents as T
     };
-  }, [assistantsList, azureAssistants, azureAgents]);
+  }, [assistantsList, azureAssistants]);
 
   return assistantListMap;
 }

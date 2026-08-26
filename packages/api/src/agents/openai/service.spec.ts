@@ -1,5 +1,6 @@
-import { createAgentChatCompletion } from './service';
+import { ErrorTypes } from 'librechat-data-provider';
 import type { ChatCompletionDependencies } from './service';
+import { createAgentChatCompletion } from './service';
 
 jest.mock('@librechat/data-schemas', () => ({
   logger: {
@@ -10,7 +11,11 @@ jest.mock('@librechat/data-schemas', () => ({
   },
 }));
 
-type CreateRunArgs = { user?: Record<string, unknown> };
+type CreateRunArgs = {
+  user?: Record<string, unknown>;
+  tenantId?: string;
+  appConfig?: Record<string, unknown>;
+};
 type ProcessStreamConfig = { configurable?: Record<string, unknown> };
 
 function createMockReq(user?: Record<string, unknown>) {
@@ -103,5 +108,83 @@ describe('createAgentChatCompletion - MCP permission user propagation', () => {
     // No role present → the runtime MCP check fails closed.
     expect(streamConfig.configurable?.user).toEqual({ id: 'api-user' });
     expect(streamConfig.configurable?.user).not.toHaveProperty('role');
+  });
+
+  it('forwards appConfig and tenantId to createRun', async () => {
+    const appConfig = {
+      endpoints: {
+        agents: { capabilities: ['execute_code'] },
+      },
+      langfuse: {
+        publicKey: 'pk-tenant-1',
+        secretKey: 'sk-tenant-1',
+      },
+      interfaceConfig: {
+        modelSelect: true,
+      },
+    };
+    deps.appConfig = appConfig as never;
+    const req = createMockReq({
+      id: 'user-123',
+      tenantId: 'tenant-1',
+      role: 'USER',
+    });
+
+    await createAgentChatCompletion(req, createMockRes(), deps);
+
+    expect(createRun).toHaveBeenCalledTimes(1);
+    const runArgs = createRun.mock.calls[0][0] as CreateRunArgs;
+    expect(runArgs.tenantId).toBe('tenant-1');
+    expect(runArgs.appConfig).toEqual({
+      endpoints: appConfig.endpoints,
+      langfuse: appConfig.langfuse,
+    });
+    expect(runArgs.appConfig).not.toHaveProperty('interfaceConfig');
+  });
+
+  it('forwards the stateful environment allowlist from appConfig to agent initialization', async () => {
+    deps.appConfig = {
+      endpoints: {
+        agents: {
+          capabilities: ['execute_code', 'stateful_code_sessions'],
+          statefulCodeSessions: { allowedEnvironments: ['user', 'agent-user'] },
+        },
+      },
+    } as never;
+
+    await createAgentChatCompletion(createMockReq({ id: 'user-123' }), createMockRes(), deps);
+
+    expect(deps.initializeAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codeEnvAvailable: true,
+        statefulSessionsAvailable: true,
+        allowedStatefulCodeEnvironments: ['user', 'agent-user'],
+      }),
+    );
+  });
+
+  it('preserves stateful scope policy status and code in an initialization error response', async () => {
+    const policyError = Object.assign(
+      new Error('Stateful code environment is not allowed by this deployment: conversation'),
+      {
+        code: ErrorTypes.STATEFUL_CODE_ENVIRONMENT_NOT_ALLOWED,
+        status: 403,
+        statusCode: 403,
+      },
+    );
+    (deps.initializeAgent as jest.Mock).mockRejectedValueOnce(policyError);
+    const res = createMockRes();
+
+    await createAgentChatCompletion(createMockReq({ id: 'user-123' }), res, deps);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({
+      error: {
+        message: policyError.message,
+        type: 'invalid_request_error',
+        param: null,
+        code: ErrorTypes.STATEFUL_CODE_ENVIRONMENT_NOT_ALLOWED,
+      },
+    });
   });
 });

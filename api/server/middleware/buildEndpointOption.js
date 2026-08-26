@@ -23,7 +23,6 @@ const buildFunction = {
   [EModelEndpoint.agents]: agents.buildOptions,
   [EModelEndpoint.assistants]: assistants.buildOptions,
   [EModelEndpoint.azureAssistants]: azureAssistants.buildOptions,
-  [EModelEndpoint.azureAgents]: azureAssistants.buildOptions,
 };
 
 async function buildEndpointOption(req, res, next) {
@@ -66,7 +65,7 @@ async function buildEndpointOption(req, res, next) {
     const rawChatProjectId = req.body.chatProjectId;
     const parsedBodyForModelSpec =
       parsedBody.chatProjectId === undefined &&
-      (typeof rawChatProjectId === 'string' || rawChatProjectId === null)
+        (typeof rawChatProjectId === 'string' || rawChatProjectId === null)
         ? { ...parsedBody, chatProjectId: rawChatProjectId }
         : parsedBody;
 
