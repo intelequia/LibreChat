@@ -1105,6 +1105,7 @@
   "com_ui_model_parameters_reset": "Los parámetros del modelo han sido restablecidos.",
   "com_ui_more_info": "Más información",
   "com_ui_more_options": "Más opciones",
+  "com_ui_my_agents": "Mis agentes",
   "com_ui_my_prompts": "Mis Prompts",
   "com_ui_my_skills": "Mis Habilidades",
   "com_ui_n_files": "{{0}} archivos",

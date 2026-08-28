@@ -17,6 +17,7 @@ import type {
 } from 'librechat-data-provider';
 import type { Endpoint } from '~/common';
 import { useHasAccess, useShowMarketplace } from '~/hooks';
+import useLocalize from '~/hooks/useLocalize';
 import { useGetEndpointsQuery } from '~/data-provider';
 import { mapEndpoints, getIconKey } from '~/utils';
 import { icons } from './Icons';
@@ -34,6 +35,7 @@ export const useEndpoints = ({
   endpointsConfig: TEndpointsConfig;
   startupConfig: TStartupConfig | undefined;
 }) => {
+  const localize = useLocalize();
   const modelsQuery = useGetModelsQuery();
   const { data: endpoints = [] } = useGetEndpointsQuery({ select: mapEndpoints });
   const interfaceConfig = startupConfig?.interface ?? defaultInterface;
@@ -92,12 +94,13 @@ export const useEndpoints = ({
       const hasModels =
         (ep === EModelEndpoint.agents && ((agents?.length ?? 0) > 0 || showAgentMarketplace)) ||
         (ep === EModelEndpoint.assistants && assistants?.length > 0) ||
-        (ep !== EModelEndpoint.assistants && ep !== EModelEndpoint.agents && (modelsQuery.data?.[ep]?.length ?? 0) > 0);
+        (ep !== EModelEndpoint.assistants &&
+          ep !== EModelEndpoint.agents &&
+          (modelsQuery.data?.[ep]?.length ?? 0) > 0);
 
       if (ep === EModelEndpoint.agents && !hasModels) {
         return acc;
       }
-      
 
       if (ep === EModelEndpoint.agents && !hasModels) {
         return acc;
@@ -106,7 +109,8 @@ export const useEndpoints = ({
       // Base result object with formatted default icon
       const result: Endpoint = {
         value: ep,
-        label: alternateName[ep] || ep,
+        label:
+          ep === EModelEndpoint.agents ? localize('com_ui_my_agents') : alternateName[ep] || ep,
         hasModels,
         icon: Icon
           ? React.createElement(Icon, {
@@ -201,6 +205,7 @@ export const useEndpoints = ({
     azureAssistants,
     endpointsConfig,
     filteredEndpoints,
+    localize,
     modelsQuery.data,
     showAgentMarketplace,
   ]);
