@@ -18,14 +18,14 @@ steps:
   - checkout: self
     fetchDepth: 1
 
-  - task: Docker@2
-    displayName: Log in to Docker Registry
-    inputs:
-      command: login
-      containerRegistry: $(AZURE_SERVICE_CONNECTION)
-
   - bash: |
       set -euo pipefail
+      trap 'docker logout "$ACR_LOGIN_SERVER" >/dev/null 2>&1 || true' EXIT
+
+      printf '%s' "$ACR_TOKEN_PASSWORD" |
+        docker login "$ACR_LOGIN_SERVER" \
+          --username "$ACR_TOKEN_NAME" \
+          --password-stdin
 
       if [[ "$SOURCE_BRANCH" != "preview" && "$SOURCE_BRANCH" != "latest" ]]; then
         echo "Unsupported source branch: $SOURCE_BRANCH"
@@ -49,6 +49,8 @@ steps:
         "$SOURCE_DIRECTORY"
     env:
       ACR_LOGIN_SERVER: $(ACR_LOGIN_SERVER)
+      ACR_TOKEN_NAME: $(ACR_TOKEN_NAME)
+      ACR_TOKEN_PASSWORD: $(ACR_TOKEN_PASSWORD)
       IMAGE_REPOSITORY: $(IMAGE_REPOSITORY)
       SOURCE_BRANCH: $(Build.SourceBranchName)
       SOURCE_VERSION: $(Build.SourceVersion)
