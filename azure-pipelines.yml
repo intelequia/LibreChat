@@ -8,6 +8,8 @@ pr: none
 
 variables:
   - group: intelewriter-acr
+  - name: imageRepository
+    value: intelequialibrechat
   - name: vmImageName
     value: ubuntu-latest
 
@@ -20,17 +22,21 @@ steps:
 
   - bash: |
       set -euo pipefail
-      trap 'docker logout "$ACR_LOGIN_SERVER" >/dev/null 2>&1 || true' EXIT
-
-      printf '%s' "$ACR_TOKEN_PASSWORD" |
-        docker login "$ACR_LOGIN_SERVER" \
-          --username "$ACR_TOKEN_NAME" \
-          --password-stdin
 
       if [[ "$SOURCE_BRANCH" != "preview" && "$SOURCE_BRANCH" != "latest" ]]; then
         echo "Unsupported source branch: $SOURCE_BRANCH"
         exit 1
       fi
+
+      cleanup() {
+        docker logout "$ACR_LOGIN_SERVER" >/dev/null 2>&1 || true
+      }
+      trap cleanup EXIT
+
+      printf '%s' "$ACR_TOKEN_PASSWORD" |
+        docker login --password-stdin \
+          --username "$ACR_TOKEN_NAME" \
+          "$ACR_LOGIN_SERVER"
 
       short_sha="${SOURCE_VERSION:0:12}"
       immutable_tag="${SOURCE_BRANCH}-${BUILD_ID}-${short_sha}"
@@ -51,7 +57,7 @@ steps:
       ACR_LOGIN_SERVER: $(ACR_LOGIN_SERVER)
       ACR_TOKEN_NAME: $(ACR_TOKEN_NAME)
       ACR_TOKEN_PASSWORD: $(ACR_TOKEN_PASSWORD)
-      IMAGE_REPOSITORY: $(IMAGE_REPOSITORY)
+      IMAGE_REPOSITORY: $(imageRepository)
       SOURCE_BRANCH: $(Build.SourceBranchName)
       SOURCE_VERSION: $(Build.SourceVersion)
       BUILD_ID: $(Build.BuildId)
