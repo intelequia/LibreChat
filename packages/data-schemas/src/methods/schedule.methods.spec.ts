@@ -221,6 +221,76 @@ describe('recordSkippedRun duplicate-occurrence guard', () => {
   });
 });
 
+describe('getScheduleRunProject (occurrence scope, recorded vs unknown)', () => {
+  /**
+   * The whole distinction rests on a stored `null` surviving as a PRESENT key while a
+   * never-written field stays absent. Asserted against real Mongo rather than assumed:
+   * if that ever stopped holding, a deliberately unscoped run would silently start
+   * being validated against the schedule's current project instead.
+   */
+  it("narrows the user's in-flight runs to the statuses asked for", async () => {
+    const schedule = await methods.createSchedule(scheduleData());
+    const generating = new Date('2026-07-22T12:00:00Z');
+    const paused = new Date('2026-07-23T12:00:00Z');
+    await methods.reserveStartedRun(runData(schedule, { scheduledFor: paused }));
+    await methods.recordRunOutcome({
+      scheduleId: schedule.id,
+      scheduledFor: paused,
+      status: 'requires_action',
+      autoDisableAfterFailures: 5,
+    });
+    await methods.reserveStartedRun(runData(schedule, { scheduledFor: generating }));
+
+    const all = await methods.getActiveRunsForUser(schedule.user);
+    const started = await methods.getActiveRunsForUser(schedule.user, ['started']);
+
+    expect(all.map((run) => run.status).sort()).toEqual(['requires_action', 'started']);
+    expect(started.map((run) => run.scheduledFor)).toEqual([generating]);
+  });
+
+  it('reports a recorded null apart from a field that was never written', async () => {
+    const schedule = await methods.createSchedule(scheduleData());
+    const scoped = new Date('2026-07-20T12:00:00Z');
+    const unscoped = new Date('2026-07-21T12:00:00Z');
+
+    await methods.reserveStartedRun(
+      runData(schedule, { scheduledFor: scoped, chatProjectId: 'proj-1' }),
+    );
+    await methods.recordRunOutcome({
+      scheduleId: schedule.id,
+      scheduledFor: scoped,
+      status: 'success',
+      autoDisableAfterFailures: 5,
+    });
+    await methods.reserveStartedRun(
+      runData(schedule, { scheduledFor: unscoped, chatProjectId: null }),
+    );
+
+    expect(await methods.getScheduleRunProject(schedule.id, scoped)).toEqual({
+      recorded: true,
+      chatProjectId: 'proj-1',
+    });
+    // Recorded, and deliberately without a project — NOT a fallback case.
+    expect(await methods.getScheduleRunProject(schedule.id, unscoped)).toEqual({ recorded: true });
+  });
+
+  it('reports a pre-scope row as unrecorded, and a missing row as null', async () => {
+    const schedule = await methods.createSchedule(scheduleData());
+    const legacy = new Date('2026-07-22T12:00:00Z');
+    await methods.reserveStartedRun(runData(schedule, { scheduledFor: legacy }));
+    // Strip the key the way a row written before this field looks on disk.
+    await mongoose.models.ScheduleRun.collection.updateOne(
+      { scheduleId: schedule.id, scheduledFor: legacy },
+      { $unset: { chatProjectId: '' } },
+    );
+
+    expect(await methods.getScheduleRunProject(schedule.id, legacy)).toEqual({ recorded: false });
+    expect(
+      await methods.getScheduleRunProject(schedule.id, new Date('2030-01-01T00:00:00Z')),
+    ).toBeNull();
+  });
+});
+
 describe('settledAt retention marker', () => {
   it('stamps settledAt on terminal outcomes but never on a pause', async () => {
     const schedule = await methods.createSchedule(scheduleData());
@@ -376,9 +446,46 @@ describe('createScheduleWithSlot (atomic per-user cap)', () => {
     expect(c).not.toBe('limit');
     expect(await methods.countSchedulesByUser(user)).toBe(2);
   });
+
+  it('counts legacy schedules without slots against the cap', async () => {
+    const user = new mongoose.Types.ObjectId();
+    await methods.createSchedule(scheduleData({ user }));
+    await methods.createSchedule(scheduleData({ user }));
+
+    const results = await Promise.all(
+      Array.from({ length: 3 }, () => methods.createScheduleWithSlot(scheduleData({ user }), 3)),
+    );
+
+    expect(results.filter((result) => result !== 'limit')).toHaveLength(1);
+    expect(results.filter((result) => result === 'limit')).toHaveLength(2);
+    expect(await methods.countSchedulesByUser(user)).toBe(3);
+  });
 });
 
 describe('recordRunOutcome', () => {
+  it('persists the paused namespace and preserves it when recovery has no namespace projection', async () => {
+    const schedule = await Schedule.create(scheduleData());
+    const row = await ScheduleRun.create(runData(schedule, { conversationId: 'paused-thread' }));
+    const outcome = {
+      scheduleId: schedule.id,
+      scheduledFor: row.scheduledFor,
+      status: 'requires_action' as const,
+      conversationId: 'paused-thread',
+      autoDisableAfterFailures: 3,
+    };
+    await methods.recordRunOutcome({ ...outcome, checkpointNamespace: 'owned-namespace' });
+    await methods.recordRunOutcome(outcome);
+    expect(await methods.getActiveRunsForSchedule(schedule.id)).toEqual([
+      expect.objectContaining({
+        status: 'requires_action',
+        checkpointNamespace: 'owned-namespace',
+      }),
+    ]);
+    expect(await ScheduleRun.findOne({ _id: row._id }).lean()).not.toHaveProperty(
+      'checkpointNamespace',
+    );
+  });
+
   const scheduledFor = new Date('2026-07-20T12:00:00Z');
 
   it('success finalizes the run, increments runCount, and resets failure state', async () => {
@@ -416,16 +523,19 @@ describe('recordRunOutcome', () => {
   it('error increments failureCount without disabling below the threshold', async () => {
     const schedule = await methods.createSchedule(scheduleData());
     await methods.insertScheduleRun(runData(schedule, { scheduledFor }));
+    const mcp = [{ server: 'Notion', status: 'mcp_unavailable' as const }];
     await methods.recordRunOutcome({
       scheduleId: schedule.id,
       scheduledFor,
       status: 'error',
       error: 'provider exploded',
+      mcp,
       autoDisableAfterFailures: 3,
     });
     const run = await getRun(schedule.id, scheduledFor);
     expect(run.status).toBe('error');
     expect(run.error).toBe('provider exploded');
+    expect(run.mcp).toEqual(mcp);
     const updated = await getSchedule(schedule.id);
     expect(updated.failureCount).toBe(1);
     expect(updated.runCount).toBe(0);
@@ -762,6 +872,31 @@ describe('countActiveRuns', () => {
       autoDisableAfterFailures: 3,
     });
     expect(await methods.countActiveRuns()).toBe(1);
+  });
+});
+
+describe('getCapacityOccupancy', () => {
+  it('excludes admission-only failures that never dispatched a generation', async () => {
+    const admission = await methods.createSchedule(scheduleData());
+    const legacy = await methods.createSchedule(scheduleData());
+    const slotted = await methods.createSchedule(scheduleData());
+    await methods.reserveStartedRun(
+      runData(admission, {
+        scheduledFor: new Date('2026-07-20T12:00:00Z'),
+        admissionOnly: true,
+      }),
+    );
+    await methods.reserveStartedRun(
+      runData(legacy, { scheduledFor: new Date('2026-07-20T13:00:00Z') }),
+    );
+    await methods.reserveStartedRun(
+      runData(slotted, { scheduledFor: new Date('2026-07-20T14:00:00Z'), capacitySlot: 2 }),
+    );
+
+    await expect(methods.getCapacityOccupancy()).resolves.toEqual({
+      takenSlots: [2],
+      unslotted: 1,
+    });
   });
 });
 
@@ -1825,6 +1960,105 @@ describe('reserveStartedRun duplicate reporting', () => {
   });
 });
 
+describe('run reservation database error formats', () => {
+  const conflicts = [
+    {
+      conflict: 'duplicate',
+      keyPattern: { scheduleId: 1, scheduledFor: 1 },
+      index: 'scheduleId_1_scheduledFor_1',
+    },
+    { conflict: 'overlap', keyPattern: { scheduleId: 1 }, index: 'scheduleId_1' },
+    { conflict: 'slot-taken', keyPattern: { capacitySlot: 1 }, index: 'capacitySlot_1' },
+  ] as const;
+
+  describe.each(['keyPattern', 'errmsg', 'message'] as const)('%s', (format) => {
+    it.each(conflicts)(
+      'classifies $conflict on admission',
+      async ({ conflict, keyPattern, index }) => {
+        const schedule = await methods.createSchedule(scheduleData());
+        const data = runData(schedule);
+        await ScheduleRun.create({ ...data, status: 'success' });
+        const error = {
+          code: 11000,
+          ...(format === 'keyPattern'
+            ? { keyPattern }
+            : { [format]: `E11000 duplicate key error collection: scheduleruns index: ${index}` }),
+        };
+        // Inject the external database response shape; the occurrence lookup remains real.
+        jest.spyOn(ScheduleRun, 'create').mockRejectedValueOnce(error);
+        await expect(methods.reserveStartedRun(data)).resolves.toEqual(
+          conflict === 'duplicate' ? { conflict, existingStatus: 'success' } : { conflict },
+        );
+      },
+    );
+
+    it.each(conflicts.filter(({ conflict }) => conflict !== 'duplicate'))(
+      'classifies $conflict on approval resume',
+      async ({ conflict, keyPattern, index }) => {
+        const error = {
+          code: 11000,
+          ...(format === 'keyPattern'
+            ? { keyPattern }
+            : { [format]: `E11000 duplicate key error collection: scheduleruns index: ${index}` }),
+        };
+        jest.spyOn(ScheduleRun, 'findOneAndUpdate').mockImplementationOnce(() => {
+          throw error;
+        });
+        await expect(methods.markRunResumeClaimed('schedule', new Date(), 0)).resolves.toEqual({
+          conflict,
+        });
+      },
+    );
+  });
+
+  it.each(['started', 'requires_action', 'success'] as const)(
+    'preserves the existing %s occurrence status without keyPattern or keyValue',
+    async (status) => {
+      const schedule = await methods.createSchedule(scheduleData());
+      const data = runData(schedule);
+      await ScheduleRun.create({ ...data, status });
+      jest.spyOn(ScheduleRun, 'create').mockRejectedValueOnce({
+        code: 11000,
+        message:
+          'E11000 duplicate key error collection: scheduleruns index: scheduleId_1_scheduledFor_1 dup key: { scheduleId: "schedule" }',
+      });
+      await expect(methods.reserveStartedRun(data)).resolves.toEqual({
+        conflict: 'duplicate',
+        existingStatus: status,
+      });
+    },
+  );
+
+  it('prefers keyPattern over a contradictory index name', async () => {
+    jest.spyOn(ScheduleRun, 'create').mockRejectedValueOnce({
+      code: 11000,
+      keyPattern: { capacitySlot: 1 },
+      message: 'E11000 duplicate key error collection: scheduleruns index: scheduleId_1',
+    });
+    await expect(methods.reserveStartedRun({})).resolves.toEqual({ conflict: 'slot-taken' });
+  });
+
+  it.each([
+    { code: 11000 },
+    { code: 42, message: 'index: scheduleId_1' },
+    { code: 11000, message: 'index: scheduleId_1_extra' },
+    { code: 11000, message: 'index: prefix_scheduleId_1' },
+    { code: 11000, message: 'index: unrelated dup key: { value: "index: scheduleId_1" }' },
+    { code: 11000, keyPattern: {}, message: 'index: scheduleId_1' },
+    { code: 11000, keyPattern: { scheduleId: 1, unexpected: 1 } },
+    { code: 11000, keyPattern: { scheduledFor: 1 } },
+    { code: 11000, message: 123 },
+    new Error('connection lost'),
+  ])('rethrows unrecognized errors: %j', async (error) => {
+    jest.spyOn(ScheduleRun, 'create').mockRejectedValueOnce(error);
+    await expect(methods.reserveStartedRun({})).rejects.toBe(error);
+    jest.spyOn(ScheduleRun, 'findOneAndUpdate').mockImplementationOnce(() => {
+      throw error;
+    });
+    await expect(methods.markRunResumeClaimed('schedule', new Date(), 0)).rejects.toBe(error);
+  });
+});
+
 describe('deleteScheduleRun conversation fence', () => {
   it('deletes only the reservation the caller inserted', async () => {
     const schedule = await methods.createSchedule(scheduleData());
@@ -2423,6 +2657,31 @@ describe('reconciliation rotates the paused window', () => {
   });
 });
 
+describe('reconciliation rotates the started window', () => {
+  it('serves a started row behind a full window once the leaders have been examined', async () => {
+    const user = new mongoose.Types.ObjectId();
+    const base = Date.parse('2026-07-01T00:00:00Z');
+    const olderThan = new Date(base + 10_000_000);
+    const runs = Array.from({ length: 101 }, (_, index) => ({
+      scheduleId: `started_${index}`,
+      user,
+      scheduledFor: new Date(base + index * 60_000),
+      firedAt: new Date(base + index * 60_000),
+      status: 'started' as const,
+    }));
+    await ScheduleRun.insertMany(runs);
+
+    const first = await methods.getRunsForReconciliation(olderThan, 100);
+    const queuedAt = runs[100].scheduledFor;
+    expect(first.some((run) => run.scheduledFor?.getTime() === queuedAt.getTime())).toBe(false);
+
+    await methods.markRunsReconciled(first);
+
+    const second = await methods.getRunsForReconciliation(olderThan, 100);
+    expect(second.some((run) => run.scheduledFor?.getTime() === queuedAt.getTime())).toBe(true);
+  });
+});
+
 describe('requestRunAbort (renewable, source-aware stamp)', () => {
   const scheduledFor = new Date('2026-07-20T12:00:00Z');
 
@@ -2756,4 +3015,124 @@ describe('erasure sweep rotation and idempotency-key lookup', () => {
     const found = await methods.getScheduleByClientRequestId(user, 'intent-9');
     expect(found?.id).toBe(schedule.id);
   });
+
+  it('persists a cron cadence without an hour or a minute', async () => {
+    const created = await Schedule.create(
+      scheduleData({ cadence: { frequency: 'cron', expression: '0 9,17 * * 1-5' } }),
+    );
+
+    const stored = await getSchedule(created.id);
+    expect(stored.cadence).toMatchObject({ frequency: 'cron', expression: '0 9,17 * * 1-5' });
+    expect('hour' in stored.cadence).toBe(false);
+    expect('minute' in stored.cadence).toBe(false);
+  });
+
+  it('refuses a cron cadence with no expression', async () => {
+    // Without this the row is armed but uncompilable: the engine reads a null next
+    // run as an unreadable cadence and disables it, silently, after the save.
+    await expect(
+      Schedule.create(scheduleData({ cadence: { frequency: 'cron' } as ISchedule['cadence'] })),
+    ).rejects.toThrow(/expression/);
+  });
+
+  it('still requires an hour and a minute for a structured cadence', async () => {
+    await expect(
+      Schedule.create(scheduleData({ cadence: { frequency: 'daily' } as ISchedule['cadence'] })),
+    ).rejects.toThrow(/hour/);
+  });
+});
+
+describe('scheduled MCP failure policy', () => {
+  it.each([
+    'mcp_reauth_required',
+    'mcp_configuration_missing',
+    'mcp_permission_denied',
+    'mcp_unavailable',
+  ])('records %s and disables immediately only for user action', async (reason) => {
+    const schedule = await methods.createSchedule(scheduleData());
+    const scheduledFor = new Date('2026-09-09T12:00:00Z');
+    await methods.insertScheduleRun(runData(schedule, { scheduledFor }));
+    await methods.recordRunOutcome({
+      scheduleId: schedule.id,
+      scheduledFor,
+      status: 'error',
+      error: `${reason}: [{"server":"Notion","status":"${reason}"}]`,
+      mcp: [{ server: 'Notion', agentId: 'research-agent', status: reason as never }],
+      autoDisableAfterFailures: 5,
+    });
+    const updated = await getSchedule(schedule.id);
+    expect(updated.failureCount).toBe(1);
+    expect(updated.enabled).toBe(reason === 'mcp_unavailable');
+    expect(updated.disabledReason).toBe(reason === 'mcp_unavailable' ? undefined : reason);
+    expect(updated.lastRun?.mcp?.[0]).toMatchObject({
+      server: 'Notion',
+      agentId: 'research-agent',
+      status: reason,
+    });
+  });
+
+  it('does not infer MCP disablement from an ordinary provider error prefix', async () => {
+    const schedule = await methods.createSchedule(scheduleData());
+    const scheduledFor = new Date('2026-09-09T12:30:00Z');
+    await methods.insertScheduleRun(runData(schedule, { scheduledFor }));
+
+    await methods.recordRunOutcome({
+      scheduleId: schedule.id,
+      scheduledFor,
+      status: 'error',
+      error: 'mcp_configuration_missing: provider returned this text',
+      autoDisableAfterFailures: 5,
+    });
+
+    const updated = await getSchedule(schedule.id);
+    expect(updated.failureCount).toBe(1);
+    expect(updated.enabled).toBe(true);
+    expect(updated.disabledReason).toBeUndefined();
+  });
+
+  it('uses admission response precedence for mixed MCP failures', async () => {
+    const schedule = await methods.createSchedule(scheduleData());
+    const scheduledFor = new Date('2026-09-09T12:45:00Z');
+    await methods.insertScheduleRun(runData(schedule, { scheduledFor }));
+
+    await methods.recordRunOutcome({
+      scheduleId: schedule.id,
+      scheduledFor,
+      status: 'error',
+      error: 'mixed MCP failure',
+      mcp: [
+        { server: 'OAuth', status: 'mcp_reauth_required' },
+        { server: 'Private', status: 'mcp_permission_denied' },
+      ],
+      autoDisableAfterFailures: 5,
+    });
+
+    const updated = await getSchedule(schedule.id);
+    expect(updated.enabled).toBe(false);
+    expect(updated.disabledReason).toBe('mcp_permission_denied');
+  });
+});
+
+it('does not apply a late MCP disable after a newer successful occurrence', async () => {
+  const schedule = await methods.createSchedule(scheduleData());
+  const older = new Date('2026-09-09T12:00:00Z');
+  const newer = new Date('2026-09-09T13:00:00Z');
+  await methods.insertScheduleRun(
+    runData(schedule, { scheduledFor: older, status: 'requires_action' }),
+  );
+  await methods.insertScheduleRun(runData(schedule, { scheduledFor: newer }));
+  await methods.recordRunOutcome({
+    scheduleId: schedule.id,
+    scheduledFor: newer,
+    status: 'success',
+    autoDisableAfterFailures: 5,
+  });
+  await methods.recordRunOutcome({
+    scheduleId: schedule.id,
+    scheduledFor: older,
+    status: 'error',
+    error: 'mcp_reauth_required: [{"server":"Notion","status":"mcp_reauth_required"}]',
+    autoDisableAfterFailures: 5,
+  });
+  expect((await getSchedule(schedule.id)).enabled).toBe(true);
 });

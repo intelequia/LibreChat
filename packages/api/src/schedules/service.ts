@@ -1,11 +1,12 @@
 import { logger, runAsSystem, tenantStorage, isRuntimeDisabled } from '@librechat/data-schemas';
 import { getRefillEligibilityDate, Permissions, PermissionTypes } from 'librechat-data-provider';
-import type { ScheduleMethods, AppConfig, IBalance } from '@librechat/data-schemas';
+import type { ScheduleMethods, AppConfig, IBalance, IChatProject } from '@librechat/data-schemas';
 import type { TCheckpointerConfig } from 'librechat-data-provider';
 import type { Types } from 'mongoose';
 import type {
   ScheduleEngineDeps,
   ScheduleDeleteResult,
+  ScheduleMCPPreflight,
   ScheduleLimits,
   ScheduleUserContext,
   FireableSchedule,
@@ -13,17 +14,24 @@ import type {
   JobIdentity,
 } from './types';
 import type { SerializableJobData } from '../stream/interfaces/IJobStore';
+import type { AgentCheckpointGeneration } from '../agents/checkpointer';
 import type { BalanceUpdateFields } from '../types/balance';
 import type { GetAppConfigOptions } from '../app/service';
 import {
+  resolveScheduleProjectId,
   DEFAULT_SCHEDULE_LIMITS,
   SCHEDULE_FILE_HOLD,
   hasResumeHandoffInFlight,
   hasAbortInFlight,
 } from './types';
-import { deleteAgentCheckpoint, captureAgentCheckpointGeneration } from '../agents/checkpointer';
+import {
+  deleteAgentCheckpoint,
+  captureAgentCheckpointGeneration,
+  checkpointStorageConfigs,
+} from '../agents/checkpointer';
 import { fireSchedule, BALANCE_SKIP_DISABLE_THRESHOLD } from './fire';
 import { GenerationJobManager } from '../stream/GenerationJobManager';
+import { isStopConfirmed } from '../stream/interfaces/IJobStore';
 import { buildBalanceUpdateFields } from '../middleware/balance';
 import { getAppConfigOptionsFromUser } from '../app/service';
 import { isShutdownInProgress } from '../app/shutdown';
@@ -90,6 +98,7 @@ export interface RecordScheduleOutcomeInput {
   jobCreatedAt?: number;
   status: ScheduleRunOutcomeStatus;
   conversationId?: string;
+  checkpointNamespace?: string;
   /** Erase the row's reserved conversationId (pre-start abort: no conversation exists). */
   clearConversationId?: boolean;
   error?: string;
@@ -106,6 +115,7 @@ export type ScheduleResumeClaimResult =
  * directly.
  */
 export interface SchedulesServiceDeps {
+  preflightMCP: ScheduleMCPPreflight;
   methods: ScheduleMethods & {
     getRoleByName: (
       role?: string,
@@ -134,6 +144,7 @@ export interface SchedulesServiceDeps {
   findUserById: (
     userId: string | Types.ObjectId,
   ) => Promise<{ _id: Types.ObjectId; tenantId?: string; role?: string } | null>;
+  /** Reads the balance record together with the credits unexpired in-flight reservations hold. */
   findBalance: (userId: string) => Promise<IBalance | null>;
   /**
    * Upserts a balance record. `setOnInsert` carries fields that must ONLY apply to a
@@ -160,6 +171,10 @@ export interface SchedulesServiceDeps {
     agentId: string,
     user: ScheduleUserContext,
   ) => Promise<'ok' | 'missing' | 'forbidden'>;
+  /** Loads a chat project scoped to its owner, or null when it does not exist for
+   *  them. Chat projects are user-owned, so this is both the existence check and the
+   *  authorization check. */
+  getChatProject: (userId: string, projectId: string) => Promise<IChatProject | null>;
   /** Whether this user's account deletion has begun. Fail-closed (unknown == true). */
   isUserDeleting: (userId: string) => Promise<boolean>;
   /** Shared durable trigger admission from the merged agent-trigger service. */
@@ -175,6 +190,7 @@ export interface SchedulesService {
   fireScheduleNow: (
     schedule: FireableSchedule,
     limits: ScheduleLimits,
+    options?: { signal?: AbortSignal },
   ) => Promise<FireResult | null>;
   recordScheduleOutcome: (input: RecordScheduleOutcomeInput) => Promise<boolean>;
   /**
@@ -233,7 +249,7 @@ export interface SchedulesService {
   isScheduleLive: (
     scheduleId: string,
     expectedConfigRevision?: number,
-    options?: { automatic?: boolean; policy?: boolean },
+    options?: { automatic?: boolean; policy?: boolean; scheduledFor?: string | Date },
   ) => Promise<boolean>;
   /** Soft-deletes an owner's schedule: stop claims, abort active runs, drain, erase. */
   deleteScheduleForOwner: (scheduleId: string, userId: string) => Promise<ScheduleDeleteResult>;
@@ -296,6 +312,7 @@ export function createSchedulesService(
     'upsertBalance',
     'initializeNullBalance',
     'resolveAgentFireAccess',
+    'getChatProject',
     'isUserDeleting',
     'enqueueAgentTrigger',
     'getTriggerDelivery',
@@ -353,13 +370,26 @@ export function createSchedulesService(
     if (config === true) {
       return DEFAULT_SCHEDULE_LIMITS;
     }
+    // A pinned project is itself a requirement: leaving `requireProject` to be set
+    // separately would let `projectId` alone resolve to "optional destination that
+    // happens to be forced", and a schedule created before the pin would keep firing
+    // with no project at all rather than being stopped for review.
+    const projectId = config.projectId?.trim() || undefined;
     return {
       enabled: config.use !== false,
       maxPerUser: config.maxPerUser ?? DEFAULT_SCHEDULE_LIMITS.maxPerUser,
       minIntervalMinutes: config.minIntervalMinutes ?? DEFAULT_SCHEDULE_LIMITS.minIntervalMinutes,
       autoDisableAfterFailures:
         config.autoDisableAfterFailures ?? DEFAULT_SCHEDULE_LIMITS.autoDisableAfterFailures,
+      admissionConcurrency:
+        config.admissionConcurrency ?? DEFAULT_SCHEDULE_LIMITS.admissionConcurrency,
       fireConcurrency: config.fireConcurrency ?? DEFAULT_SCHEDULE_LIMITS.fireConcurrency,
+      mcpPreflightConcurrency:
+        config.mcpPreflightConcurrency ?? DEFAULT_SCHEDULE_LIMITS.mcpPreflightConcurrency,
+      mcpPreflightTimeoutMs:
+        config.mcpPreflightTimeoutMs ?? DEFAULT_SCHEDULE_LIMITS.mcpPreflightTimeoutMs,
+      requireProject: config.requireProject === true || projectId != null,
+      ...(projectId != null && { projectId }),
     };
   }
 
@@ -407,6 +437,7 @@ export function createSchedulesService(
   }
 
   const engineDeps: ScheduleEngineDeps = {
+    preflightMCP: deps.preflightMCP,
     methods,
     getLimits,
     // On the BASE deps, not only the engine's per-pass wrapper: fireScheduleNow
@@ -431,6 +462,10 @@ export function createSchedulesService(
         return false;
       }
       let record = await deps.findBalance(user.id);
+      // Credits in-flight requests hold are unavailable to this fire as well: the chat
+      // balance check admits against the unreserved amount. Taken from this read because
+      // the initialization/sync writes below return the record without the total.
+      const reservedCredits = record?.reservedCredits ?? 0;
       // Initialize/sync the record exactly as the chat's balance middleware would,
       // so a new user's startBalance is applied before we read it (avoids skipping
       // a schedule that an interactive chat would have allowed).
@@ -471,7 +506,7 @@ export function createSchedulesService(
           }
         }
       }
-      const credits = record?.tokenCredits ?? 0;
+      const credits = (record?.tokenCredits ?? 0) - reservedCredits;
       if (credits > 0) {
         return false;
       }
@@ -490,6 +525,11 @@ export function createSchedulesService(
     // VIEW with the manage:agents bypass); shared with the create/update precheck
     // so the two never diverge.
     agentAccess: (agentId, user) => deps.resolveAgentFireAccess(agentId, user),
+    // Ownership IS existence for a chat project, so one lookup answers both. Failing
+    // closed here would auto-disable a schedule on a transient Mongo blip, so a read
+    // error propagates instead: the fire fails and is retried like any other error.
+    projectAccess: async (projectId, user) =>
+      (await deps.getChatProject(user.id, projectId)) == null ? 'missing' : 'ok',
     resolveFiles: async (fileIds, user) => {
       // Renew the bounded upload hold at every fire preflight, BEST-EFFORT: the hold
       // only has to bridge upload -> first consumption (a real send clears the TTL
@@ -525,6 +565,7 @@ export function createSchedulesService(
       return {
         status: job.status,
         createdAt: job.createdAt,
+        checkpointNamespace: job.checkpointNamespace,
         scheduleId: job.scheduleId,
         scheduledFor: job.scheduledFor,
         createdEventEmitted: job.createdEventEmitted === true,
@@ -568,10 +609,9 @@ export function createSchedulesService(
         expectedCreatedAt: job.createdAt,
         awaitProviderDrain: true,
       });
-      if (
-        aborted.failureReason === 'generation_replaced' ||
-        aborted.failureReason === 'job_still_active'
-      ) {
+      // Terminal-and-drained counts as delivered (see above); a replacement, a still-live
+      // run, or a job that vanished before the transition does not.
+      if (!isStopConfirmed(aborted)) {
         return false;
       }
       if (options?.preserve === false) {
@@ -732,6 +772,7 @@ export function createSchedulesService(
   async function fireScheduleNow(
     schedule: FireableSchedule,
     limits: ScheduleLimits,
+    options?: { signal?: AbortSignal },
   ): Promise<FireResult | null> {
     // The global stop means STOP: a manual run dispatches the same billed generation as
     // an automatic one, so gating only the engine tick would leave Run Now wide open.
@@ -751,7 +792,10 @@ export function createSchedulesService(
       // Fire the FRESH leased row (post-image with the new claim token), not the
       // snapshot the route read before the lease — an edit that committed in the
       // window in between is reflected, so a stale prompt/agent is never dispatched.
-      return await fireSchedule(engineDeps, leased, limits, new Date(), { manual: true });
+      return await fireSchedule(engineDeps, leased, limits, new Date(), {
+        manual: true,
+        signal: options?.signal,
+      });
     } catch (err) {
       const released =
         claimToken != null
@@ -819,6 +863,7 @@ export function createSchedulesService(
     jobCreatedAt,
     status,
     conversationId,
+    checkpointNamespace,
     clearConversationId,
     error,
   }: RecordScheduleOutcomeInput): Promise<boolean> {
@@ -873,6 +918,9 @@ export function createSchedulesService(
           status,
           clearConversationId,
           conversationId,
+          ...(status === 'requires_action' && checkpointNamespace != null
+            ? { checkpointNamespace }
+            : {}),
           error,
           autoDisableAfterFailures: limits.autoDisableAfterFailures,
           balanceSkipDisableThreshold: BALANCE_SKIP_DISABLE_THRESHOLD,
@@ -974,7 +1022,7 @@ export function createSchedulesService(
   async function isScheduleLive(
     scheduleId: string,
     expectedConfigRevision?: number,
-    options?: { automatic?: boolean; policy?: boolean },
+    options?: { automatic?: boolean; policy?: boolean; scheduledFor?: string | Date },
   ): Promise<boolean> {
     if (!scheduleId) {
       return false;
@@ -1027,6 +1075,47 @@ export function createSchedulesService(
       if (!(await engineDeps.hasScheduleAccess(owner))) {
         return false;
       }
+      // Project policy belongs HERE rather than in the resume claim: this branch's
+      // refusal is already routed through abort-and-settle by both callers, so a
+      // policy stop settles the occurrence instead of leaving it at `requires_action`
+      // answering 409 to every approval attempt until it expires.
+      //
+      // Deliberately NARROW. It refuses only where there is no valid destination left:
+      // the requirement is on with nothing to satisfy it, or the schedule's own project
+      // is gone (which also unset it on the conversation). It does NOT refuse merely
+      // because an operator's pin moved to a different project — the paused
+      // conversation cannot be rebound (`chatProjectId` is excluded from the resume
+      // context, and the continuation reuses the same conversationId), so refusing
+      // would strand a pending approval over a pin that only governs where the NEXT
+      // run lands, which the fire path already redirects.
+      // Prefer the destination THIS OCCURRENCE recorded over the schedule-level value.
+      // A paused run does not block later occurrences (the single-active index covers
+      // `started` only), so after a pin moves, a subsequent fire rewrites the schedule
+      // row while the paused conversation stays where it was — validating the row would
+      // then check a project that conversation was never filed under.
+      //
+      // An ABSENT record falls back to the schedule: a pre-scope occurrence, or one
+      // whose row is gone, must never be read as evidence to stop a run.
+      const occurrence =
+        options?.scheduledFor != null
+          ? await methods.getScheduleRunProject(scheduleId, options.scheduledFor)
+          : null;
+      // `recorded`, not the id: an occurrence that deliberately ran unscoped recorded a
+      // null, and validating the schedule's CURRENT value for it would admit a
+      // conversation that satisfies no present requirement. Only an unknown record — a
+      // row from before the field, or none at all — falls back.
+      const effectiveProject = occurrence?.recorded
+        ? occurrence.chatProjectId
+        : resolveScheduleProjectId(limits, schedule.chatProjectId);
+      if (limits.requireProject && effectiveProject == null) {
+        return false;
+      }
+      if (
+        effectiveProject != null &&
+        (await engineDeps.projectAccess(effectiveProject, owner)) !== 'ok'
+      ) {
+        return false;
+      }
     }
     return true;
   }
@@ -1064,6 +1153,10 @@ export function createSchedulesService(
       if (!ownerLimits.enabled || globallyDisabled || !hasAccess) {
         return { conflict: 'inactive' };
       }
+      // Project policy is NOT re-checked here. It lives in isScheduleLive's `policy`
+      // branch, which both entry points consult first and whose refusal aborts and
+      // settles the occurrence; a second copy here would answer a bare 409 and strand
+      // the run at `requires_action` instead.
       // FINAL schedule-side admission fence. Everything above is asynchronous and an
       // owner edit/disable can land while it runs. Claim the schedule document under
       // the expected config generation now, carry this lease through the approval CAS,
@@ -1268,6 +1361,15 @@ export function createSchedulesService(
           return undefined;
         })
       : undefined;
+    const stores = hasPausedRun
+      ? await checkpointStorageConfigs(userId, schedule.tenantId, checkpointer).catch((err) => {
+          logger.warn(
+            `[schedules] checkpoint storage lookup failed for delete ${scheduleId}:`,
+            err,
+          );
+          return [checkpointer];
+        })
+      : [];
     let unconfirmed = 0;
     for (const run of active) {
       // UNKNOWN is not ABSENT — the same distinction the quiesce path draws. A lookup
@@ -1288,10 +1390,29 @@ export function createSchedulesService(
       // Capture the paused run's checkpoint ids BEFORE any terminal transition below:
       // the prune afterwards is scoped to exactly this set, so checkpoints a
       // replacement turn writes after this point can never be swept up by it.
-      const checkpointGeneration =
-        run.status === 'requires_action' && run.conversationId
-          ? await captureAgentCheckpointGeneration(run.conversationId, checkpointer)
+      const checkpointNamespace =
+        isThisGeneration || live.job == null
+          ? (live.job?.checkpointNamespace ?? run.checkpointNamespace)
           : undefined;
+      const captured: Array<{
+        storage: TCheckpointerConfig | undefined;
+        generation: AgentCheckpointGeneration;
+      }> = [];
+      if (
+        run.status === 'requires_action' &&
+        run.conversationId &&
+        live.known &&
+        (live.job == null || isThisGeneration)
+      ) {
+        for (const storage of stores) {
+          const generation = await captureAgentCheckpointGeneration(
+            run.conversationId,
+            storage,
+            checkpointNamespace == null ? {} : { checkpointNamespace },
+          );
+          if (generation != null) captured.push({ storage, generation });
+        }
+      }
       // Same abort-in-flight deferral as quiesce: post-abort job state (status `aborted`,
       // or absence once the abort deleted the job) appears before the owner has persisted
       // and settled, so it is not evidence that the generation is done.
@@ -1374,8 +1495,7 @@ export function createSchedulesService(
       if (
         run.status === 'requires_action' &&
         run.conversationId &&
-        checkpointGeneration != null &&
-        checkpointGeneration.checkpointIds.length > 0
+        captured.some(({ generation }) => generation.checkpointIds.length > 0)
       ) {
         const fresh = await engineDeps.getJobStatus(run.conversationId).then(
           (job) => ({ known: true, job }),
@@ -1389,9 +1509,11 @@ export function createSchedulesService(
           });
         const ownsConversation = fresh.known && (fresh.job == null || freshIsThisGeneration);
         if (ownsConversation) {
-          await deleteAgentCheckpoint(run.conversationId, checkpointer, checkpointGeneration).catch(
-            () => undefined,
-          );
+          for (const { storage, generation } of captured) {
+            await deleteAgentCheckpoint(run.conversationId, storage, generation).catch(
+              () => undefined,
+            );
+          }
         }
       }
     }

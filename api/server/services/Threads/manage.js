@@ -8,7 +8,7 @@ const {
   AnnotationTypes,
   defaultOrderQuery,
 } = require('librechat-data-provider');
-const { recordMessage, getMessages, spendTokens, saveConvo } = require('~/models');
+const { saveMessage, getMessages, spendTokens, saveConvo } = require('~/models');
 const { retrieveAndProcessFile } = require('~/server/services/Files/process');
 const { getUniqueItems } = require('~/utils');
 
@@ -113,16 +113,21 @@ async function saveUserMessage(req, params) {
     convo.file_ids = params.file_ids;
   }
 
-  const message = await recordMessage(userMessage);
-  await saveConvo(
-    {
-      userId: req?.user?.id,
-      isTemporary: req?.body?.isTemporary,
-      interfaceConfig: req?.config?.interfaceConfig,
-    },
+  const ctx = {
+    userId: req?.user?.id,
+    isTemporary: req?.resolvedConversation?.isTemporary ?? req?.body?.isTemporary,
+    expiredAt: req?.resolvedConversation?.expiredAt,
+    interfaceConfig: req?.config?.interfaceConfig,
+  };
+  const message = await saveMessage(ctx, userMessage);
+  const savedConvo = await saveConvo(
+    { ...ctx, expiredAt: message?.expiredAt ?? ctx.expiredAt },
     convo,
     { context: 'api/server/services/Threads/manage.js #saveUserMessage' },
   );
+  if (savedConvo != null) {
+    req.resolvedConversation = savedConvo;
+  }
   return message;
 }
 
@@ -151,7 +156,13 @@ async function saveUserMessage(req, params) {
 async function saveAssistantMessage(req, params) {
   // const tokenCount = // TODO: need to count each content part
 
-  const message = await recordMessage({
+  const ctx = {
+    userId: req?.user?.id,
+    isTemporary: req?.resolvedConversation?.isTemporary ?? req?.body?.isTemporary,
+    expiredAt: req?.resolvedConversation?.expiredAt,
+    interfaceConfig: req?.config?.interfaceConfig,
+  };
+  const message = await saveMessage(ctx, {
     user: params.user,
     endpoint: params.endpoint,
     messageId: params.messageId,
@@ -170,12 +181,8 @@ async function saveAssistantMessage(req, params) {
     spec: params.spec,
   });
 
-  await saveConvo(
-    {
-      userId: req?.user?.id,
-      isTemporary: req?.body?.isTemporary,
-      interfaceConfig: req?.config?.interfaceConfig,
-    },
+  const savedConvo = await saveConvo(
+    { ...ctx, expiredAt: message?.expiredAt ?? ctx.expiredAt },
     {
       endpoint: params.endpoint,
       conversationId: params.conversationId,
@@ -188,6 +195,10 @@ async function saveAssistantMessage(req, params) {
     },
     { context: 'api/server/services/Threads/manage.js #saveAssistantMessage' },
   );
+
+  if (savedConvo != null) {
+    req.resolvedConversation = savedConvo;
+  }
 
   return message;
 }
@@ -247,6 +258,12 @@ async function syncMessages({
   let dbMessageMap = new Map(dbMessages.map((msg) => [msg.messageId, msg]));
   const modifyPromises = [];
   const recordPromises = [];
+  const ctx = {
+    userId: openai.req?.user?.id,
+    isTemporary: openai.req?.resolvedConversation?.isTemporary ?? openai.req?.body?.isTemporary,
+    expiredAt: openai.req?.resolvedConversation?.expiredAt,
+    interfaceConfig: openai.req?.config?.interfaceConfig,
+  };
 
   /**
    *
@@ -257,7 +274,7 @@ async function syncMessages({
    * @param {dbMessage} params.apiMessage
    */
   const processNewMessage = async ({ dbMessage, apiMessage }) => {
-    recordPromises.push(recordMessage({ ...dbMessage, user: openai.req.user.id }));
+    recordPromises.push(saveMessage(ctx, { ...dbMessage, user: openai.req.user.id }));
 
     if (!apiMessage.id.includes('msg_')) {
       return;
@@ -364,18 +381,17 @@ async function syncMessages({
   await Promise.all(modifyPromises);
   await Promise.all(recordPromises);
 
-  await saveConvo(
-    {
-      userId: openai.req?.user?.id,
-      isTemporary: openai.req?.body?.isTemporary,
-      interfaceConfig: openai.req?.config?.interfaceConfig,
-    },
+  const savedConvo = await saveConvo(
+    ctx,
     {
       conversationId,
       file_ids: attached_file_ids,
     },
     { context: 'api/server/services/Threads/manage.js #syncMessages' },
   );
+  if (savedConvo != null) {
+    openai.req.resolvedConversation = savedConvo;
+  }
 
   return result;
 }
@@ -518,7 +534,8 @@ async function checkMessageGaps({
  * @param {string} params.user - The user's ID.
  * @param {string} params.conversationId - LibreChat conversation ID.
  * @param {string} [params.context='message'] - The context of the usage. Defaults to 'message'.
- * @return {Promise<TMessage[]>} A promise that resolves to the updated messages
+ * @param {AppConfig['transactions']} [params.transactions] - Resolved transactions config.
+ * @return {Promise<void>}
  */
 const recordUsage = async ({
   prompt_tokens,
@@ -527,6 +544,7 @@ const recordUsage = async ({
   user,
   conversationId,
   context = 'message',
+  transactions,
 }) => {
   await spendTokens(
     {
@@ -534,6 +552,7 @@ const recordUsage = async ({
       model,
       context,
       conversationId,
+      transactions,
     },
     { promptTokens: prompt_tokens, completionTokens: completion_tokens },
   );

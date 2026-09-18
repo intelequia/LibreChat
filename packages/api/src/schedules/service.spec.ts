@@ -7,6 +7,7 @@ import { createSchedulesService } from './service';
 let mockJobStore: { getJob: jest.Mock; deleteJob?: jest.Mock } | null = null;
 
 jest.mock('../agents/checkpointer', () => ({
+  checkpointStorageConfigs: jest.fn(async (_user, _tenant, cfg) => [cfg]),
   deleteAgentCheckpoint: jest.fn(async () => undefined),
   // Non-empty by default so the scoped prune has something to delete in tests.
   captureAgentCheckpointGeneration: jest.fn(async (threadId: string) => ({
@@ -15,6 +16,7 @@ jest.mock('../agents/checkpointer', () => ({
   })),
 }));
 const checkpointerModule = jest.requireMock('../agents/checkpointer') as {
+  checkpointStorageConfigs: jest.Mock;
   deleteAgentCheckpoint: jest.Mock;
   captureAgentCheckpointGeneration: jest.Mock;
 };
@@ -34,6 +36,7 @@ type ActiveRun = {
   scheduleId: string;
   scheduledFor: Date;
   conversationId?: string;
+  checkpointNamespace?: string;
   status?: string;
 };
 
@@ -62,7 +65,9 @@ function makeService(
     findBalance: jest.fn(async () => null),
     upsertBalance: jest.fn(async () => null),
     initializeNullBalance: jest.fn(async () => null),
+    preflightMCP: jest.fn().mockResolvedValue([]),
     resolveAgentFireAccess: jest.fn(async () => 'ok' as const),
+    getChatProject: jest.fn(async () => ({ _id: 'proj-1' })),
     isUserDeleting: jest.fn(async () => false),
     enqueueAgentTrigger,
     getTriggerDelivery: jest.fn(async () => null),
@@ -131,7 +136,11 @@ describe('manual Run Now lease cleanup', () => {
         maxPerUser: 10,
         minIntervalMinutes: 60,
         autoDisableAfterFailures: 5,
+        admissionConcurrency: 20,
         fireConcurrency: 5,
+        mcpPreflightConcurrency: 3,
+        mcpPreflightTimeoutMs: 300_000,
+        requireProject: false,
       }),
     ).rejects.toThrow('user lookup failed');
 
@@ -164,7 +173,9 @@ describe('balance initialization', () => {
       findBalance,
       upsertBalance,
       initializeNullBalance,
+      preflightMCP: jest.fn().mockResolvedValue([]),
       resolveAgentFireAccess: jest.fn(async () => 'ok' as const),
+      getChatProject: jest.fn(async () => ({ _id: 'proj-1' })),
       isUserDeleting: jest.fn(async () => false),
       enqueueAgentTrigger: jest.fn(async () => undefined),
       getTriggerDelivery: jest.fn(async () => null),
@@ -246,6 +257,21 @@ describe('balance initialization', () => {
     expect(outOfBalance).toBe(false);
   });
 
+  it.each([
+    ['all of its credits are held by in-flight requests', 100, true],
+    ['part of its credits are free', 50, false],
+  ])('pre-skips a record only when %s', async (_case, reservedCredits, outOfBalance) => {
+    const { service } = serviceWithBalance({
+      tokenCredits: 100,
+      reservedCredits,
+      autoRefillEnabled: false,
+    });
+
+    await expect(service.engineDeps.isOutOfBalance({ id: 'user-1' } as never)).resolves.toBe(
+      outOfBalance,
+    );
+  });
+
   /**
    * A stale record whose credit is already set but whose refill config drifted still syncs
    * that config, and the sync must not widen into a credit write.
@@ -275,7 +301,9 @@ describe('balance initialization', () => {
       })),
       upsertBalance,
       initializeNullBalance,
+      preflightMCP: jest.fn().mockResolvedValue([]),
       resolveAgentFireAccess: jest.fn(async () => 'ok' as const),
+      getChatProject: jest.fn(async () => ({ _id: 'proj-1' })),
       isUserDeleting: jest.fn(async () => false),
       enqueueAgentTrigger: jest.fn(async () => undefined),
       getTriggerDelivery: jest.fn(async () => null),
@@ -369,6 +397,87 @@ describe('deleteScheduleForOwner', () => {
     methods.getScheduleById = jest.fn(async () => ({ user: 'user-1' }));
     return { service, methods };
   }
+
+  it.each([undefined, 'lcg:v2:owner:generation'])(
+    'passes the matching paused job namespace (%s) through the raw projection to capture',
+    async (checkpointNamespace) => {
+      const scheduledFor = '2026-01-01T00:00:00.000Z';
+      const { service } = makeDeleteHarness({
+        scheduleId: 's1',
+        scheduledFor: new Date(scheduledFor),
+        conversationId: 'c1',
+        status: 'requires_action',
+      });
+      mockJobStore = {
+        getJob: jest.fn(async () => ({
+          status: 'requires_action',
+          createdAt: 1,
+          scheduleId: 's1',
+          scheduledFor,
+          checkpointNamespace,
+        })),
+      } as unknown as typeof mockJobStore;
+      const manager = jest.requireMock('../stream/GenerationJobManager').GenerationJobManager;
+      manager.abortJob = jest.fn(async () => ({ success: true }));
+      checkpointerModule.captureAgentCheckpointGeneration.mockClear();
+      await expect(service.deleteScheduleForOwner('s1', 'user-1')).resolves.toBe('deleted');
+      expect(checkpointerModule.captureAgentCheckpointGeneration).toHaveBeenCalledWith(
+        'c1',
+        undefined,
+        checkpointNamespace == null ? {} : { checkpointNamespace },
+      );
+    },
+  );
+
+  it('uses the durable paused namespace after job-store loss', async () => {
+    const namespace = 'retained-owned-namespace';
+    const { service } = makeDeleteHarness({
+      scheduleId: 's1',
+      scheduledFor: new Date('2026-01-01T00:00:00.000Z'),
+      conversationId: 'c1',
+      checkpointNamespace: namespace,
+      status: 'requires_action',
+    });
+    mockJobStore = { getJob: jest.fn(async () => null) } as unknown as typeof mockJobStore;
+    checkpointerModule.captureAgentCheckpointGeneration.mockClear();
+    await expect(service.deleteScheduleForOwner('s1', 'user-1')).resolves.toBe('deleted');
+    expect(checkpointerModule.captureAgentCheckpointGeneration).toHaveBeenCalledWith(
+      'c1',
+      undefined,
+      { checkpointNamespace: namespace },
+    );
+  });
+
+  it('captures the retained namespace in every recorded store after job loss and a config change', async () => {
+    const namespace = 'retained-owned-namespace';
+    const stores = [
+      { type: 'mongo', checkpointCollectionName: 'old-checkpoints' },
+      { type: 'mongo', checkpointCollectionName: 'current-checkpoints' },
+    ];
+    checkpointerModule.checkpointStorageConfigs.mockResolvedValueOnce(stores);
+    const { service } = makeDeleteHarness({
+      scheduleId: 's1',
+      scheduledFor: new Date('2026-01-01T00:00:00.000Z'),
+      conversationId: 'c1',
+      checkpointNamespace: namespace,
+      status: 'requires_action',
+    });
+    mockJobStore = { getJob: jest.fn(async () => null) } as unknown as typeof mockJobStore;
+    checkpointerModule.captureAgentCheckpointGeneration.mockClear();
+    await expect(service.deleteScheduleForOwner('s1', 'user-1')).resolves.toBe('deleted');
+    for (const storage of stores) {
+      expect(checkpointerModule.captureAgentCheckpointGeneration).toHaveBeenCalledWith(
+        'c1',
+        storage,
+        { checkpointNamespace: namespace },
+      );
+      expect(checkpointerModule.deleteAgentCheckpoint).toHaveBeenCalledWith(
+        'c1',
+        storage,
+        expect.objectContaining({ checkpointIds: ['ck-1'] }),
+      );
+    }
+  });
 
   it('settles a pause hand-off after the exact provider drain is confirmed', async () => {
     const { service, methods } = makeDeleteHarness({
@@ -817,6 +926,198 @@ describe('isScheduleLive policy recheck', () => {
 
     await expect(service.isScheduleLive('s1', undefined, { policy: true })).resolves.toBe(false);
   });
+
+  /**
+   * Project policy rides this branch on purpose: BOTH callers route its refusal through
+   * abort-and-settle, so a policy stop settles the occurrence rather than leaving it at
+   * `requires_action` answering 409 to every approval until it expires.
+   */
+  describe('project policy', () => {
+    function makeProjectService(
+      row: Record<string, unknown>,
+      schedulesConfig: Record<string, unknown>,
+      project: unknown = { _id: 'proj-1' },
+      over: { run?: { recorded: boolean; chatProjectId?: string } | null } = {},
+    ) {
+      const service = makeService(
+        jest.fn<Promise<ActiveRun[]>, [string]>().mockResolvedValue([]),
+        jest.fn(async () => ({
+          interfaceConfig: { schedules: { use: true, ...schedulesConfig } },
+        })) as unknown as SchedulesServiceDeps['getAppConfig'],
+      );
+      const methods = service.engineDeps.methods as unknown as {
+        getScheduleById: jest.Mock;
+        getRoleByName: jest.Mock;
+      };
+      methods.getScheduleById = jest.fn(async () => ({
+        id: 's1',
+        user: 'u1',
+        enabled: true,
+        ...row,
+      }));
+      methods.getRoleByName = jest.fn(async () => ({ permissions: { SCHEDULES: { USE: true } } }));
+      (methods as unknown as { getScheduleRunProject: jest.Mock }).getScheduleRunProject = jest.fn(
+        async () => ('run' in over ? over.run : null),
+      );
+      (service.engineDeps as unknown as { getUserContext: jest.Mock }).getUserContext = jest.fn(
+        async () => ({ id: 'u1', tenantId: 't1', role: 'USER' }),
+      );
+      (service.engineDeps as unknown as { projectAccess: jest.Mock }).projectAccess = jest.fn(
+        async () => (project == null ? 'missing' : 'ok'),
+      );
+      return service;
+    }
+
+    it('refuses when the destination project was deleted', async () => {
+      const service = makeProjectService({ chatProjectId: 'proj-gone' }, {}, null);
+      await expect(service.isScheduleLive('s1', undefined, { policy: true })).resolves.toBe(false);
+    });
+
+    it('refuses an unscoped schedule once the owner requires a project', async () => {
+      const service = makeProjectService({}, { requireProject: true });
+      await expect(service.isScheduleLive('s1', undefined, { policy: true })).resolves.toBe(false);
+    });
+
+    /**
+     * A pin governs where the NEXT run lands, and the fire path already redirects those.
+     * The paused conversation cannot be rebound — `chatProjectId` is excluded from the
+     * resume context and the continuation reuses the same conversationId — so refusing
+     * here would strand a pending approval over a destination it can never reach.
+     */
+    it('admits a paused run whose pin moved to a different project', async () => {
+      const service = makeProjectService({ chatProjectId: 'proj-old' }, { projectId: 'proj-new' });
+      await expect(service.isScheduleLive('s1', undefined, { policy: true })).resolves.toBe(true);
+    });
+
+    it('admits a scoped schedule whose project is still owned', async () => {
+      const service = makeProjectService({ chatProjectId: 'proj-1' }, {});
+      await expect(service.isScheduleLive('s1', undefined, { policy: true })).resolves.toBe(true);
+    });
+
+    /**
+     * A paused run does NOT block later occurrences (the single-active index covers
+     * `started` only), so a fire after a pin move rewrites the schedule row while the
+     * paused conversation stays where it was filed. The occurrence's own record is
+     * what must be validated.
+     */
+    it('validates the occurrence record over a schedule row a later fire moved', async () => {
+      const service = makeProjectService(
+        { chatProjectId: 'proj-new' },
+        { projectId: 'proj-new' },
+        null,
+        { run: { recorded: true, chatProjectId: 'proj-paused' } },
+      );
+      const access = (service.engineDeps as unknown as { projectAccess: jest.Mock }).projectAccess;
+
+      await expect(
+        service.isScheduleLive('s1', undefined, {
+          policy: true,
+          scheduledFor: '2026-08-17T12:00:00.000Z',
+        }),
+      ).resolves.toBe(false);
+      expect(access).toHaveBeenCalledWith('proj-paused', expect.anything());
+    });
+
+    it('admits when the occurrence record itself is still live', async () => {
+      const service = makeProjectService(
+        { chatProjectId: 'proj-new' },
+        {},
+        { _id: 'x' },
+        {
+          run: { recorded: true, chatProjectId: 'proj-paused' },
+        },
+      );
+
+      await expect(
+        service.isScheduleLive('s1', undefined, {
+          policy: true,
+          scheduledFor: '2026-08-17T12:00:00.000Z',
+        }),
+      ).resolves.toBe(true);
+    });
+
+    /** An absent record is not evidence to stop a run: pre-scope occurrences and rows
+     *  that are simply gone fall back to the schedule-level resolution. */
+    it('falls back to the schedule when the occurrence recorded nothing', async () => {
+      const service = makeProjectService({ chatProjectId: 'proj-gone' }, {}, null, { run: null });
+
+      await expect(
+        service.isScheduleLive('s1', undefined, {
+          policy: true,
+          scheduledFor: '2026-08-17T12:00:00.000Z',
+        }),
+      ).resolves.toBe(false);
+    });
+
+    /**
+     * A run that DELIBERATELY went unscoped recorded that decision. Falling back to the
+     * schedule's current project for it would admit a conversation satisfying no
+     * present requirement — the fallback is for UNKNOWN records only.
+     */
+    it('refuses a recorded-unscoped occurrence once a project became required', async () => {
+      const service = makeProjectService(
+        { chatProjectId: 'proj-new' },
+        { requireProject: true },
+        { _id: 'x' },
+        {
+          run: { recorded: true },
+        },
+      );
+
+      await expect(
+        service.isScheduleLive('s1', undefined, {
+          policy: true,
+          scheduledFor: '2026-08-17T12:00:00.000Z',
+        }),
+      ).resolves.toBe(false);
+    });
+
+    /** A pre-scope row is UNKNOWN, not unscoped, and keeps today's behaviour. */
+    it('falls back for an unrecorded pre-scope occurrence', async () => {
+      const service = makeProjectService(
+        { chatProjectId: 'proj-live' },
+        { requireProject: true },
+        { _id: 'x' },
+        {
+          run: { recorded: false },
+        },
+      );
+
+      await expect(
+        service.isScheduleLive('s1', undefined, {
+          policy: true,
+          scheduledFor: '2026-08-17T12:00:00.000Z',
+        }),
+      ).resolves.toBe(true);
+    });
+
+    /**
+     * The INITIAL start runs the same policy branch, and its run row is reserved before
+     * the loopback request is dispatched — so a pin introduced while that request sat
+     * queued must not be validated in place of the destination whose envelope was
+     * already built. Same call shape as the resume path.
+     */
+    it('refuses an initial start whose occurrence was reserved unscoped', async () => {
+      const service = makeProjectService(
+        { chatProjectId: 'proj-pinned' },
+        { projectId: 'proj-pinned' },
+        { _id: 'x' },
+        { run: { recorded: true } },
+      );
+
+      await expect(
+        service.isScheduleLive('s1', undefined, {
+          policy: true,
+          scheduledFor: '2026-08-17T12:00:00.000Z',
+        }),
+      ).resolves.toBe(false);
+    });
+
+    it('leaves the non-policy recheck untouched', async () => {
+      const service = makeProjectService({ chatProjectId: 'proj-gone' }, {}, null);
+      await expect(service.isScheduleLive('s1')).resolves.toBe(true);
+    });
+  });
 });
 
 describe('quiesceUserSchedules drain wait', () => {
@@ -1196,13 +1497,21 @@ describe('global kill switch', () => {
 });
 
 describe('scheduled resume capacity', () => {
-  function makeResumeService(occupancy: { takenSlots: number[]; unslotted: number }) {
+  function makeResumeService(
+    occupancy: { takenSlots: number[]; unslotted: number },
+    over: {
+      scheduleProjectId?: string;
+      projectConfig?: Record<string, unknown>;
+      project?: unknown;
+    } = {},
+  ) {
     const methods = {
       getScheduleById: jest.fn(async () => ({
         id: 's1',
         user: 'user-1',
         enabled: true,
         configRevision: 3,
+        ...(over.scheduleProjectId != null && { chatProjectId: over.scheduleProjectId }),
       })),
       getRoleByName: jest.fn(async () => ({ permissions: { SCHEDULES: { USE: true } } })),
       getCapacityOccupancy: jest.fn(async () => occupancy),
@@ -1227,7 +1536,11 @@ describe('scheduled resume capacity', () => {
             maxPerUser: 10,
             minIntervalMinutes: 60,
             autoDisableAfterFailures: 5,
+            admissionConcurrency: 20,
             fireConcurrency: 1,
+            mcpPreflightConcurrency: 3,
+            mcpPreflightTimeoutMs: 300_000,
+            ...(over.projectConfig ?? {}),
           },
         },
       })),
@@ -1235,7 +1548,9 @@ describe('scheduled resume capacity', () => {
       findBalance: jest.fn(async () => null),
       upsertBalance: jest.fn(async () => null),
       initializeNullBalance: jest.fn(async () => null),
+      preflightMCP: jest.fn().mockResolvedValue([]),
       resolveAgentFireAccess: jest.fn(async () => 'ok' as const),
+      getChatProject: jest.fn(async () => ('project' in over ? over.project : { _id: 'proj-1' })),
       isUserDeleting: jest.fn(async () => false),
       enqueueAgentTrigger: jest.fn(async () => undefined),
       getTriggerDelivery: jest.fn(async () => null),
@@ -1376,10 +1691,18 @@ describe('deployment-wide limits', () => {
   it('resolves a principal-less getLimits from the BASE config only', async () => {
     const getAppConfig = jest.fn(async (options?: { baseOnly?: boolean }) =>
       options?.baseOnly === true
-        ? { interfaceConfig: { schedules: { use: true, fireConcurrency: 1 } } }
+        ? {
+            interfaceConfig: {
+              schedules: { use: true, fireConcurrency: 1, mcpPreflightConcurrency: 3 },
+            },
+          }
         : // The principal/tenant-merged view. A bare getAppConfig() resolves THIS,
           // including whatever tenant the ALS context happens to carry.
-          { interfaceConfig: { schedules: { use: true, fireConcurrency: 5 } } },
+          {
+            interfaceConfig: {
+              schedules: { use: true, fireConcurrency: 5, mcpPreflightConcurrency: 3 },
+            },
+          },
     ) as unknown as SchedulesServiceDeps['getAppConfig'];
     const service = makeService(noRuns(), getAppConfig);
     const limits = await service.getLimits();
@@ -1584,7 +1907,7 @@ describe('provider-drained schedule aborts', () => {
       })),
     } as unknown as typeof mockJobStore;
     const manager = jest.requireMock('../stream/GenerationJobManager').GenerationJobManager;
-    manager.abortJob = jest.fn(async () => ({ success: false }));
+    manager.abortJob = jest.fn(async () => ({ success: false, failureReason: 'already_settled' }));
 
     const delivered = await service.engineDeps.abortScheduledJob(
       'c1',
@@ -1597,6 +1920,35 @@ describe('provider-drained schedule aborts', () => {
     });
     expect(delivered).toBe(true);
   });
+
+  it.each(['generation_replaced', 'job_still_active', 'job_not_found'] as const)(
+    'reports %s as an undelivered abort',
+    async (failureReason) => {
+      const service = makeService(jest.fn<Promise<ActiveRun[]>, [string]>().mockResolvedValue([]));
+      const deleteJob = jest.fn(async () => true);
+      mockJobStore = {
+        getJob: jest.fn(async () => ({
+          status: 'running',
+          createdAt: 7,
+          scheduleId: 's1',
+          scheduledFor: '2026-01-01T00:00:00.000Z',
+        })),
+        deleteJob,
+      } as unknown as typeof mockJobStore;
+      const manager = jest.requireMock('../stream/GenerationJobManager').GenerationJobManager;
+      manager.abortJob = jest.fn(async () => ({ success: false, failureReason }));
+
+      const delivered = await service.engineDeps.abortScheduledJob(
+        'c1',
+        { scheduleId: 's1', scheduledFor: '2026-01-01T00:00:00.000Z' },
+        { preserve: false },
+      );
+
+      expect(delivered).toBe(false);
+      // Never destroy evidence for a generation this call did not stop.
+      expect(deleteJob).not.toHaveBeenCalled();
+    },
+  );
 
   it('deletes terminal evidence only after the exact provider drain is confirmed', async () => {
     const service = makeService(jest.fn<Promise<ActiveRun[]>, [string]>().mockResolvedValue([]));
@@ -1611,7 +1963,7 @@ describe('provider-drained schedule aborts', () => {
       deleteJob,
     } as unknown as typeof mockJobStore;
     const manager = jest.requireMock('../stream/GenerationJobManager').GenerationJobManager;
-    manager.abortJob = jest.fn(async () => ({ success: false }));
+    manager.abortJob = jest.fn(async () => ({ success: false, failureReason: 'already_settled' }));
 
     const delivered = await service.engineDeps.abortScheduledJob(
       'c1',

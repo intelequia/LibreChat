@@ -65,6 +65,9 @@ export interface IUser extends Document {
     statefulCodeEnvironment?: StatefulCodeEnvironment;
   };
   favorites?: TUserFavorite[];
+  /** Display order for the sidebar's Pinned section: favorite and pinned-chat
+   *  entry keys interleaved (`agent:`, `spec:`, `model:`, `convo:` prefixes). */
+  pinnedOrder?: string[];
   /** Per-skill active/inactive overrides. Key = skillId, value = active state. */
   skillStates?: Record<string, boolean>;
   createdAt?: Date;
@@ -91,6 +94,7 @@ export interface BalanceConfig {
   refillIntervalValue?: number;
   refillIntervalUnit?: RefillIntervalUnit;
   refillAmount?: number;
+  reservationTtlMs?: number;
 }
 
 export interface CreateUserRequest extends Partial<IUser> {

@@ -2,11 +2,13 @@ const express = require('express');
 const { logger } = require('@librechat/data-schemas');
 const {
   createMessageFilterPii,
+  reportLocatorTraversalFailure,
   generateCheckAccess,
   skipAgentCheck,
   applyResumeContext,
   applyResumeModelParameters,
   GenerationJobManager,
+  getSafeErrorMetadata,
 } = require('@librechat/api');
 const { PermissionTypes, Permissions, PermissionBits } = require('librechat-data-provider');
 const {
@@ -21,7 +23,7 @@ const guardSubagentThreadTurn = require('~/server/middleware/validate/subagentTh
 const AgentController = require('~/server/controllers/agents/request');
 const ResumeController = require('~/server/controllers/agents/resume');
 const addTitle = require('~/server/services/Endpoints/agents/title');
-const { getRoleByName } = require('~/models');
+const { getFiles, getRoleByName } = require('~/models');
 
 const router = express.Router();
 
@@ -63,13 +65,20 @@ const restoreResumeContext = async (req, res, next) => {
       applyResumeModelParameters(req.body, resumeContext?.model_parameters);
     }
   } catch (err) {
-    logger.warn('[agents/chat] Failed to restore resume context', err?.message ?? err);
+    logger.warn('[agents/chat] Failed to restore resume context', getSafeErrorMetadata(err));
   }
   next();
 };
 
 router.use(restoreResumeContext);
-router.use(createMessageFilterPii({ getConfig: (req) => req.config?.messageFilter?.pii }));
+router.use(
+  createMessageFilterPii({
+    onTraversalFailure: reportLocatorTraversalFailure,
+    getConfig: (req) => req.config?.messageFilter?.pii,
+    getFilters: (req) => req.config?.filters,
+    getFiles,
+  }),
+);
 router.use(moderateText);
 router.use(checkAgentAccess);
 router.use(checkAgentResourceAccess);
