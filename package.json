@@ -195,6 +195,7 @@
     "lint-staged": "^15.4.3",
     "prettier": "^3.5.0",
     "prettier-plugin-tailwindcss": "^0.6.11",
+    "react-window": "1.8.11",
     "turbo": "^2.10.5",
     "typescript-eslint": "^8.60.1"
   },

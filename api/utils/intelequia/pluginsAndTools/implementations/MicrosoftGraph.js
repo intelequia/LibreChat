@@ -1,65 +1,68 @@
 const { Tool } = require('@langchain/core/tools');
 const qs = require('qs');
-const intelequiaCountTokens = require('../../intelequiaTokenCount')
+const intelequiaCountTokens = require('../../intelequiaTokenCount');
 const { trackEvent } = require('../../appInsights');
+const mongoose = require('mongoose');
 
 const axios = require('axios');
 
 class MicrosoftGraph extends Tool {
-
   constructor(fields) {
     super();
     this.name = 'microsoft-graph';
-    this.description = 'Use the \'microsoft-graph\' tool to retrieve search results from Graph';
+    this.description = "Use the 'microsoft-graph' tool to retrieve search results from Graph";
     this.tenantId = process.env.MS_GRAPH_TENANT_ID;
     this.clientId = process.env.MS_GRAPH_CLIENT_ID;
     this.clientSecret = process.env.MS_GRAPH_CLIENT_SECRET;
     this.resourceName = process.env.AZURE_RESOURSE_NAME;
-    this.deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME
-    this.apiVersion = process.env.AZURE_OPENAI_API_VERSION
-    this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY
+    this.deploymentName = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
+    this.apiVersion = process.env.AZURE_OPENAI_API_VERSION;
+    this.azureOpenAIKey = process.env.AZURE_OPENAI_API_KEY;
     this.userId = fields.userId;
   }
 
   async getGraphTokenFromRefresh(refresh_token) {
-    const scope = process.env.OPENID_SCOPE + " " + process.env.OPENAI_GRAPH_SCOPES;
+    const scope = process.env.OPENID_SCOPE + ' ' + process.env.OPENAI_GRAPH_SCOPES;
     const body = {
       grant_type: 'refresh_token',
       client_id: this.clientId,
       client_secret: this.clientSecret,
       refresh_token,
-      scope
-    }
+      scope,
+    };
 
     try {
-      const response = await axios.post(`https://login.microsoftonline.com/${this.tenantId}/oauth2/v2.0/token`, qs.stringify(body), {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      });
+      const response = await axios.post(
+        `https://login.microsoftonline.com/${this.tenantId}/oauth2/v2.0/token`,
+        qs.stringify(body),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        },
+      );
 
       return response.data.access_token;
     } catch (e) {
-      console.error(e)
+      console.error(e);
     }
-
   }
 
   /**
    * Recieves the query and user personal information to create Graph API request
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
-   * @param {*} query 
-   * @param {*} userInfo 
+   * @param {*} query
+   * @param {*} userInfo
    * @returns Object
    */
   async getGraphApi(query) {
-    const url = `https://${this.resourceName}.openai.azure.com/openai/deployments/${this.deploymentName}/chat/completions?api-version=${this.apiVersion}`
+    const url = `https://${this.resourceName}.openai.azure.com/openai/deployments/${this.deploymentName}/chat/completions?api-version=${this.apiVersion}`;
     const headers = {
-      "api-key": this.azureOpenAIKey,
-      "Content-Type": "application/json"
-    }
-    const now = new Date()
+      'api-key': this.azureOpenAIKey,
+      'Content-Type': 'application/json',
+    };
+    const now = new Date();
 
     const instructions = [
       `Dime el body de una llamada a la API de Microsoft Graph para obtener "${query}".`,
@@ -69,29 +72,29 @@ class MicrosoftGraph extends Tool {
       `Me vas a limitar los resultados a 10.`,
       `Es importante que no uses urls con variables como {chat-id} o {user-id}, el uso de variables esta prohibido`,
       `La busqueda en sharepoint se hace con el endpoint '/sites?search='`,
-      `Ten en cuenta que la fecha actual es: ${now}`
-    ]
+      `Ten en cuenta que la fecha actual es: ${now}`,
+    ];
     const message = instructions.join(' ');
     const body = {
-      "messages": [
+      messages: [
         {
-          "role": "user",
-          "content": message
-        }
+          role: 'user',
+          content: message,
+        },
       ],
-      "temperature": 0.7,
-      "top_p": 0.95,
-      "max_tokens": 800
-    }
-    const { data } = await axios.post(url, body, { headers })
+      temperature: 0.7,
+      top_p: 0.95,
+      max_tokens: 800,
+    };
+    const { data } = await axios.post(url, body, { headers });
     const model = data.model;
-    const { choices } = data
-    const responseMessage = choices[0].message.content
+    const { choices } = data;
+    const responseMessage = choices[0].message.content;
     const jsonString = responseMessage.replace(/```json\n|\n```/g, '').trim();
     return {
       query: message,
       model: model,
-      response: JSON.parse(jsonString)
+      response: JSON.parse(jsonString),
     };
   }
 
@@ -99,27 +102,26 @@ class MicrosoftGraph extends Tool {
    * Creates Client to make requests to MS Graph
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
-   * @returns 
+   * @returns
    */
 
   async createClient(userEmail, url) {
-    const cachedToken = global.myCache.get(userEmail + "-graph")
-    const userAccessToken = await this.getGraphTokenFromRefresh(cachedToken)
+    const cachedToken = global.myCache.get(userEmail + '-graph');
+    const userAccessToken = await this.getGraphTokenFromRefresh(cachedToken);
 
     try {
       const response = await axios.get(url, {
         headers: {
-          Authorization: `Bearer ${userAccessToken}`
-        }
+          Authorization: `Bearer ${userAccessToken}`,
+        },
       });
       return JSON.stringify(response.data);
     } catch (error) {
       console.error('Error en la llamada a Graph API:', error);
-      console.error('URL Requested: ', url)
-      if (error.status == 403)
-        return "You dont have permission"
+      console.error('URL Requested: ', url);
+      if (error.status == 403) return 'You dont have permission';
       if (error.status == 401 && userAccessToken == undefined)
-        return "Your Sesion has expired, Log in again"
+        return 'Your Sesion has expired, Log in again';
     }
   }
 
@@ -131,8 +133,8 @@ class MicrosoftGraph extends Tool {
    * Method that Search User Data in Graph for self information requests
    * @Author Enrique M. Pedroza Castillo
    * @Organization Intelequia
-   * @param {*} user email 
-   * @returns String 
+   * @param {*} user email
+   * @returns String
    */
   async getUserId(email) {
     const result = await this.client.api(`/users/${email}`).get();
@@ -141,16 +143,16 @@ class MicrosoftGraph extends Tool {
 
   async _call(data) {
     var userEmail = data.userEmail;
-    if (typeof data == "string") {
-      const User = require('~/models/User');
-      const { email } = await User.findOne({ _id: this.userId }).lean();
+    if (typeof data == 'string') {
+      const { email } =
+        (await mongoose.models.User?.findById(this.userId).select('email').lean()) ?? {};
       userEmail = email;
     }
 
     const userQuery = data.query ?? data;
-    const { query, model, response } = await this.getGraphApi(userQuery)
+    const { query, model, response } = await this.getGraphApi(userQuery);
     const search = await this.createClient(userEmail, response.url);
-    const queryTokens = intelequiaCountTokens([query, search], model)
+    const queryTokens = intelequiaCountTokens([query, search], model);
 
     await trackEvent('Plugin', {
       toolName: 'microsoft-graph',
@@ -159,7 +161,7 @@ class MicrosoftGraph extends Tool {
       tokens: queryTokens.prompt,
       pluginModel: model,
     });
-    return search
+    return search;
   }
 }
 

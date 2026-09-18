@@ -5,6 +5,7 @@ const getLogStores = require('~/cache/getLogStores');
 const {
   trackQueryEvent,
   trackStartEvent,
+  configureAppInsights,
   createGlobalTrackingSpendTokens,
   createGlobalTrackingSpendStructuredTokens,
 } = require('~/utils/intelequia/appInsights');
@@ -15,6 +16,8 @@ const methods = createMethods(mongoose, {
   isExternalSkillId: isDeploymentSkillId,
   getCache: getLogStores,
 });
+
+configureAppInsights({ pricing: methods, findUser: methods.findUser });
 
 const seedDatabase = async () => {
   await methods.initializeRoles();

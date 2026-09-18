@@ -46,7 +46,11 @@ const createAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
 
-    trackEvent('AssistantCreated', { userId: req.user.id, userEmail: req.user.email, assistantName: req.body.name });
+    trackEvent('AssistantCreated', {
+      userId: req.user.id,
+      userEmail: req.user.email,
+      assistantName: req.body.name,
+    });
 
     const {
       tools = [],
@@ -192,7 +196,11 @@ const patchAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
-    trackEvent('AssistantUpdated', { userId: req.user.id, userEmail: req.user.email, assistantName: req.body.name });
+    trackEvent('AssistantUpdated', {
+      userId: req.user.id,
+      userEmail: req.user.email,
+      assistantName: req.body.name,
+    });
 
     const assistant_id = req.params.id;
     const {
@@ -219,8 +227,8 @@ const patchAssistant = async (req, res) => {
       getRoleByName,
     });
 
-    updateData.tools = healedTools
-      .map((tool) => {
+    const resolvedTools = await Promise.all(
+      healedTools.map(async (tool) => {
         /** Agents-runtime-only tools (e.g. ask_user_question) cannot execute on
          *  the assistants runtime — drop them even when posted directly, since
          *  the tools-dialog scoping doesn't gate REST clients or stale payloads. */
@@ -264,7 +272,9 @@ const patchAssistant = async (req, res) => {
         }
 
         return toolDef;
-      })
+      }),
+    );
+    updateData.tools = resolvedTools
       .filter((tool) => tool)
       .flat()
       .map(toProviderToolDefinition)
@@ -316,7 +326,11 @@ const deleteAssistant = async (req, res) => {
   try {
     const { openai } = await getOpenAIClient({ req, res });
     await validateAuthor({ req, openai });
-    trackEvent('AssistantDeleted', { userId: req.user.id, userEmail: req.user.email, assistantName: req.params.id });
+    trackEvent('AssistantDeleted', {
+      userId: req.user.id,
+      userEmail: req.user.email,
+      assistantName: req.params.id,
+    });
 
     const assistant_id = req.params.id;
     const deletionStatus = await openai.beta.assistants.delete(assistant_id);
@@ -342,7 +356,7 @@ const listAssistants = async (req, res) => {
     const body = await fetchAssistants({ req, res });
 
     /**
-     * saves functions specifications 
+     * saves functions specifications
      * @Organization Intelequia
      * @Author Enrique M. Pedroza Castillo
      */

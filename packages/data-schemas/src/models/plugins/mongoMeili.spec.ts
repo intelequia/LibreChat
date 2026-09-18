@@ -925,7 +925,6 @@ describe('Meilisearch Mongoose plugin', () => {
         partialFilterExpression: {
           subagentThread: { $exists: true },
           _meiliIndex: { $eq: false },
-          _meiliCleanupVersion: { $exists: false },
         },
       }),
     ]);
@@ -956,7 +955,6 @@ describe('Meilisearch Mongoose plugin', () => {
         partialFilterExpression: {
           subagentTask: { $exists: true },
           _meiliIndex: { $eq: false },
-          _meiliCleanupVersion: { $exists: false },
         },
       }),
     ]);

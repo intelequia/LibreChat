@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const fetch = require('node-fetch');
-const { HttpsProxyAgent } = require('https-proxy-agent');
 const { logger } = require('@librechat/data-schemas');
 const {
   deleteRagFile,
@@ -263,8 +262,9 @@ async function getFirebaseFileStream(_req, filepath, { signal } = {}) {
       url: filepath,
       responseType: 'stream',
       signal,
-    });
+    };
 
+    const response = await axios(config);
     return response.data;
   } catch (error) {
     logger.error('Error getting Firebase file stream:', getSafeErrorMetadata(error));

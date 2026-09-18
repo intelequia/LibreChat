@@ -995,7 +995,6 @@ export default function mongoMeili(schema: Schema, options: MongoMeiliOptions): 
         partialFilterExpression: {
           [options.excludeFromIndexPath]: { $exists: true },
           _meiliIndex: { $eq: false },
-          _meiliCleanupVersion: { $exists: false },
         },
       },
     );

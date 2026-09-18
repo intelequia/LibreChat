@@ -1,10 +1,10 @@
 import { logger } from '@librechat/data-schemas';
 import { ErrorTypes } from 'librechat-data-provider';
-import { isEnabled } from '~/utils';
 import type { IUser, UserMethods } from '@librechat/data-schemas';
 import type { FilterQuery } from 'mongoose';
-import { isMetricsConfigured, recordOpenIDUserLookup } from '~/app/metrics';
 import type { OpenIDUserLookupResult } from '~/app/metrics';
+import { isMetricsConfigured, recordOpenIDUserLookup } from '~/app/metrics';
+import { isEnabled } from '~/utils/common';
 
 export type OpenIdEmailClaims = {
   email?: unknown;
@@ -282,26 +282,30 @@ export async function findOpenIDUser({
 
       if (user?.openidId && user.openidId !== openidId) {
         if (isEnabled(process.env.OPENID_ALLOW_MULTI_ISSUER)) {
-        logger.info(
-          `[${strategyName}] openidId mismatch for ${user.email} allowed by OPENID_ALLOW_MULTI_ISSUER (stored: ${user.openidId}, token: ${openidId})`,
-        );
-        return { user, error: null, migration: false };
-      }
-      logger.warn(
+          logger.info(
+            `[${strategyName}] openidId mismatch for ${user.email} allowed by OPENID_ALLOW_MULTI_ISSUER (stored: ${user.openidId}, token: ${openidId})`,
+          );
+          return { user, error: null, migration: false };
+        }
+        logger.warn(
           `[${strategyName}] Rejected email fallback for ${user.email}: stored openidId does not match token sub`,
         );
         return finish({ user: null, error: ErrorTypes.AUTH_FAILED, migration: false });
       }
 
-    if (user?.openidId && user.openidId === openidId && !isUserIssuerAllowed(user, normalizedIssuer)) {
-      if (isEnabled(process.env.OPENID_ALLOW_MULTI_ISSUER)) {
-        logger.info(
-          `[${strategyName}] Issuer mismatch for ${user.email} allowed by OPENID_ALLOW_MULTI_ISSUER (same openidId: ${openidId}, updating issuer)`,
-        );
-        if (normalizedIssuer) user.openidIssuer = normalizedIssuer;
-        return { user, error: null, migration: true };
+      if (
+        user?.openidId &&
+        user.openidId === openidId &&
+        !isUserIssuerAllowed(user, normalizedIssuer)
+      ) {
+        if (isEnabled(process.env.OPENID_ALLOW_MULTI_ISSUER)) {
+          logger.info(
+            `[${strategyName}] Issuer mismatch for ${user.email} allowed by OPENID_ALLOW_MULTI_ISSUER (same openidId: ${openidId}, updating issuer)`,
+          );
+          if (normalizedIssuer) user.openidIssuer = normalizedIssuer;
+          return { user, error: null, migration: true };
+        }
       }
-    }
 
       const emailIssuerResolution = resolveIssuerBoundUser(
         user,

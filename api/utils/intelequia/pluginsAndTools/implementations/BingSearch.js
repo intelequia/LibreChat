@@ -1,46 +1,51 @@
 const { Tool } = require('@langchain/core/tools');
-const intelequiaCountTokens = require('../../intelequiaTokenCount')
 const { trackEvent } = require('../../appInsights');
+const mongoose = require('mongoose');
 
 class BingSearch extends Tool {
-
   constructor(fields) {
     super();
     this.name = 'bing-search';
-    this.description = 'Use the \'bing-search\' tool to retrieve search results relevant to your input';
+    this.description =
+      "Use the 'bing-search' tool to retrieve search results relevant to your input";
     this.userId = fields.userId;
-    this.url = process.env.BING_SEARCH_V7_ENDPOINT + "/v7.0/search";
-    this.method = "GET";
-    this.apiKey = process.env.BING_SEARCH_V7_SUBSCRIPTION_KEY
+    this.url = process.env.BING_SEARCH_V7_ENDPOINT + '/v7.0/search';
+    this.method = 'GET';
+    this.apiKey = process.env.BING_SEARCH_V7_SUBSCRIPTION_KEY;
   }
 
   async _call(data) {
-
     var userEmail = data.userEmail;
-    if (typeof data == "string") {
-      const User = require('~/models/User');
-      const { email } = await User.findOne({ _id: this.userId }).lean();
+    if (typeof data == 'string') {
+      const { email } =
+        (await mongoose.models.User?.findById(this.userId).select('email').lean()) ?? {};
       userEmail = email;
     }
 
     const query = data.query ? data.query : data;
-    const market = process.env.BING_SEARCH_MARKET || "es-es";
+    const market = process.env.BING_SEARCH_MARKET || 'es-es';
     const count = process.env.BING_SEARCH_RESULT_COUNT || 10;
-    const responseFilter = process.env.BING_SEARCH_FILTER || "Webpages";
+    const responseFilter = process.env.BING_SEARCH_FILTER || 'Webpages';
 
-    var sites = "";
-    if (process.env.BING_SEARCH_SITE_SEARCH && process.env.BING_SEARCH_SITE_SEARCH != "")
-      sites = "site:(" + process.env.BING_SEARCH_SITE_SEARCH + ")";
+    var sites = '';
+    if (process.env.BING_SEARCH_SITE_SEARCH && process.env.BING_SEARCH_SITE_SEARCH != '')
+      sites = 'site:(' + process.env.BING_SEARCH_SITE_SEARCH + ')';
 
-    const url = this.url +
-      "?q=" + sites + query +
-      "&mkt=" + market +
-      "&count=" + count +
-      "&responseFilter=" + responseFilter
+    const url =
+      this.url +
+      '?q=' +
+      sites +
+      query +
+      '&mkt=' +
+      market +
+      '&count=' +
+      count +
+      '&responseFilter=' +
+      responseFilter;
 
     const method = this.method;
 
-    const headers = { 'Ocp-Apim-Subscription-Key': this.apiKey }
+    const headers = { 'Ocp-Apim-Subscription-Key': this.apiKey };
 
     const response = await fetch(url, {
       method,
@@ -51,7 +56,7 @@ class BingSearch extends Tool {
     if (!response.ok) {
       throw new Error(`Request failed with status ${response.status}: ${json.error.message}`);
     }
-    const searchResult = JSON.stringify(json)
+    const searchResult = JSON.stringify(json);
     await trackEvent('Plugin', {
       toolName: 'bing-search',
       userEmail,
