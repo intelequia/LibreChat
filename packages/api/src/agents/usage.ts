@@ -712,8 +712,7 @@ export function hasRecordedPrimaryUsage(
 export interface FallbackTokenUsageParams {
   /** Usage the run already recorded for this response, when it recorded any. */
   usage?:
-    | (Pick<UsageMetadata, 'input_tokens' | 'output_tokens'> & { reasoning_tokens?: number })
-    | null;
+    (Pick<UsageMetadata, 'input_tokens' | 'output_tokens'> & { reasoning_tokens?: number }) | null;
   /** Every entry the run collected; a billed call the aggregate hides still suppresses the estimate. */
   collectedUsage?: ReadonlyArray<UsageMetadata | null | undefined> | null;
   promptTokens?: number;
@@ -801,6 +800,7 @@ export interface DetachedSubagentUsageRecorderParams {
   transactions?: Partial<TTransactionsConfig>;
   endpointTokenConfig?: EndpointTokenConfig;
   endpointTokenConfigByAgentId?: Map<string, EndpointTokenConfig | undefined>;
+  onRecordedUsage?: (usage: UsageMetadata) => void | Promise<void>;
 }
 
 /**
@@ -1017,6 +1017,7 @@ export function createDetachedSubagentUsageRecorder(
             fallback: billing.endpointTokenConfig,
           }),
       });
+      await billing.onRecordedUsage?.(usage);
     } catch (error) {
       logger.error('[agents/usage] Failed to record detached subagent usage', error);
     }

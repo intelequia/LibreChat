@@ -581,6 +581,7 @@ const chatV2 = async (req, res) => {
           user: req.user.id,
           model: completedRun.model ?? model,
           conversationId,
+          endpoint,
           transactions: getTransactionsConfig(req.config),
         });
       }
@@ -590,6 +591,7 @@ const chatV2 = async (req, res) => {
         user: req.user.id,
         model: response.run.model ?? model,
         conversationId,
+        endpoint,
         transactions: getTransactionsConfig(req.config),
       });
     }

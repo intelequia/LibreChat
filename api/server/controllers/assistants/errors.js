@@ -125,6 +125,8 @@ const createErrorHandler = ({ req, res, getContext, originPath = '/assistants/ch
         model: run.model,
         user: req.user.id,
         conversationId,
+        endpoint,
+        context: 'abort',
         transactions: getTransactionsConfig(req.config),
       });
     } catch (error) {

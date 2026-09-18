@@ -52,7 +52,6 @@ function KeyboardShortcutsProvider() {
 
 export default function Root() {
   const [showTerms, setShowTerms] = useState(false);
-  const [bannerHeight, setBannerHeight] = useState(0);
   /** Shared with the drawer so the two agree on the breakpoint-transition frame. */
   const {
     isSmallScreen,
@@ -142,56 +141,58 @@ export default function Root() {
         <AssistantsMapContext.Provider value={assistantsMap}>
           <AgentsMapContext.Provider value={agentsMap}>
             <PromptGroupsProvider>
-              <Banner onHeightChange={setBannerHeight} />
-              <div className="flex" style={{ height: `calc(100dvh - ${bannerHeight}px)` }}>
-                <div
-                  className="relative z-0 flex h-full w-full overflow-hidden"
-                  /** The drawer and the pane both read this, so their travel
-                   *  cannot disagree about how far the drawer opens. */
-                  style={
-                    {
-                      [MOBILE_DRAWER_WIDTH_VAR]: drawerStrip
-                        ? MOBILE_DRAWER_STRIP_WIDTH
-                        : MOBILE_DRAWER_FULL_WIDTH,
-                    } as React.CSSProperties
-                  }
-                >
-                  <UnifiedSidebar />
+              <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                <Banner />
+                <div className="flex min-h-0 flex-1">
                   <div
-                    ref={paneRef}
-                    /** Focus target of last resort when the drawer closes on a
-                     *  route that renders no opener. Not in the tab order. */
-                    tabIndex={-1}
-                    className="relative flex h-full max-w-full flex-1 flex-col overflow-hidden focus:outline-none"
-                    style={{
-                      /** A percentage of the pane's own width, so it tracks the
-                       *  drawer without a literal and survives rotation. */
-                      transform: isSmallScreen && sidebarExpanded ? MOBILE_PANE_SHIFT : 'none',
-                      transition: prefersReducedMotion ? undefined : SIDEBAR_TRANSITION,
-                    }}
-                    /** Recoil's flip is deferred past the opening frames and
-                     *  the closing transition outlives it at the other end, so
-                     *  `isSliding` covers the travel `sidebarExpanded` brackets
-                     *  too late and drops too early. */
-                    inert={isSmallScreen && (sidebarExpanded || isSliding) ? '' : undefined}
+                    className="relative z-0 flex h-full w-full overflow-hidden"
+                    /** The drawer and the pane both read this, so their travel
+                     *  cannot disagree about how far the drawer opens. */
+                    style={
+                      {
+                        [MOBILE_DRAWER_WIDTH_VAR]: drawerStrip
+                          ? MOBILE_DRAWER_STRIP_WIDTH
+                          : MOBILE_DRAWER_FULL_WIDTH,
+                      } as React.CSSProperties
+                    }
                   >
-                    <Outlet />
+                    <UnifiedSidebar />
+                    <div
+                      ref={paneRef}
+                      /** Focus target of last resort when the drawer closes on a
+                       *  route that renders no opener. Not in the tab order. */
+                      tabIndex={-1}
+                      className="relative flex h-full max-w-full flex-1 flex-col overflow-hidden focus:outline-none"
+                      style={{
+                        /** A percentage of the pane's own width, so it tracks the
+                         *  drawer without a literal and survives rotation. */
+                        transform: isSmallScreen && sidebarExpanded ? MOBILE_PANE_SHIFT : 'none',
+                        transition: prefersReducedMotion ? undefined : SIDEBAR_TRANSITION,
+                      }}
+                      /** Recoil's flip is deferred past the opening frames and
+                       *  the closing transition outlives it at the other end, so
+                       *  `isSliding` covers the travel `sidebarExpanded` brackets
+                       *  too late and drops too early. */
+                      inert={isSmallScreen && (sidebarExpanded || isSliding) ? '' : undefined}
+                    >
+                      <Outlet />
+                    </div>
+                    {/* Without the strip the scrim exists only for the travel:
+                        through a close that began while the strip was still on
+                        (disabling it unmounts the scrim at once, but the drawer
+                        needs the whole transition to widen), and through an open
+                        the deferred flip has not committed yet. Once expanded
+                        lands, a full-width drawer covers it, so keeping it
+                        mounted would only expose a duplicate dismiss control. */}
+                    {isSmallScreen && (drawerStrip || (isSliding && !sidebarExpanded)) && (
+                      <MobileDrawerScrim
+                        expanded={sidebarExpanded}
+                        isSliding={isSliding}
+                        prefersReducedMotion={prefersReducedMotion}
+                        onClick={onScrimClick}
+                      />
+                    )}
                   </div>
-                  {/* Without the strip the scrim exists only for the travel:
-                      through a close that began while the strip was still on
-                      (disabling it unmounts the scrim at once, but the drawer
-                      needs the whole transition to widen), and through an open
-                      the deferred flip has not committed yet. Once expanded
-                      lands, a full-width drawer covers it, so keeping it
-                      mounted would only expose a duplicate dismiss control. */}
-                  {isSmallScreen && (drawerStrip || (isSliding && !sidebarExpanded)) && (
-                    <MobileDrawerScrim
-                      expanded={sidebarExpanded}
-                      isSliding={isSliding}
-                      prefersReducedMotion={prefersReducedMotion}
-                      onClick={onScrimClick}
-                    />
-                  )}
                 </div>
               </div>
             </PromptGroupsProvider>

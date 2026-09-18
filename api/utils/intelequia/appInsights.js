@@ -98,6 +98,12 @@ const CONTEXTS = {
   TITLE: 'title',
   REASONING: 'reasoning',
   INCOMPLETE: 'incomplete',
+  ABORT: 'abort',
+  IMAGE_GENERATION: 'image_generation',
+  ACTIVITY_LABEL: 'activity-label',
+  ACTIVITY_PHASE: 'activity-phase',
+  REASONING_LABEL: 'reasoning-label',
+  SUBAGENT: 'subagent',
 };
 
 const CACHE_SUBSET_PROVIDERS = new Set([
@@ -368,12 +374,19 @@ const aggregateCollectedUsage = (collectedUsage, options = {}) => {
 
 const getSpendEventName = (endpoint, eventType) => {
   const isAzure = endpoint === 'azureOpenAI';
+  const isAzureAssistants = endpoint === 'azureAssistants';
+  let prefix = 'Agent';
+  if (isAzureAssistants) {
+    prefix = 'AzureAssistants';
+  } else if (isAzure) {
+    prefix = 'Azure';
+  }
   const map = {
-    [EVENT_TYPES.QUERY]: isAzure ? 'AzureQuery' : 'AgentQuery',
-    [EVENT_TYPES.START]: isAzure ? 'AzureAnswerStarted' : 'AgentAnswerStarted',
-    [EVENT_TYPES.END]: isAzure ? 'AzureAnswerEnded' : 'AgentAnswerEnded',
-    [EVENT_TYPES.TITLE]: isAzure ? 'AzureTitleGenerated' : 'AgentTitleGenerated',
-    [EVENT_TYPES.REASONING]: isAzure ? 'AzureReasoningTokens' : 'AgentReasoningTokens',
+    [EVENT_TYPES.QUERY]: `${prefix}Query`,
+    [EVENT_TYPES.START]: `${prefix}AnswerStarted`,
+    [EVENT_TYPES.END]: `${prefix}AnswerEnded`,
+    [EVENT_TYPES.TITLE]: `${prefix}TitleGenerated`,
+    [EVENT_TYPES.REASONING]: `${prefix}ReasoningTokens`,
   };
   return map[eventType];
 };
@@ -382,13 +395,19 @@ const getTrackingInfo = (context) => {
   switch (context) {
     case CONTEXTS.MESSAGE:
     case CONTEXTS.INCOMPLETE:
+    case CONTEXTS.ABORT:
+    case CONTEXTS.IMAGE_GENERATION:
+    case CONTEXTS.SUBAGENT:
       return { shouldTrack: true, eventType: EVENT_TYPES.END };
     case CONTEXTS.TITLE:
       return { shouldTrack: true, eventType: EVENT_TYPES.TITLE };
     case CONTEXTS.REASONING:
+    case CONTEXTS.ACTIVITY_LABEL:
+    case CONTEXTS.ACTIVITY_PHASE:
+    case CONTEXTS.REASONING_LABEL:
       return { shouldTrack: true, eventType: EVENT_TYPES.REASONING };
     default:
-      return { shouldTrack: false, eventType: null };
+      return { shouldTrack: true, eventType: EVENT_TYPES.END };
   }
 };
 
@@ -398,6 +417,7 @@ const buildSpendProperties = (baseProps, eventType, tokenUsage, additionalData =
     timestamp: new Date().toISOString(),
     eventType,
     endpoint: additionalData.endpoint || 'unknown',
+    context: additionalData.context || CONTEXTS.MESSAGE,
   };
 
   switch (eventType) {

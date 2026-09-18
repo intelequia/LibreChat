@@ -54,44 +54,12 @@ const {
   reserveBalance,
   getMultiplier,
   getConvo,
-  getMessages,
   getFiles,
 } = require('~/models');
 const { logViolation, getLogStores } = require('~/cache');
 const { intelequiaCountTokens } = require('~/utils');
 const { trackEvent } = require('~/utils/intelequia/appInsights');
 const { getOpenAIClient } = require('./helpers');
-
-async function sendResponseTelemetry(req, conversationId, response, model) {
-  const conversation = await getConvo(req.user.id, conversationId);
-  const messagesText = await getMessages(
-    { _id: { $in: conversation?.messages ?? [] } },
-    undefined,
-    { sort: false },
-  );
-
-  let messagesHistory = [];
-
-  for (let i = 0; i < messagesText.length; i++) {
-    if (messagesText[i].text) messagesHistory.push(messagesText[i].text);
-    if (messagesText[i].content) {
-      if (messagesText[i].content[0].type === 'text')
-        messagesHistory.push(messagesText[i].content[0].text.value);
-      else messagesHistory.push(messagesText[i].content[1].text.value);
-    }
-  }
-
-  const { completion, prompt } = intelequiaCountTokens(messagesHistory, model);
-  trackEvent('AzureAssistantsAnswerEnded', {
-    userId: req.user.id,
-    userEmail: req.user.email,
-    charactersLength: response.text.length,
-    messageTokens: completion + prompt,
-    promptTokens: prompt,
-    completionTokens: completion,
-    model,
-  });
-}
 
 /**
  * @route POST /
@@ -233,6 +201,8 @@ const chatV1 = async (req, res) => {
         model: run.model,
         user: req.user.id,
         conversationId,
+        endpoint,
+        context: 'abort',
         transactions: getTransactionsConfig(req.config),
       });
     } catch (error) {
@@ -797,6 +767,7 @@ const chatV1 = async (req, res) => {
           user: req.user.id,
           model: completedRun.model ?? model,
           conversationId,
+          endpoint,
           transactions: getTransactionsConfig(req.config),
         });
       }
@@ -806,10 +777,10 @@ const chatV1 = async (req, res) => {
         user: req.user.id,
         model: response.run.model ?? model,
         conversationId,
+        endpoint,
         transactions: getTransactionsConfig(req.config),
       });
     }
-    await sendResponseTelemetry(req, conversationId, response, model);
   } catch (error) {
     await handleError(error);
   } finally {

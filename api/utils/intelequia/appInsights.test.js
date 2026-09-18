@@ -167,4 +167,47 @@ describe('App Insights token usage', () => {
     );
     expect(trackEvent.mock.calls[0][0].properties).not.toHaveProperty('query');
   });
+
+  it('tracks abort usage with its context and endpoint-specific event name', async () => {
+    const trackEvent = jest.fn();
+    global.appInsights = { trackEvent };
+
+    await trackSpendEvent({
+      userId: 'user-1',
+      model: 'gpt-4o',
+      conversationId: 'conversation-1',
+      endpoint: 'azureAssistants',
+      context: 'abort',
+      collectedUsage: [{ input_tokens: 10, output_tokens: 2, provider: 'openAI' }],
+    });
+
+    expect(trackEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'AzureAssistantsAnswerEnded' }),
+    );
+    expect(trackEvent.mock.calls[0][0].properties).toEqual(
+      expect.objectContaining({ context: 'abort', endpoint: 'azureAssistants' }),
+    );
+  });
+
+  it('tracks image generation usage through the standard spend wrapper', async () => {
+    const trackEvent = jest.fn();
+    const spendTokens = jest.fn().mockResolvedValue();
+    global.appInsights = { trackEvent };
+
+    await createGlobalTrackingSpendTokens(spendTokens)(
+      {
+        user: 'user-1',
+        model: 'gemini-2.5-flash-image',
+        endpoint: 'google',
+        context: 'image_generation',
+        conversationId: 'conversation-1',
+      },
+      { promptTokens: 10, completionTokens: 4 },
+    );
+
+    expect(trackEvent.mock.calls[0][0].properties).toEqual(
+      expect.objectContaining({ context: 'image_generation', endpoint: 'google' }),
+    );
+    expect(spendTokens).toHaveBeenCalledTimes(1);
+  });
 });

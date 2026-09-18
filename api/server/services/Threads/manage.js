@@ -10,7 +10,6 @@ const {
 } = require('librechat-data-provider');
 const { saveMessage, getMessages, spendTokens, saveConvo } = require('~/models');
 const { retrieveAndProcessFile } = require('~/server/services/Files/process');
-const { getUniqueItems } = require('~/utils');
 
 /**
  * Initializes a new thread or adds messages to an existing thread.
@@ -31,22 +30,22 @@ async function initThread({ openai, body, thread_id: _thread_id }) {
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
    */
-  body.messages.forEach(message => {
+  body.messages.forEach((message) => {
     if (message.file_ids) {
-      message.attachments = []
-      message.file_ids.forEach(file_id => {
+      message.attachments = [];
+      message.file_ids.forEach((file_id) => {
         message.attachments.push({
           file_id: file_id,
           tools: [
             {
-              type: "file_search"
-            }
-          ]
-        })
-      })
-      delete message.file_ids
+              type: 'file_search',
+            },
+          ],
+        });
+      });
+      delete message.file_ids;
     }
-  })
+  });
   if (_thread_id) {
     const message = await openai.beta.threads.messages.create(_thread_id, body.messages[0]);
     messages.push(message);
@@ -57,7 +56,6 @@ async function initThread({ openai, body, thread_id: _thread_id }) {
   const thread_id = _thread_id || thread.id;
   return { messages, thread_id, ...thread };
 }
-
 
 /**
  * Saves a user message to the DB in the Assistants endpoint format.
@@ -533,6 +531,7 @@ async function checkMessageGaps({
  * @param {string} params.model - The model used by the assistant run.
  * @param {string} params.user - The user's ID.
  * @param {string} params.conversationId - LibreChat conversation ID.
+ * @param {string} [params.endpoint] - The endpoint that produced the usage.
  * @param {string} [params.context='message'] - The context of the usage. Defaults to 'message'.
  * @param {AppConfig['transactions']} [params.transactions] - Resolved transactions config.
  * @return {Promise<void>}
@@ -543,6 +542,7 @@ const recordUsage = async ({
   model,
   user,
   conversationId,
+  endpoint,
   context = 'message',
   transactions,
 }) => {
@@ -550,6 +550,7 @@ const recordUsage = async ({
     {
       user,
       model,
+      endpoint,
       context,
       conversationId,
       transactions,

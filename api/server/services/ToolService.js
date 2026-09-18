@@ -119,7 +119,6 @@ const { createOpenIDSessionTokenProvider } = require('~/server/services/OpenIDSe
 const { getMCPRequestContext } = require('~/server/services/MCPRequestContext');
 const { recordUsage } = require('~/server/services/Threads');
 const { loadTools } = require('~/app/clients/tools/util');
-const { isToolEnabled } = require('~/utils');
 const { findPluginAuthsByKeys, getRoleByName } = require('~/models');
 const { getFlowStateManager, getMCPServersRegistry } = require('~/config');
 const { getLogStores } = require('~/cache');
@@ -289,8 +288,8 @@ const registerActionTools = ({
     if (toolToAction.has(key)) {
       logger.warn(
         `[Actions] operationId collision: "${key}" already registered; ` +
-        `action "${entry.action?.action_id}" overwrites the previous entry. ` +
-        `Two actions share both the operationId and the encoded hostname.`,
+          `action "${entry.action?.action_id}" overwrites the previous entry. ` +
+          `Two actions share both the operationId and the encoded hostname.`,
       );
     }
     toolToAction.set(key, entry);
@@ -347,10 +346,11 @@ const processVisionRequest = async (client, currentAction) => {
   /** @type {ChatCompletion | undefined} */
   const completion = await client.visionPromise;
   if (completion && completion.usage) {
-    recordUsage({
+    await recordUsage({
       user: client.req.user.id,
       model: client.req.body.model,
       conversationId: (client.responseMessage ?? client.finalMessage).conversationId,
+      endpoint: client.req.body.endpoint,
       ...completion.usage,
       transactions: getTransactionsConfig(client.req.config),
     });
@@ -922,8 +922,8 @@ async function loadToolDefinitionsWrapper({
     serverNames: mcpServerNames,
     rawServerNames: mcpRawServerNames = [],
   } = hasFilteredMCPTools
-      ? await resolveMcpServerContext(req)
-      : { configServers: {}, serverNames: [], rawServerNames: [] };
+    ? await resolveMcpServerContext(req)
+    : { configServers: {}, serverNames: [], rawServerNames: [] };
 
   /**
    * Shadowed servers must not emit definitions: their normalized function
@@ -1144,9 +1144,10 @@ async function loadToolDefinitionsWrapper({
       serverConfig =
         configServers?.[serverName] ??
         (await getMCPServersRegistry().getServerConfig(serverName, userId, configServers));
-    } catch {
+    } catch (err) {
       logger.warn(
-        `[Tool Definitions] MCP registry unavailable while resolving '${serverName}': ${err?.message ?? err
+        `[Tool Definitions] MCP registry unavailable while resolving '${serverName}': ${
+          err?.message ?? err
         }. Skipping MCP tool exposure for this lookup.`,
       );
       return null;
@@ -1273,7 +1274,7 @@ async function loadToolDefinitionsWrapper({
       if (!isDomainAllowed) {
         logger.warn(
           `[Actions] Domain "${action.metadata.domain}" not in allowedDomains. ` +
-          `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
+            `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
         );
         continue;
       }
@@ -2220,11 +2221,11 @@ async function loadToolsForExecution({
   const preparedActionSnapshot =
     agent && actionsEnabled
       ? await prepareActionSnapshotForTools({
-        agentId: agent.id,
-        toolNames: preflightActionToolNames,
-        filters: req.config?.filters,
-        decrypt: true,
-      })
+          agentId: agent.id,
+          toolNames: preflightActionToolNames,
+          filters: req.config?.filters,
+          decrypt: true,
+        })
       : null;
 
   logger.debug(
@@ -2282,7 +2283,7 @@ async function loadToolsForExecution({
   if (isBashToolRequested && !isBashTool) {
     logger.warn(
       `[loadToolsForExecution] Skipping unregistered or unauthorized ${AgentConstants.BASH_TOOL}. ` +
-      `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
+        `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
     );
   }
   if (isBashTool) {
@@ -2295,19 +2296,19 @@ async function loadToolsForExecution({
       const bashTool =
         codeExecutionContext.environmentType === 'attached'
           ? createAttachedWorkspaceBashTool({
-            authHeaders,
-            baseUrl: codeExecutionContext.baseUrl,
-            workspaceId: codeExecutionContext.codeWorkspace.workspaceId,
-            environment: codeExecutionContext.codeWorkspace.environment,
-            gitIdentity: agent?.git_identity,
-            maxTimeoutMs: resolveAttachedWorkspaceCommandTimeoutMax(
-              codeExecutionContext.codeEnvironmentConfigSchema,
-            ),
-          })
+              authHeaders,
+              baseUrl: codeExecutionContext.baseUrl,
+              workspaceId: codeExecutionContext.codeWorkspace.workspaceId,
+              environment: codeExecutionContext.codeWorkspace.environment,
+              gitIdentity: agent?.git_identity,
+              maxTimeoutMs: resolveAttachedWorkspaceCommandTimeoutMax(
+                codeExecutionContext.codeEnvironmentConfigSchema,
+              ),
+            })
           : createBashExecutionTool({
-            authHeaders,
-            ...codeExecutionContext,
-          });
+              authHeaders,
+              ...codeExecutionContext,
+            });
       allLoadedTools.push(bashTool);
     } catch (error) {
       logger.error(
@@ -2320,8 +2321,8 @@ async function loadToolsForExecution({
   const fileAuthoringToolNames = new Set(
     toolRegistry
       ? Array.from(toolRegistry.values())
-        .filter((definition) => isFileAuthoringToolDefinition(definition))
-        .map((definition) => definition.name)
+          .filter((definition) => isFileAuthoringToolDefinition(definition))
+          .map((definition) => definition.name)
       : [],
   );
   const specialToolNames = new Set([
@@ -2355,7 +2356,7 @@ async function loadToolsForExecution({
     if (!allowed) {
       logger.warn(
         `[loadToolsForExecution] Skipping unregistered or unauthorized ${Tools.execute_code}. ` +
-        `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
+          `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
       );
     }
     return allowed;
@@ -2428,7 +2429,7 @@ async function loadToolsForExecution({
   } else if (actionToolNames.length > 0 && agent && !actionsEnabled) {
     logger.warn(
       `[loadToolsForExecution] Capability "${AgentCapabilities.actions}" disabled. ` +
-      `Skipping action tool execution. User: ${req.user.id} | Agent: ${agent.id} | Tools: ${actionToolNames.join(', ')}`,
+        `Skipping action tool execution. User: ${req.user.id} | Agent: ${agent.id} | Tools: ${actionToolNames.join(', ')}`,
     );
   }
 
@@ -2508,7 +2509,7 @@ async function loadActionToolsForExecution({
     if (!isDomainAllowed) {
       logger.warn(
         `[Actions] Domain "${action.metadata.domain}" not in allowedDomains. ` +
-        `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
+          `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
       );
       continue;
     }
