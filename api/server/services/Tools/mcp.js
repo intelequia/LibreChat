@@ -399,6 +399,7 @@ async function reinitMCPServer({
         serverName,
         tools,
         serverConfig,
+        ...(ephemeralServer && { ephemeralConnection: true }),
         ...(publicationGeneration && { publicationGeneration }),
         ...(publicationRevision && { publicationRevision }),
       });

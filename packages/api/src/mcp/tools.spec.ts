@@ -553,6 +553,25 @@ describe('createMCPToolCacheService', () => {
       expect(deps.setCachedAppServerTools).not.toHaveBeenCalled();
     });
 
+    it('builds explicitly ephemeral tools without requiring a cache generation', async () => {
+      const deps = createMockDeps({
+        getServerConfig: jest.fn().mockResolvedValue(cacheableConfig),
+        setCachedToolsIfCurrent: jest.fn().mockResolvedValue(true),
+      });
+      const result = await createMCPToolCacheService(deps).updateMCPServerTools({
+        userId: 'u1',
+        serverName: 'dynamic-auth',
+        tools: [{ name: 'get_customer_account' }],
+        serverConfig: cacheableConfig,
+        ephemeralConnection: true,
+      });
+
+      expect(result?.[toolName('get_customer_account', 'dynamic-auth')]).toBeDefined();
+      expect(deps.setCachedToolsIfCurrent).not.toHaveBeenCalled();
+      expect(deps.setCachedTools).not.toHaveBeenCalled();
+      expect(deps.setCachedAppServerTools).not.toHaveBeenCalled();
+    });
+
     it('treats a missing app slice differently from an authoritative empty slice', async () => {
       const getCachedAppServerTools = jest
         .fn()

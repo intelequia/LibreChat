@@ -269,6 +269,38 @@ describe('reinitMCPServer — customUserVars gating (issue #10969)', () => {
     });
   });
 
+  it('returns dynamic authorization tools without publishing them to shared cache', async () => {
+    const tools = [{ name: 'get_customer_account', inputSchema: { type: 'object' } }];
+    const availableTools = {
+      [`get_customer_account${Constants.mcp_delimiter}${serverName}`]: {
+        type: 'function',
+        function: { name: 'get_customer_account', parameters: { type: 'object' } },
+      },
+    };
+    mockGetConnection.mockResolvedValue({ fetchTools: jest.fn().mockResolvedValue(tools) });
+    mockUpdateMCPServerTools.mockResolvedValue(availableTools);
+
+    const result = await reinitMCPServer({
+      user,
+      serverName,
+      serverConfig: {
+        type: 'streamable-http',
+        url: 'https://thingy.example.com/mcp',
+        requestHeaders: { Authorization: 'Bearer request-token' },
+      },
+      ephemeralConnection: true,
+    });
+
+    expect(mockUpdateMCPServerTools).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName,
+        tools,
+        ephemeralConnection: true,
+      }),
+    );
+    expect(result.availableTools).toBe(availableTools);
+  });
+
   /** An app-level catalog write is dropped unless it carries the ordering reserved before its
    * own tools/list. When this path forwarded no revision, every publication was discarded and
    * agents were told the server had no tools at all (#14857). */

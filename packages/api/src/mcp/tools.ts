@@ -57,6 +57,7 @@ export interface MCPToolCacheService {
     serverName: string;
     tools: MCPToolInput[] | null;
     serverConfig?: ParsedServerConfig;
+    ephemeralConnection?: boolean;
     publicationGeneration?: string;
     publicationRevision?: string;
   }) => Promise<LCAvailableTools | null>;
@@ -245,11 +246,19 @@ export function createMCPToolCacheService(deps: MCPToolCacheDeps): MCPToolCacheS
     serverName: string;
     tools: MCPToolInput[] | null;
     serverConfig?: ParsedServerConfig;
+    ephemeralConnection?: boolean;
     publicationGeneration?: string;
     publicationRevision?: string;
   }): Promise<LCAvailableTools | null> {
-    const { userId, serverName, tools, serverConfig, publicationGeneration, publicationRevision } =
-      params;
+    const {
+      userId,
+      serverName,
+      tools,
+      serverConfig,
+      ephemeralConnection,
+      publicationGeneration,
+      publicationRevision,
+    } = params;
     try {
       if (tools == null) {
         logger.debug('[MCP Cache] No tools to update');
@@ -262,7 +271,10 @@ export function createMCPToolCacheService(deps: MCPToolCacheDeps): MCPToolCacheS
       const configGeneration = resolvedConfig
         ? getMCPAppToolsPublicationGeneration(resolvedConfig)
         : undefined;
-      if (resolvedConfig && requiresEphemeralUserConnection(resolvedConfig)) {
+      if (
+        ephemeralConnection === true ||
+        (resolvedConfig && requiresEphemeralUserConnection(resolvedConfig))
+      ) {
         logger.debug(`[MCP Cache] Built ${tools.length} request-scoped tool(s) without caching`);
         return serverTools;
       }
