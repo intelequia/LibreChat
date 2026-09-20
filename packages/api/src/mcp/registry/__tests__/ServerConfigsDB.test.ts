@@ -1044,7 +1044,7 @@ describe('ServerConfigsDB', () => {
   });
 
   describe('get()', () => {
-    it('normalizes null headers from historical stored configs before runtime use', async () => {
+    it('normalizes null header maps from historical stored configs before runtime use', async () => {
       const server = await mongoose.models.MCPServer.create({
         serverName: 'legacy-null-headers',
         normalizedServerName: 'legacy-null-headers',
@@ -1054,6 +1054,7 @@ describe('ServerConfigsDB', () => {
           url: 'https://example.com/mcp',
           title: 'Legacy Null Headers',
           headers: null,
+          requestHeaders: null,
         },
       });
       await mongoose.models.AclEntry.create({
@@ -1070,6 +1071,7 @@ describe('ServerConfigsDB', () => {
 
       expect(result).toBeDefined();
       expect(result).not.toHaveProperty('headers');
+      expect(result).not.toHaveProperty('requestHeaders');
       expect(MCPOptionsSchema.safeParse(result).success).toBe(true);
     });
 

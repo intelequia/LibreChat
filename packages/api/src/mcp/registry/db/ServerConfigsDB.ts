@@ -121,12 +121,19 @@ function sanitizeUserManagedOAuthConfig(config: ParsedServerConfig): ParsedServe
 function normalizePersistedConfig(config: ParsedServerConfig): ParsedServerConfig {
   const persistedConfig = config as ParsedServerConfig & {
     headers?: Record<string, string> | null;
+    requestHeaders?: Record<string, string> | null;
   };
-  if (persistedConfig.headers !== null) {
+  if (persistedConfig.headers !== null && persistedConfig.requestHeaders !== null) {
     return config;
   }
 
-  const { headers: _legacyNullHeaders, ...normalizedConfig } = persistedConfig;
+  const normalizedConfig = { ...persistedConfig };
+  if (normalizedConfig.headers === null) {
+    delete normalizedConfig.headers;
+  }
+  if (normalizedConfig.requestHeaders === null) {
+    delete normalizedConfig.requestHeaders;
+  }
   return normalizedConfig as ParsedServerConfig;
 }
 
