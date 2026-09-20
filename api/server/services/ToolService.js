@@ -61,6 +61,7 @@ const {
   LIST_WORKSPACE_FILES_TOOL_NAME,
   SEARCH_WORKSPACE_TOOL_NAME,
   getTransactionsConfig,
+  applyMCPRequestAuthorization,
   checkToolRolePermission,
   resolveToolRolePermissions,
 } = require('@librechat/api');
@@ -812,6 +813,8 @@ async function loadToolDefinitionsWrapper({
   signal,
   upstreamTokenProvider: suppliedUpstreamTokenProvider,
   upstreamTokenProviderResolver,
+  mcpRequestAuthorizations,
+  usedMCPRequestAuthorizationServers,
 }) {
   if (!agent.tools || agent.tools.length === 0) {
     return { toolDefinitions: [] };
@@ -996,6 +999,7 @@ async function loadToolDefinitionsWrapper({
   const oauthStepIndexes = new Map();
   /** @type {Record<string, import('@librechat/api').LCAvailableTools>} */
   const mcpAvailableTools = {};
+  const requestScopedMCPConfigs = new Map();
   const requestScopedConnections = getMCPRequestContext(req, res);
   const oboIdentityContext = createAuthIdentityContext({
     user: req.user,
@@ -1159,6 +1163,12 @@ async function loadToolDefinitionsWrapper({
       );
       return null;
     }
+    const requestAuthorization = mcpRequestAuthorizations?.[serverName];
+    if (requestAuthorization) {
+      serverConfig = applyMCPRequestAuthorization(serverConfig, requestAuthorization);
+      usedMCPRequestAuthorizationServers?.add(serverName);
+      requestScopedMCPConfigs.set(serverName, serverConfig);
+    }
 
     const customUserVars = userMCPAuthMap?.[`${Constants.mcp_prefix}${serverName}`];
     const missingUserVars = getMissingCustomUserVars(serverConfig, customUserVars);
@@ -1197,10 +1207,12 @@ async function loadToolDefinitionsWrapper({
       oauthStart,
       flowManager,
       serverName,
+      serverConfig,
       configServers,
       userMCPAuthMap,
       requestBody: runtimeRequestBody,
       requestScopedConnections,
+      ephemeralConnection: Boolean(requestAuthorization),
       upstreamTokenProvider,
       upstreamTokenProviderResolver,
       oboIdentityContext,
@@ -1229,10 +1241,12 @@ async function loadToolDefinitionsWrapper({
       oauthStart,
       flowManager,
       serverName,
+      serverConfig: requestScopedMCPConfigs.get(serverName),
       configServers,
       userMCPAuthMap,
       requestBody: runtimeRequestBody,
       requestScopedConnections,
+      ephemeralConnection: requestScopedMCPConfigs.has(serverName),
       upstreamTokenProvider,
       upstreamTokenProviderResolver,
       oboIdentityContext,
@@ -1612,6 +1626,8 @@ async function loadAgentTools({
   accessibleMcpServerNames,
   upstreamTokenProvider,
   upstreamTokenProviderResolver,
+  mcpRequestAuthorizations,
+  usedMCPRequestAuthorizationServers,
 }) {
   if (definitionsOnly) {
     try {
@@ -1629,6 +1645,8 @@ async function loadAgentTools({
         signal,
         upstreamTokenProvider,
         upstreamTokenProviderResolver,
+        mcpRequestAuthorizations,
+        usedMCPRequestAuthorizationServers,
       });
     } catch (error) {
       if (
@@ -1800,6 +1818,8 @@ async function loadAgentTools({
       requestScopedConnections: getMCPRequestContext(req, res),
       upstreamTokenProvider,
       upstreamTokenProviderResolver,
+      mcpRequestAuthorizations,
+      usedMCPRequestAuthorizationServers,
       codeExecutionContext,
       [Tools.web_search]: webSearchCallbacks,
     },
@@ -2102,6 +2122,8 @@ async function loadToolsForExecution({
   actionsEnabled,
   accessibleMcpServerNames,
   runFileCodeExecutionContext,
+  mcpRequestAuthorizations,
+  usedMCPRequestAuthorizationServers,
 }) {
   const appConfig = req.config;
   const allLoadedTools = [];
@@ -2399,6 +2421,8 @@ async function loadToolsForExecution({
          *  registry failure at execution can't fail-closed a tool the same
          *  turn already advertised. */
         accessibleMcpServerNames,
+        mcpRequestAuthorizations,
+        usedMCPRequestAuthorizationServers,
         requestScopedConnections: mcpRequestScopedConnections,
         upstreamTokenProvider,
         upstreamTokenProviderResolver,

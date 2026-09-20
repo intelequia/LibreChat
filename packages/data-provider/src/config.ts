@@ -903,6 +903,11 @@ const remoteApiAuthSchema = z.object({
 
 const remoteApiSchema = z.object({
   auth: remoteApiAuthSchema.optional(),
+  mcpAuthorizations: z
+    .object({
+      enabled: z.boolean().default(false),
+    })
+    .optional(),
 });
 
 const managementClientBindingSchema = z

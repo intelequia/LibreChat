@@ -872,6 +872,16 @@ describe('agentsEndpointSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('defaults request-scoped remote MCP authorizations to disabled', () => {
+    const omitted = agentsEndpointSchema.parse({ remoteApi: {} });
+    const enabled = agentsEndpointSchema.parse({
+      remoteApi: { mcpAuthorizations: { enabled: true } },
+    });
+
+    expect(omitted.remoteApi?.mcpAuthorizations).toBeUndefined();
+    expect(enabled.remoteApi?.mcpAuthorizations?.enabled).toBe(true);
+  });
+
   it('requires a valid issuer when remote OIDC auth is enabled', () => {
     const missingIssuer = agentsEndpointSchema.safeParse({
       remoteApi: {

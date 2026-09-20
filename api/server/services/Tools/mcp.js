@@ -125,6 +125,7 @@ async function loadMCPServerCatalogs({
  * @param {() => Promise<void>} [params.oauthEnd]
  * @param {import('@librechat/api').RequestBody} [params.requestBody]
  * @param {import('@librechat/api').RequestScopedMCPConnectionStore} [params.requestScopedConnections]
+ * @param {boolean} [params.ephemeralConnection]
  * @param {Record<string, Record<string, string>>} [params.userMCPAuthMap]
  * @param {import('@librechat/api').MCPServerCatalogRecoveryPolicy} [params.recoveryPolicy]
  */
@@ -142,6 +143,7 @@ async function reinitMCPServer({
   serverConfig: providedConfig,
   requestBody,
   requestScopedConnections,
+  ephemeralConnection = false,
   upstreamTokenProvider,
   upstreamTokenProviderResolver,
   oboIdentityContext,
@@ -174,7 +176,8 @@ async function reinitMCPServer({
       return resolution.result;
     }
     serverConfig = resolution.serverConfig;
-    ephemeralServer = serverConfig ? requiresEphemeralUserConnection(serverConfig) : false;
+    ephemeralServer =
+      ephemeralConnection || (serverConfig ? requiresEphemeralUserConnection(serverConfig) : false);
 
     const customUserVars = userMCPAuthMap?.[`${Constants.mcp_prefix}${serverName}`];
 
@@ -273,6 +276,7 @@ async function reinitMCPServer({
         customUserVars,
         requestBody,
         requestScopedConnections,
+        ephemeralConnection,
         connectionTimeout,
         serverConfig,
         graphTokenResolver: getGraphApiToken,

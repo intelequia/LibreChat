@@ -2523,6 +2523,67 @@ describe('User parameter passing tests', () => {
       );
     });
 
+    it('isolates per-server request credentials and forwards rotated credentials ephemerally', async () => {
+      const mockUser = { id: 'request-auth-user', role: 'USER' };
+      const mockRes = { write: jest.fn(), flush: jest.fn() };
+      const { getRoleByName } = require('~/models');
+      getRoleByName.mockResolvedValue({
+        permissions: {
+          [PermissionTypes.MCP_SERVERS]: {
+            [Permissions.USE]: true,
+          },
+        },
+      });
+
+      const mockCallTool = jest.fn().mockResolvedValue(['ok', null]);
+      mockGetMCPManager.mockReturnValue({ callTool: mockCallTool });
+      const availableTools = {
+        [`search${D}github`]: {
+          function: { description: 'Search GitHub', parameters: { type: 'object' } },
+        },
+        [`search${D}jira`]: {
+          function: { description: 'Search Jira', parameters: { type: 'object' } },
+        },
+      };
+      const createRequestTool = (serverName, authorization) =>
+        createMCPTool({
+          res: mockRes,
+          user: mockUser,
+          config: {
+            type: 'streamable-http',
+            url: `https://${serverName}.example.com/mcp`,
+            requestHeaders: { Authorization: authorization },
+          },
+          requestScopedAuthorization: true,
+          toolKey: `search${D}${serverName}`,
+          provider: 'openai',
+          userMCPAuthMap: {},
+          availableTools,
+        });
+      const invocationConfig = {
+        configurable: { user: mockUser },
+        metadata: { provider: 'openai', thread_id: 'thread-1', run_id: 'run-1' },
+        toolCall: {},
+      };
+
+      const githubTool = await createRequestTool('github', 'Bearer github-token-1');
+      const jiraTool = await createRequestTool('jira', 'Bearer jira-token');
+      const rotatedGithubTool = await createRequestTool('github', 'Bearer github-token-2');
+
+      await githubTool.invoke({}, invocationConfig);
+      await jiraTool.invoke({}, invocationConfig);
+      await rotatedGithubTool.invoke({}, invocationConfig);
+
+      expect(mockCallTool.mock.calls.map(([call]) => call.serverConfig.requestHeaders)).toEqual([
+        { Authorization: 'Bearer github-token-1' },
+        { Authorization: 'Bearer jira-token' },
+        { Authorization: 'Bearer github-token-2' },
+      ]);
+      expect(mockCallTool.mock.calls.every(([call]) => call.ephemeralConnection === true)).toBe(
+        true,
+      );
+    });
+
     it('forwards the pre-built upstream-token closure to callTool without receiving req', async () => {
       const mockUser = {
         id: 'obo-user',

@@ -654,6 +654,11 @@ endpoints:
   #   # Useful for large organizations where many department-specific skills may be available.
   #   skills:
   #     maxCatalogSkills: 20
+  #   # (optional) Accept per-server Bearer credentials on the Responses API.
+  #   # Values are request-scoped, never persisted, and force ephemeral MCP connections.
+  #   remoteApi:
+  #     mcpAuthorizations:
+  #       enabled: false
   #   # (optional) Agent Capabilities available to all users. Omit the ones you wish to exclude. Defaults to list below.
   #   capabilities: ["deferred_tools", "execute_code", "file_search", "web_search", "artifacts", "subagents", "actions", "context", "skills", "memory", "ask_user_question", "tools", "chain", "ocr"]
   #   # The following capabilities are opt-in and must be added explicitly:

@@ -1107,6 +1107,7 @@ Please follow these instructions when using tools from the respective MCP server
     tokenMethods,
     requestBody,
     requestScopedConnections,
+    ephemeralConnection: requestScopedAuthorization = false,
     flowManager,
     oauthStart,
     oauthEnd,
@@ -1130,6 +1131,7 @@ Please follow these instructions when using tools from the respective MCP server
     options?: RequestOptions;
     requestBody?: RequestBody;
     requestScopedConnections?: t.RequestScopedMCPConnectionStore;
+    ephemeralConnection?: boolean;
     tokenMethods?: TokenMethods;
     customUserVars?: Record<string, string>;
     flowManager: FlowStateManager<MCPOAuthTokens | null>;
@@ -1213,6 +1215,7 @@ Please follow these instructions when using tools from the respective MCP server
             customUserVars,
             requestBody,
             requestScopedConnections,
+            ephemeralConnection: requestScopedAuthorization,
             serverConfig: providedConfig,
             directBearerRecoveryState,
           });
@@ -1270,7 +1273,8 @@ Please follow these instructions when using tools from the respective MCP server
           );
         }
         const isDbSourced = isUserSourced(rawConfig);
-        const ephemeralConnection = !!userId && requiresEphemeralUserConnection(rawConfig);
+        const ephemeralConnection =
+          !!userId && (requestScopedAuthorization || requiresEphemeralUserConnection(rawConfig));
         disposeAfterCall = ephemeralConnection && !requestScopedConnections;
 
         /** Plugin-authored placeholders must not resolve against the user's Graph token. */

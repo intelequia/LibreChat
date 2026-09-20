@@ -17,6 +17,7 @@ const {
   buildInlineMemoryTool,
   getCodeApiAuthHeaders,
   buildImageToolContext,
+  applyMCPRequestAuthorization,
   SET_MEMORY_TOOL_NAME,
   buildWebSearchContext,
   DELETE_MEMORY_TOOL_NAME,
@@ -575,6 +576,11 @@ const loadTools = async ({
         );
         continue;
       }
+      const requestAuthorization = options.mcpRequestAuthorizations?.[serverName];
+      if (requestAuthorization) {
+        serverConfig = applyMCPRequestAuthorization(serverConfig, requestAuthorization);
+        options.usedMCPRequestAuthorizationServers?.add(serverName);
+      }
       if (toolName === Constants.mcp_all) {
         requestedMCPTools[serverName] = [
           {
@@ -700,6 +706,7 @@ const loadTools = async ({
           serverName: config.serverName,
           provider: agent?.provider ?? endpoint,
           config: config.config,
+          requestScopedAuthorization: Boolean(options.mcpRequestAuthorizations?.[serverName]),
         };
 
         if (config.type === 'all' && toolConfigs.length === 1) {

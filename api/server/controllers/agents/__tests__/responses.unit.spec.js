@@ -68,6 +68,13 @@ class MockAgentRunEnvelopeError extends TypeError {
     this.name = 'AgentRunEnvelopeError';
   }
 }
+class MockMCPRequestAuthorizationError extends Error {
+  constructor(message) {
+    super(message);
+    this.status = 400;
+    this.code = 'invalid_mcp_authorizations';
+  }
+}
 const mockCreateAgentRunEnvelope = jest.fn(
   ({ protocol, requestId, receivedAt, principal, payload }) => ({
     version: 1,
@@ -272,6 +279,23 @@ jest.mock('@librechat/api', () => ({
       parentMessageId: parentMessageId ?? '00000000-0000-0000-0000-000000000000',
     }),
   }),
+  MCP_AUTHORIZATIONS_HEADER: 'x-librechat-mcp-authorizations',
+  MCPRequestAuthorizationError: MockMCPRequestAuthorizationError,
+  parseMCPRequestAuthorizations: jest.fn((value) => {
+    if (value == null) {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error();
+      }
+      return parsed;
+    } catch {
+      throw new MockMCPRequestAuthorizationError('Invalid MCP authorizations header');
+    }
+  }),
+  assertMCPRequestAuthorizationsUsed: jest.fn(),
   buildAgentScopedContext: (...args) => mockBuildAgentScopedContext(...args),
   buildInlineMemoryContext: (...args) => mockBuildInlineMemoryContext(...args),
   buildAgentContextAttachmentsByAgentId: (...args) =>
@@ -584,6 +608,7 @@ describe('createResponse controller', () => {
         stream: false,
       },
       user: { id: 'user-123' },
+      headers: {},
       config: {
         endpoints: {
           agents: { allowedProviders: ['anthropic'] },
@@ -603,6 +628,43 @@ describe('createResponse controller', () => {
       once: jest.fn(),
       off: jest.fn(),
     };
+  });
+
+  it('rejects request-scoped MCP authorizations unless explicitly enabled', async () => {
+    const api = require('@librechat/api');
+    req.headers['x-librechat-mcp-authorizations'] = JSON.stringify({
+      github: 'Bearer request-token',
+    });
+
+    await createResponse(req, res);
+
+    expect(api.sendResponsesErrorResponse).toHaveBeenCalledWith(
+      res,
+      400,
+      'Request-scoped MCP authorizations are disabled',
+      'invalid_request',
+      'mcp_authorizations_disabled',
+    );
+    expect(api.initializeAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed MCP authorizations without echoing the header', async () => {
+    const api = require('@librechat/api');
+    const secret = 'PRIVATE-MCP-TOKEN';
+    req.config.endpoints.agents.remoteApi = { mcpAuthorizations: { enabled: true } };
+    req.headers['x-librechat-mcp-authorizations'] = `{not-json:${secret}}`;
+
+    await createResponse(req, res);
+
+    expect(api.sendResponsesErrorResponse).toHaveBeenCalledWith(
+      res,
+      400,
+      'Invalid MCP authorizations header',
+      'invalid_request',
+      'invalid_mcp_authorizations',
+    );
+    expect(JSON.stringify(api.sendResponsesErrorResponse.mock.calls)).not.toContain(secret);
+    expect(api.initializeAgent).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(

@@ -769,6 +769,7 @@ async function reconnectServer({
   userMCPAuthMap,
   requestBody,
   requestScopedConnections,
+  requestScopedAuthorization,
   upstreamTokenProvider,
   upstreamTokenProviderResolver,
   oboIdentityContext,
@@ -784,7 +785,7 @@ async function reconnectServer({
   // Request-scoped servers reconnect on every message by design; throttling them
   // would stub out healthy tools for messages sent within the throttle window.
   const requestScoped = serverConfig ? requiresEphemeralUserConnection(serverConfig) : false;
-  if (!requestScoped) {
+  if (!requestScoped && !requestScopedAuthorization) {
     const throttleKey = `${user.id}:${serverName}`;
     const now = Date.now();
     const lastAttempt = lastReconnectAttempts.get(throttleKey) ?? 0;
@@ -803,6 +804,7 @@ async function reconnectServer({
   const toolCall = buildMCPAuthToolCall({
     id: flowId,
     serverName,
+    serverConfig,
   });
 
   const runStepEmitter = createRunStepEmitter({
@@ -838,6 +840,7 @@ async function reconnectServer({
     userMCPAuthMap,
     requestBody,
     requestScopedConnections,
+    ephemeralConnection: requestScopedAuthorization,
     upstreamTokenProvider,
     upstreamTokenProviderResolver,
     recoveryPolicy,
@@ -887,6 +890,7 @@ async function createMCPTools({
   userMCPAuthMap,
   requestBody,
   requestScopedConnections,
+  requestScopedAuthorization,
   upstreamTokenProvider,
   upstreamTokenProviderResolver,
   oboIdentityContext,
@@ -932,6 +936,7 @@ async function createMCPTools({
     userMCPAuthMap,
     requestBody,
     requestScopedConnections,
+    requestScopedAuthorization,
     upstreamTokenProvider,
     upstreamTokenProviderResolver,
     oboIdentityContext,
@@ -972,6 +977,7 @@ async function createMCPTools({
       toolKey: `${keyToolNames.get(tool.name) ?? tool.name}${Constants.mcp_delimiter}${keyServerName}`,
       requestBody,
       requestScopedConnections,
+      requestScopedAuthorization,
       upstreamTokenProvider,
       upstreamTokenProviderResolver,
       oboIdentityContext,
@@ -1022,6 +1028,7 @@ async function createMCPTool({
   availableTools,
   requestBody,
   requestScopedConnections,
+  requestScopedAuthorization,
   config,
   configServers,
   upstreamTokenProvider,
@@ -1188,6 +1195,7 @@ async function createMCPTool({
     user,
     requestBody,
     requestScopedConnections,
+    requestScopedAuthorization,
     provider,
     /** A legacy pre-strip key that resolves to the stripped entry KEEPS its
      *  persisted spelling as the instance name: `agent.tools` entries and
@@ -1218,6 +1226,7 @@ function createToolInstance({
   user: capturedUser = null,
   requestBody: capturedRequestBody,
   requestScopedConnections: capturedRequestScopedConnections,
+  requestScopedAuthorization: capturedRequestAuthorization = false,
   toolName,
   serverToolName = toolName,
   currentToolName,
@@ -1333,6 +1342,7 @@ function createToolInstance({
         requestBody: config?.configurable?.requestBody ?? capturedRequestBody,
         requestScopedConnections:
           config?.configurable?.requestScopedConnections ?? capturedRequestScopedConnections,
+        ephemeralConnection: Boolean(capturedRequestAuthorization),
         customUserVars,
         flowManager,
         tokenMethods: {
@@ -1450,9 +1460,9 @@ function createToolInstance({
   // missing/stale config means the server's lifetime is unknowable, so fail
   // closed (foreground) rather than risk a detached call against a torn-down
   // connection.
-  toolInstance.mcpRequiresEphemeralConnection = capturedServerConfig
-    ? requiresEphemeralUserConnection(capturedServerConfig)
-    : true;
+  toolInstance.mcpRequiresEphemeralConnection =
+    capturedRequestAuthorization ||
+    (capturedServerConfig ? requiresEphemeralUserConnection(capturedServerConfig) : true);
   // On Google/Vertex, propagate the union-flattened schema so definitions extracted
   // from this instance don't reach the Gemini converter with unsupported unions.
   toolInstance.mcpJsonSchema = isGoogle ? schema : parameters;

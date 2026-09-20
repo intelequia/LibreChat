@@ -18,6 +18,10 @@ const {
   createAgentRunEnvelope,
   createAgentExecutionContext,
   createMCPRuntimeRequestBody,
+  MCP_AUTHORIZATIONS_HEADER,
+  MCPRequestAuthorizationError,
+  parseMCPRequestAuthorizations,
+  assertMCPRequestAuthorizationsUsed,
   buildAgentScopedContext,
   buildInlineMemoryContext,
   buildAgentContextAttachmentsByAgentId,
@@ -169,7 +173,14 @@ function handleExecutionError({ error, res, appConfig }) {
  * @param {boolean} [runtime.definitionsOnly=true] - When true, returns only serializable
  *   tool definitions without creating full tool instances (for event-driven mode)
  */
-function createToolLoader({ req, res, signal, definitionsOnly = true }) {
+function createToolLoader({
+  req,
+  res,
+  signal,
+  definitionsOnly = true,
+  mcpRequestAuthorizations,
+  usedMCPRequestAuthorizationServers,
+}) {
   return async function loadTools({
     tools,
     model,
@@ -194,6 +205,8 @@ function createToolLoader({ req, res, signal, definitionsOnly = true }) {
         agentResourceType: ResourceType.REMOTE_AGENT,
         definitionsOnly,
         accessibleMcpServerNames,
+        mcpRequestAuthorizations,
+        usedMCPRequestAuthorizationServers,
         streamId: null,
       });
     } catch (error) {
@@ -516,7 +529,7 @@ function convertMessagesToOutputItems(messages) {
  * @param {import('@librechat/api').ResponsesRunEnvelope} envelope
  * @param {{req: import('express').Request, res: import('express').Response}} runtime
  */
-const executeResponse = async (envelope, { req, res }) => {
+const executeResponse = async (envelope, { req, res, mcpRequestAuthorizations }) => {
   const appConfig = req.config;
   const requestStartTime = envelope.receivedAt;
   const request = envelope.payload;
@@ -749,7 +762,14 @@ const executeResponse = async (envelope, { req, res }) => {
       const allowedProviders = new Set(agentsEConfig?.allowedProviders);
 
       // Create tool loader
-      const loadTools = createToolLoader({ req, res, signal: execution.signal });
+      const usedMCPRequestAuthorizationServers = new Set();
+      const loadTools = createToolLoader({
+        req,
+        res,
+        signal: execution.signal,
+        mcpRequestAuthorizations,
+        usedMCPRequestAuthorizationServers,
+      });
       const skillDbMethods = getSkillDbMethods();
 
       // Initialize the agent first to check for disableStreaming
@@ -1039,6 +1059,10 @@ const executeResponse = async (envelope, { req, res }) => {
       }
       const modelBoundAgents = [...modelBoundAgentsById.values()];
       const mergedMCPAuthMap = discoveredMCPAuthMap ?? primaryConfig.userMCPAuthMap;
+      assertMCPRequestAuthorizationsUsed(
+        mcpRequestAuthorizations,
+        usedMCPRequestAuthorizationServers,
+      );
       assertModelBoundContent({
         onTraversalFailure: reportLocatorTraversalFailure,
         filters: appConfig?.filters,
@@ -1240,6 +1264,8 @@ const executeResponse = async (envelope, { req, res }) => {
               tool_resources: ctx.tool_resources,
               actionsEnabled: ctx.actionsEnabled,
               accessibleMcpServerNames: ctx.accessibleMcpServerNames,
+              mcpRequestAuthorizations,
+              usedMCPRequestAuthorizationServers,
             });
             return enrichLoadedToolsWithAgentContext({
               result,
@@ -1493,6 +1519,8 @@ const executeResponse = async (envelope, { req, res }) => {
               tool_resources: ctx.tool_resources,
               actionsEnabled: ctx.actionsEnabled,
               accessibleMcpServerNames: ctx.accessibleMcpServerNames,
+              mcpRequestAuthorizations,
+              usedMCPRequestAuthorizationServers,
             });
             return enrichLoadedToolsWithAgentContext({
               result,
@@ -1710,6 +1738,29 @@ const createResponse = async (req, res) => {
     return sendResponsesErrorResponse(res, 400, validation.error);
   }
 
+  const mcpAuthorizationsHeader = req.headers?.[MCP_AUTHORIZATIONS_HEADER];
+  if (
+    mcpAuthorizationsHeader != null &&
+    req.config?.endpoints?.agents?.remoteApi?.mcpAuthorizations?.enabled !== true
+  ) {
+    return sendResponsesErrorResponse(
+      res,
+      400,
+      'Request-scoped MCP authorizations are disabled',
+      'invalid_request',
+      'mcp_authorizations_disabled',
+    );
+  }
+  let mcpRequestAuthorizations;
+  try {
+    mcpRequestAuthorizations = parseMCPRequestAuthorizations(mcpAuthorizationsHeader);
+  } catch (error) {
+    if (error instanceof MCPRequestAuthorizationError) {
+      return sendResponsesErrorResponse(res, 400, error.message, 'invalid_request', error.code);
+    }
+    throw error;
+  }
+
   let envelope;
   try {
     envelope = createAgentRunEnvelope({
@@ -1726,7 +1777,7 @@ const createResponse = async (req, res) => {
     throw error;
   }
 
-  return executeResponse(envelope, { req, res });
+  return executeResponse(envelope, { req, res, mcpRequestAuthorizations });
 };
 
 /**
