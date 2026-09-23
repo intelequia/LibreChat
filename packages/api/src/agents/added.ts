@@ -55,7 +55,10 @@ function applyModelSpecSubagents(
 }
 
 export interface LoadAddedAgentDeps {
-  getAgent: (searchParameter: { id: string }) => Promise<Agent | null>;
+  /** Resolves the agent without its `versions` history; `version` carries the count. */
+  getAgent: (searchParameter: {
+    id: string;
+  }) => Promise<(Agent & { version?: number; versions?: { length: number } }) | null>;
   getMCPServerTools: (
     userId: string,
     serverName: string,
@@ -99,9 +102,8 @@ export async function loadAddedAgent(
       return null;
     }
 
-    const agentRecord = agent as Record<string, unknown>;
-    const versions = agentRecord.versions as unknown[] | undefined;
-    agentRecord.version = versions ? versions.length : 0;
+    const agentRecord = agent as Agent & { version?: number; versions?: { length: number } };
+    agentRecord.version ??= agentRecord.versions?.length ?? 0;
     agent.id = appendAgentIdSuffix(agent.id, 1);
     return agent;
   }
@@ -149,8 +151,7 @@ export async function loadAddedAgent(
     if (!isAgentsEndpoint(endpoint) && !endpointConfig) {
       try {
         endpointConfig = getCustomEndpointConfig({ endpoint, appConfig }) as
-          | Record<string, unknown>
-          | undefined;
+          Record<string, unknown> | undefined;
       } catch (err) {
         logger.error('[loadAddedAgent] Error getting custom endpoint config', err);
       }
@@ -276,13 +277,11 @@ export async function loadAddedAgent(
   }
 
   let endpointConfig = (appConfig?.endpoints as Record<string, unknown> | undefined)?.[endpoint] as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
   if (!isAgentsEndpoint(endpoint) && !endpointConfig) {
     try {
       endpointConfig = getCustomEndpointConfig({ endpoint, appConfig }) as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
     } catch (err) {
       logger.error('[loadAddedAgent] Error getting custom endpoint config', err);
     }

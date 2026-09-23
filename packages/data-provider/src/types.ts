@@ -628,7 +628,17 @@ export type TCodeEnvironmentMoveResponse = {
   codeWorkspaces: CodeWorkspaceSelection[];
 };
 
+/** Sanitized results of server request shaping for each saved toggle state. */
+export type ResponsesApiRoute = {
+  default: boolean;
+  on: boolean;
+  off: boolean;
+  withWebSearch?: { default: boolean; on: boolean; off: boolean };
+};
+export type ResponsesApiRouting = Record<string, ResponsesApiRoute>;
+
 export type TConfig = {
+  responsesApiRouting?: ResponsesApiRouting;
   order: number;
   type?: EModelEndpoint;
   azure?: boolean;
@@ -676,8 +686,7 @@ export type TConfig = {
 };
 
 export type TEndpointsConfig =
-  | Record<EModelEndpoint | string, TConfig | null | undefined>
-  | undefined;
+  Record<EModelEndpoint | string, TConfig | null | undefined> | undefined;
 
 export type TModelsConfig = Record<string, string[]>;
 
@@ -1075,8 +1084,7 @@ export type TLangfuseConnectionTestErrorCode =
   | 'unexpected_response';
 
 export type TLangfuseConnectionTestResponse =
-  | { success: true }
-  | { success: false; errorCode: TLangfuseConnectionTestErrorCode };
+  { success: true } | { success: false; errorCode: TLangfuseConnectionTestErrorCode };
 
 export type TLangfuseSessionLinkResponse = {
   url: string | null;

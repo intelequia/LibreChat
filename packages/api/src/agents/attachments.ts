@@ -1,9 +1,10 @@
 import { logger } from '@librechat/data-schemas';
 import {
-  EModelEndpoint,
+  FileContext,
   FileSources,
-  getEndpointFileConfig,
+  EModelEndpoint,
   mergeFileConfig,
+  getEndpointFileConfig,
 } from 'librechat-data-provider';
 import type { IMongoFile } from '@librechat/data-schemas';
 import type { TokenCountFn } from '~/utils/text';
@@ -22,9 +23,31 @@ type AttachmentTelemetryFile = FileWithId & {
   source?: string | null;
   type?: string | null;
   text?: string | null;
+  context?: string | null;
+  embedded?: boolean | null;
   llmDeliveryPath?: string | null;
   metadata?: (IMongoFile['metadata'] & { pageCount?: number | null }) | null;
 };
+
+/**
+ * Whether a record without a delivery route belongs to a tool rather than to the prompt.
+ *
+ * A code output lives in the sandbox that wrote it, and it stays the tool's while an expired
+ * sandbox copy is re-provisioned: priming clears the dead references on the turn's copy of the
+ * record, which must not turn the output into a prompt attachment that counts toward the turn's
+ * limits. Any other record belongs to a tool once a tool has provisioned it.
+ */
+export function isToolOwnedAttachment(file: AttachmentTelemetryFile): boolean {
+  const metadata = file.metadata as
+    (IMongoFile['metadata'] & { fileIdentifier?: unknown }) | null | undefined;
+  return (
+    file.context === FileContext.execute_code ||
+    file.embedded === true ||
+    metadata?.codeEnvRef != null ||
+    metadata?.codeEnvRefs != null ||
+    metadata?.fileIdentifier != null
+  );
+}
 
 /** Whether a hydrated file contributes content to the model prompt itself. */
 export function isModelBoundAttachmentFile(
@@ -46,16 +69,7 @@ export function isModelBoundAttachmentFile(
   if (file.llmDeliveryPath === 'provider') {
     return true;
   }
-  const metadata = file.metadata as
-    | (IMongoFile['metadata'] & { fileIdentifier?: unknown })
-    | null
-    | undefined;
-  return !(
-    (file as IMongoFile).embedded === true ||
-    metadata?.codeEnvRef != null ||
-    metadata?.codeEnvRefs != null ||
-    metadata?.fileIdentifier != null
-  );
+  return !isToolOwnedAttachment(file);
 }
 
 type AgentAttachmentLimitRequest = {
@@ -486,10 +500,7 @@ export type AgentContextAttachmentCarrier<TFile extends FileWithId = IMongoFile>
 };
 
 export type AgentContextAttachmentsByAgentId<TFile extends FileWithId = IMongoFile> =
-  | Map<string, TFile[]>
-  | Record<string, TFile[] | undefined>
-  | null
-  | undefined;
+  Map<string, TFile[]> | Record<string, TFile[] | undefined> | null | undefined;
 
 export type AgentAttachmentEndpointsByAgentId =
   | Map<string, { endpoint?: string | null; endpointType?: string | null }>

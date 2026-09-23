@@ -69,7 +69,6 @@ const { getRetentionExpiry, getAgentFileRetentionExpiry } = require('./retention
 const { getStrategyFunctions } = require('./strategies');
 const { determineFileType } = require('~/server/utils');
 const { findUser } = require('~/models');
-const { handleKnowledge } = require('~/utils');
 const { STTService } = require('./Audio/STTService');
 const db = require('~/models');
 
@@ -122,6 +121,102 @@ const isMissingStorageError = (err) => {
  * @param {Set<string>} params.failedFileIds - File IDs whose storage delete failed.
  * @param {OpenAI | undefined} [params.openai] - If an OpenAI file, the initialized OpenAI client.
  */
+function enqueueDeleteOperation({
+  req,
+  file,
+  deleteFile,
+  promises,
+  resolvedFileIds,
+  failedFileIds,
+  openai,
+}) {
+  if (checkOpenAIStorage(file.source)) {
+    promises.push(
+      new Promise((resolve, reject) => {
+        LB_QueueAsyncCall(
+          () => deleteFile(req, file, openai),
+          [],
+          (err, result) => {
+            if (err) {
+              if (isMissingStorageError(err)) {
+                resolvedFileIds.add(file.file_id);
+                logger.warn('File storage was already missing during delete', err);
+                resolve(result);
+                return;
+              }
+              failedFileIds.add(file.file_id);
+              logger.error('Error deleting file from OpenAI source', err);
+              reject(err);
+            } else {
+              resolvedFileIds.add(file.file_id);
+              resolve(result);
+            }
+          },
+        );
+      }),
+    );
+  } else {
+    promises.push(
+      deleteFile(req, file)
+        .then(() => resolvedFileIds.add(file.file_id))
+        .catch((err) => {
+          if (isMissingStorageError(err)) {
+            resolvedFileIds.add(file.file_id);
+            logger.warn('File storage was already missing during delete', err);
+            return;
+          }
+          failedFileIds.add(file.file_id);
+          logger.error('Error deleting file', err);
+          return Promise.reject(err);
+        }),
+    );
+  }
+}
+
+const getDeleteMethod = ({ source, deletionMethods }) => {
+  if (deletionMethods[source]) {
+    return deletionMethods[source];
+  }
+
+  const { deleteFile } = getStrategyFunctions(source);
+  if (!deleteFile) {
+    throw new Error(`Delete function not implemented for ${source}`);
+  }
+
+  deletionMethods[source] = deleteFile;
+  return deleteFile;
+};
+
+const createDeleteFileWithSecondaryStorage = ({ source, deleteFile, deletionMethods }) => {
+  return async (req, file, openai) => {
+    const secondaryDeleteMethods = [];
+    if (file.embedded === true && source !== FileSources.vectordb) {
+      secondaryDeleteMethods.push(
+        getDeleteMethod({ source: FileSources.vectordb, deletionMethods }),
+      );
+    }
+    if (hasCodeEnvRef(file) && source !== FileSources.execute_code) {
+      secondaryDeleteMethods.push(
+        getDeleteMethod({ source: FileSources.execute_code, deletionMethods }),
+      );
+    }
+
+    try {
+      await deleteFile(req, file, openai);
+    } catch (err) {
+      if (!isMissingStorageError(err)) {
+        throw err;
+      }
+      logger.warn('Primary file storage was already missing during delete', err);
+    }
+
+    await Promise.all(
+      secondaryDeleteMethods.map((secondaryDeleteFile) => secondaryDeleteFile(req, file)),
+    );
+  };
+};
+
+// TODO: refactor as currently only image files can be deleted this way
 // as other filetypes will not reside in public path
 /**
  * Deletes a list of files from the server filesystem and the database.
@@ -170,16 +265,8 @@ const processDeleteRequest = async ({ req, files }) => {
     await initializeClients();
   }
 
-  const agentFiles = [];
-
   for (const file of files) {
     const source = file.source ?? FileSources.local;
-    if (req.body.agent_id && req.body.tool_resource) {
-      agentFiles.push({
-        tool_resource: req.body.tool_resource,
-        file_id: file.file_id,
-      });
-    }
 
     if (source === FileSources.text) {
       resolvedFileIds.add(file.file_id);
@@ -218,15 +305,6 @@ const processDeleteRequest = async ({ req, files }) => {
     });
   }
 
-  if (agentFiles.length > 0) {
-    promises.push(
-      db.removeAgentResourceFiles({
-        agent_id: req.body.agent_id,
-        files: agentFiles,
-      }),
-    );
-  }
-
   await Promise.allSettled(promises);
   const deletedFileIds = [...resolvedFileIds];
   let metadataDeletedFileIds = deletedFileIds;
@@ -239,6 +317,9 @@ const processDeleteRequest = async ({ req, files }) => {
       metadataDeletedFileIds = [];
       throw error;
     }
+    /* The only place a delete removes agent references, and it runs after the metadata delete
+       succeeded: a file that kept its storage, its chunks or its record keeps its references too,
+       so the agent it was removed from can be asked again (see issue #12776). */
     if (metadataDeletedFileIds.length > 0) {
       try {
         await db.removeAgentResourceFilesFromAllAgents({ file_ids: metadataDeletedFileIds });
@@ -477,8 +558,9 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
       inputBuffer: buffer,
       desiredFormat: appConfig.imageOutputType,
     }));
-    filename = `${path.basename(req.file.originalname, path.extname(req.file.originalname))}.${appConfig.imageOutputType
-      }`;
+    filename = `${path.basename(req.file.originalname, path.extname(req.file.originalname))}.${
+      appConfig.imageOutputType
+    }`;
   }
   const fileName = `${file_id}-${filename}`;
   const filepath = await saveBuffer({
@@ -507,7 +589,6 @@ const uploadImageBuffer = async ({ req, context, metadata = {}, resize = true })
     true,
   );
 };
-
 
 /**
  * Applies the current strategy for file uploads.
@@ -1305,8 +1386,9 @@ const processOpenAIFile = async ({
   const retentionExpiryPromise = saveFile ? getRetentionExpiry(openai.req) : null;
   const _file = await openai.files.retrieve(file_id);
   const originalName = filename ?? (_file.filename ? path.basename(_file.filename) : undefined);
-  const filepath = `${openai.baseURL}/files/${userId}/${file_id}${originalName ? `/${originalName}` : ''
-    }`;
+  const filepath = `${openai.baseURL}/files/${userId}/${file_id}${
+    originalName ? `/${originalName}` : ''
+  }`;
   const type = mime.getType(originalName ?? file_id);
   const source =
     openai.req.body.endpoint === EModelEndpoint.azureAssistants
@@ -1632,7 +1714,8 @@ function filterFile({ req, image, isAvatar, endpoint: endpointOverride }) {
 
   if (file.size > fileSizeLimit) {
     throw new Error(
-      `File size limit of ${fileSizeLimit / megabyte} MB exceeded for ${isAvatar ? 'avatar upload' : `${endpoint} endpoint`
+      `File size limit of ${fileSizeLimit / megabyte} MB exceeded for ${
+        isAvatar ? 'avatar upload' : `${endpoint} endpoint`
       }`,
     );
   }

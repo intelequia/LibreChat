@@ -7,6 +7,7 @@ import {
   MCPConfigInitializationCanceledError,
 } from '~/mcp/registry/MCPServersRegistry';
 import { ServerConfigsCacheInMemory } from '~/mcp/registry/cache/ServerConfigsCacheInMemory';
+import { getMCPAppToolsPublicationGeneration } from '~/mcp/toolsChanged';
 import { MCPServerInspector } from '~/mcp/registry/MCPServerInspector';
 import { MCPInspectionFailedError } from '~/mcp/errors';
 import { processMCPEnv } from '~/utils/env';
@@ -732,6 +733,142 @@ describe('MCPServersRegistry', () => {
     });
   });
 
+  describe('admin API key update binding', () => {
+    const bearerConfig: t.MCPOptions = {
+      type: 'streamable-http',
+      url: 'https://mcp.example.com/mcp',
+      proxy: 'http://proxy.example.com/',
+      apiKey: {
+        source: 'admin',
+        authorization_type: 'bearer',
+        key: 'owner-secret',
+      },
+    };
+    const customHeaderConfig: t.MCPOptions = {
+      ...bearerConfig,
+      apiKey: {
+        source: 'admin',
+        authorization_type: 'custom',
+        custom_header: 'X-Owner-Key',
+        key: 'owner-secret',
+      },
+    };
+    const rebindingCases: Array<[string, t.MCPOptions, t.MCPOptions, string[]]> = [
+      [
+        'URL',
+        bearerConfig,
+        {
+          ...bearerConfig,
+          url: 'https://attacker.example.com/mcp',
+          apiKey: { source: 'admin', authorization_type: 'bearer' },
+        },
+        ['url'],
+      ],
+      [
+        'transport',
+        bearerConfig,
+        {
+          ...bearerConfig,
+          type: 'sse',
+          apiKey: { source: 'admin', authorization_type: 'bearer' },
+        },
+        ['type'],
+      ],
+      [
+        'proxy',
+        bearerConfig,
+        {
+          ...bearerConfig,
+          proxy: 'http://attacker.example.com/',
+          apiKey: { source: 'admin', authorization_type: 'bearer' },
+        },
+        ['proxy'],
+      ],
+      [
+        'authorization type',
+        bearerConfig,
+        {
+          ...bearerConfig,
+          apiKey: { source: 'admin', authorization_type: 'basic' },
+        },
+        ['apiKey.authorization_type'],
+      ],
+      [
+        'custom-header binding',
+        customHeaderConfig,
+        {
+          ...customHeaderConfig,
+          apiKey: {
+            source: 'admin',
+            authorization_type: 'custom',
+            custom_header: 'X-Attacker-Key',
+          },
+        },
+        ['apiKey.custom_header'],
+      ],
+    ];
+
+    it.each(rebindingCases)(
+      'rejects an omitted-key %s rebinding before outbound inspection',
+      async (_label, existingConfig, update, changedFields) => {
+        jest.spyOn(registry['dbConfigsRepo'], 'get').mockResolvedValue(existingConfig);
+        const inspectSpy = jest.mocked(MCPServerInspector.inspect);
+        inspectSpy.mockClear();
+
+        await expect(
+          registry.inspectServerUpdate('shared-server', update, 'DB', 'editor-user'),
+        ).rejects.toMatchObject({
+          code: 'MCP_API_KEY_REENTRY_REQUIRED',
+          changedFields,
+        });
+
+        expect(inspectSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it('preserves the omitted key for an equivalent request boundary', async () => {
+      const existingConfig: t.MCPOptions = {
+        type: 'streamable-http',
+        url: 'https://mcp.example.com/mcp',
+        proxy: 'http://proxy.example.com/',
+        apiKey: {
+          source: 'admin',
+          authorization_type: 'custom',
+          custom_header: 'X-Api-Key',
+          key: 'owner-secret',
+        },
+      };
+      const equivalentUpdate: t.MCPOptions = {
+        ...existingConfig,
+        type: 'http',
+        url: 'https://MCP.EXAMPLE.COM:443/mcp',
+        proxy: 'http://PROXY.EXAMPLE.COM:80/',
+        description: 'Updated description',
+        apiKey: {
+          source: 'admin',
+          authorization_type: 'custom',
+          custom_header: 'x-api-key',
+        },
+      };
+      jest.spyOn(registry['dbConfigsRepo'], 'get').mockResolvedValue(existingConfig);
+      const inspectSpy = jest.mocked(MCPServerInspector.inspect);
+      inspectSpy.mockClear();
+
+      await registry.inspectServerUpdate('shared-server', equivalentUpdate, 'DB', 'editor-user');
+
+      expect(inspectSpy).toHaveBeenCalledTimes(1);
+      expect(inspectSpy).toHaveBeenCalledWith(
+        'shared-server',
+        expect.objectContaining({
+          apiKey: expect.objectContaining({ key: 'owner-secret' }),
+        }),
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+  });
+
   describe('reinspectServer', () => {
     const stubOptions: t.MCPOptions = {
       type: 'streamable-http',
@@ -1411,6 +1548,77 @@ describe('MCPServersRegistry', () => {
         // Call with different userId - should hit repository
         await registry.getAllServerConfigs('user456');
         expect(cacheRepoGetAllSpy).toHaveBeenCalledTimes(3);
+      });
+    });
+
+    /** A replica running older code fills these stores from its own DB reads, so a
+     *  cache hit has to carry the same normalization the repository applies. */
+    describe('configs stored by an older replica', () => {
+      const storedByOlderReplica = {
+        type: 'streamable-http',
+        url: 'https://example.com/mcp',
+        source: 'user',
+        dbId: 'db-legacy-1',
+        requiresOAuth: true,
+        headers: null,
+        requestHeaders: null,
+      } as unknown as t.ParsedServerConfig;
+
+      it('normalizes null header maps served from a per-server cache hit', async () => {
+        const dbGet = jest
+          .spyOn(registry['dbConfigsRepo'], 'get')
+          .mockResolvedValue(storedByOlderReplica);
+
+        await registry.getServerConfig('legacy_server', 'user-1');
+        expect(dbGet).toHaveBeenCalledTimes(1);
+
+        const cached = await registry.getServerConfig('legacy_server', 'user-1');
+        expect(dbGet).toHaveBeenCalledTimes(1);
+        expect(cached).toMatchObject({ dbId: 'db-legacy-1', source: 'user' });
+        expect(cached).not.toHaveProperty('headers');
+        expect(cached).not.toHaveProperty('requestHeaders');
+        expect(() => getMCPAppToolsPublicationGeneration(cached!)).not.toThrow();
+      });
+
+      it('normalizes null header maps served from an all-servers cache hit', async () => {
+        const dbGetAll = jest
+          .spyOn(registry['dbConfigsRepo'], 'getAll')
+          .mockResolvedValue({ legacy_server: storedByOlderReplica });
+
+        await registry.getAllServerConfigs('user-1');
+        expect(dbGetAll).toHaveBeenCalledTimes(1);
+
+        /** Drop this replica's process memo only; the shared entry stays as the
+         *  older replica encoded it, which is what another pod would read. */
+        registry['readThroughCacheAll']['memo'].clear();
+
+        const cached = (await registry.getAllServerConfigs('user-1')).legacy_server;
+        expect(dbGetAll).toHaveBeenCalledTimes(1);
+        expect(cached).toMatchObject({ dbId: 'db-legacy-1', source: 'user' });
+        expect(cached).not.toHaveProperty('headers');
+        expect(cached).not.toHaveProperty('requestHeaders');
+        expect(() => getMCPAppToolsPublicationGeneration(cached)).not.toThrow();
+      });
+
+      it('preserves populated header maps across both cache hits', async () => {
+        const headers = { 'X-Shared': 'value' };
+        const requestHeaders = { 'X-Request': 'value' };
+        const config = { ...storedByOlderReplica, headers, requestHeaders };
+        jest.spyOn(registry['dbConfigsRepo'], 'get').mockResolvedValue(config);
+        jest
+          .spyOn(registry['dbConfigsRepo'], 'getAll')
+          .mockResolvedValue({ header_server: config });
+
+        await registry.getServerConfig('header_server', 'user-1');
+        await registry.getAllServerConfigs('user-1');
+        registry['readThroughCacheAll']['memo'].clear();
+
+        const single = await registry.getServerConfig('header_server', 'user-1');
+        const all = (await registry.getAllServerConfigs('user-1')).header_server;
+        for (const cached of [single, all]) {
+          expect(cached).toMatchObject({ headers, requestHeaders });
+          expect(() => getMCPAppToolsPublicationGeneration(cached!)).not.toThrow();
+        }
       });
     });
   });

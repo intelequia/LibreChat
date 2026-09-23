@@ -1,9 +1,9 @@
 /**
  * Base Client for LibreChat
- * 
+ *
  * Modified by Intelequia to optimize App Insights tracking system.
  * Centralized token tracking moved to spendTokens.js for better maintainability.
- * 
+ *
  * @organization Intelequia  
  * @modified September 2025
  * @description Base client with optimized tracking architecture
@@ -32,9 +32,15 @@ const {
   collectModelBoundHistoricalFileIdState,
   projectModelBoundSourceFiles,
   isModelBoundAttachmentFile,
+  isToolOwnedAttachment,
   withBalanceReservations,
   findCheckpointSummaryPart,
   getSummaryPartText,
+  runAfterSeed,
+  saveTurnConversation,
+  seedTurnConversation,
+  needsRetentionConversation,
+  getConversationWriteContext,
 } = require('@librechat/api');
 const {
   Constants,
@@ -43,11 +49,9 @@ const {
   ErrorTypes,
   ContentTypes,
   isCompactedLeaf,
-  excludedKeys,
   EModelEndpoint,
   isParamEndpoint,
   isAgentsEndpoint,
-  isEphemeralAgentId,
   supportsBalanceCheck,
   isBedrockDocumentType,
   HITL_MESSAGE_FILTER_FIELDS,
@@ -65,20 +69,20 @@ const omitUnreplayedHistoricalFiles = (messages) =>
     ...message,
     ...(Array.isArray(message.content)
       ? {
-        content: message.content.map((part) => {
-          if (part == null || typeof part !== 'object') {
-            return part;
-          }
-          const {
-            file: _partFile,
-            files: _partFiles,
-            image_file: _imageFile,
-            file_id: _fileId,
-            ...rest
-          } = part;
-          return rest;
-        }),
-      }
+          content: message.content.map((part) => {
+            if (part == null || typeof part !== 'object') {
+              return part;
+            }
+            const {
+              file: _partFile,
+              files: _partFiles,
+              image_file: _imageFile,
+              file_id: _fileId,
+              ...rest
+            } = part;
+            return rest;
+          }),
+        }
       : {}),
   }));
 
@@ -284,12 +288,18 @@ class BaseClient {
 
   /** Optional pre-build guard for policies that cover restored history
    * independently of the final provider selection. */
-  assertStoredModelBoundContent() { }
+  assertStoredModelBoundContent() {}
 
   /** Agent runs can defer the parent write until their first exact model
    * boundary is admitted. Generic clients preserve the historical eager
    * persistence behavior. */
   shouldDeferUserMessagePersistence() {
+    return false;
+  }
+
+  /** Whether a deferred parent write may still create a new conversation's row up front, so
+   * the conversation lists can return it while the run is in flight. */
+  shouldSeedDeferredConversation() {
     return false;
   }
 
@@ -920,8 +930,20 @@ class BaseClient {
       if (this.shouldDeferUserMessagePersistence()) {
         let state = 'pending';
         let startPersistence = startUserMessagePersistence;
+        if (!this.skipSaveConvo && this.shouldSeedDeferredConversation()) {
+          const seed = seedTurnConversation(
+            db,
+            this.getTurnConversationFields(
+              this.options,
+              userMessage.conversationId,
+              saveOptions,
+              'api/app/clients/BaseClient.js - sendMessage #seedConversation',
+            ),
+          );
+          startPersistence = runAfterSeed(seed, startUserMessagePersistence);
+        }
         let resolvePersistence;
-        let removeAbortListener = () => { };
+        let removeAbortListener = () => {};
         const persistencePromise = new Promise((resolve) => {
           resolvePersistence = resolve;
         });
@@ -1350,25 +1372,10 @@ class BaseClient {
 
     const hasAddedConvo = options?.req?.body?.addedConvo != null;
     const req = options?.req;
-    if (
-      req?.config?.interfaceConfig?.retentionMode === 'all' &&
-      req?.config?.interfaceConfig?.generalChatRetention !== undefined &&
-      !Object.prototype.hasOwnProperty.call(req, 'resolvedConversation')
-    ) {
+    if (needsRetentionConversation(req)) {
       req.resolvedConversation = await db.getConvo(req.user.id, message.conversationId);
     }
-    const hasResolvedConversation =
-      req != null && Object.prototype.hasOwnProperty.call(req, 'resolvedConversation');
-    const resolvedRetention = hasResolvedConversation ? req.resolvedConversation : null;
-    const reqCtx = {
-      userId: req?.user?.id,
-      isTemporary:
-        req?._agentEventBindingRetention?.isTemporary ??
-        resolvedRetention?.isTemporary ??
-        req?.body?.isTemporary,
-      expiredAt: req?._agentEventBindingRetention?.expiredAt ?? resolvedRetention?.expiredAt,
-      interfaceConfig: req?.config?.interfaceConfig,
-    };
+    const reqCtx = getConversationWriteContext(req);
     const savedMessage = await db.saveMessage(
       reqCtx,
       {
@@ -1385,70 +1392,41 @@ class BaseClient {
       return { message: savedMessage };
     }
 
-    const fieldsToKeep = {
-      conversationId: message.conversationId,
-      endpoint: options.endpoint,
-      endpointType: options.endpointType,
-      ...endpointOptions,
-    };
-    const conversationCreatedAt = options?.req?.conversationCreatedAt;
-    const createdAtOnInsert =
-      conversationCreatedAt != null ? new Date(conversationCreatedAt) : undefined;
-    const validCreatedAtOnInsert =
-      createdAtOnInsert && !Number.isNaN(createdAtOnInsert.getTime())
-        ? createdAtOnInsert
-        : undefined;
-
-    const skippedExistingConvoLookup = this.fetchedConvo === true;
-    let existingConvo = null;
-    if (!skippedExistingConvoLookup && hasResolvedConversation) {
-      existingConvo = req.resolvedConversation;
-    } else if (!skippedExistingConvoLookup) {
-      existingConvo = await db.getConvo(req?.user?.id, message.conversationId);
-    }
-    // Keep the authenticated conversation available for response, abort, and retry saves.
-    // fetchedConvo already prevents repeating the conversation initialization work.
-    const shouldSetCreatedAtOnInsert = !skippedExistingConvoLookup && existingConvo == null;
-
-    const unsetFields = {};
-    const exceptions = new Set(['spec', 'iconURL']);
-    const hasNonEphemeralAgent =
-      isAgentsEndpoint(options.endpoint) &&
-      endpointOptions?.agent_id &&
-      !isEphemeralAgentId(endpointOptions.agent_id);
-    if (hasNonEphemeralAgent) {
-      exceptions.add('model');
-    }
-    if (existingConvo != null) {
-      this.fetchedConvo = true;
-      for (const key in existingConvo) {
-        if (!key) {
-          continue;
-        }
-        if (excludedKeys.has(key) && !exceptions.has(key)) {
-          continue;
-        }
-
-        if (endpointOptions?.[key] === undefined) {
-          unsetFields[key] = 1;
-        }
-      }
-    }
-
-    const conversation = await db.saveConvo(reqCtx, fieldsToKeep, {
-      context: 'api/app/clients/BaseClient.js - saveMessageToDatabase #saveConvo',
-      unsetFields,
-      noUpsert: req?._agentEventBindingParentConversationId != null,
-      initialAgentId: hasNonEphemeralAgent ? options.agent?.id : null,
-      createdAtOnInsert: shouldSetCreatedAtOnInsert ? validCreatedAtOnInsert : undefined,
-      ...(savedMessage?._id != null ? { appendMessageIds: [savedMessage._id] } : {}),
+    const { conversation, initialized } = await saveTurnConversation(db, {
+      ...this.getTurnConversationFields(
+        options,
+        message.conversationId,
+        endpointOptions,
+        'api/app/clients/BaseClient.js - saveMessageToDatabase #saveConvo',
+      ),
+      ctx: reqCtx,
+      initialized: this.fetchedConvo === true,
+      savedMessageId: savedMessage?._id,
     });
-
-    if (req != null && conversation != null) {
-      req.resolvedConversation = conversation;
+    if (initialized) {
+      this.fetchedConvo = true;
     }
 
     return { message: savedMessage, conversation };
+  }
+
+  /**
+   * The conversation fields a turn's writes share.
+   * @param {Object} options - The client options snapshot.
+   * @param {string} conversationId
+   * @param {Partial<TConversation>} endpointOptions
+   * @param {string} context - Names the write in the save log.
+   */
+  getTurnConversationFields(options, conversationId, endpointOptions, context) {
+    return {
+      req: options.req,
+      conversationId,
+      endpoint: options.endpoint,
+      endpointType: options.endpointType,
+      endpointOptions,
+      agentId: options.agent?.id,
+      context,
+    };
   }
 
   /**
@@ -1871,13 +1849,7 @@ class BaseClient {
       /* An explicit `provider` path is authoritative: lazy provisioning stamps
        * `embedded`/`codeEnvRef` on files that are still meant for the model, so the
        * legacy tool-provisioning exclusion only applies to records without one. */
-      if (
-        deliveryPath !== 'provider' &&
-        (file.embedded === true ||
-          file.metadata?.codeEnvRef != null ||
-          file.metadata?.codeEnvRefs != null ||
-          file.metadata?.fileIdentifier != null)
-      ) {
+      if (deliveryPath !== 'provider' && isToolOwnedAttachment(file)) {
         allFiles.push(file);
         continue;
       }

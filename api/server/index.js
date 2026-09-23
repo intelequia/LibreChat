@@ -235,12 +235,12 @@ const startServer = async () => {
   if (isEnabled(process.env.TRUST_TENANT_HEADER)) {
     logger.warn(
       '[Security] TRUST_TENANT_HEADER is active. Ensure your reverse proxy strips and sets ' +
-      'X-Tenant-Id — untrusted clients must not be able to supply it directly.',
+        'X-Tenant-Id — untrusted clients must not be able to supply it directly.',
     );
   } else if (isEnabled(process.env.TENANT_ISOLATION_STRICT)) {
     logger.warn(
       '[Security] TENANT_ISOLATION_STRICT is active while TRUST_TENANT_HEADER is disabled. ' +
-      'Pre-authentication tenant headers will be ignored.',
+        'Pre-authentication tenant headers will be ignored.',
     );
   }
 
@@ -520,7 +520,11 @@ const startServer = async () => {
       if (inspectFlags || isEnabled(process.env.MEM_DIAG)) {
         memoryDiagnostics.start();
       }
-      await initializeAgentTriggerService({ address: server.address() });
+      await initializeAgentTriggerService({
+        address: server.address(),
+        completionResultBatchSize:
+          appConfig?.endpoints?.agents?.backgroundTasks?.completionResultBatchSize,
+      });
       const scheduleEngineArmed = (await initializeScheduleEngine()) != null;
       scheduleEngineState = scheduleEngineArmed ? 'armed' : 'unavailable';
       if (!scheduleEngineArmed) {
