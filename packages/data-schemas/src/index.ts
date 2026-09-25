@@ -15,6 +15,7 @@ export {
   tokenValues,
   cacheTokenValues,
   premiumTokenValues,
+  premiumCacheTokenValues,
   defaultRate,
   createTxMethods,
   permissionBitSupersets,
