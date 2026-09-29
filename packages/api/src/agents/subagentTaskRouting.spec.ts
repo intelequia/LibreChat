@@ -177,6 +177,7 @@ function taskHandler(
     claim: () => ({ status: 'not_found' }),
     control: () => ({ status: 'not_found' }),
     list: () => [],
+    retainsTaskOwnership: () => false,
     cancelScope: () => 0,
     ...overrides,
   };
@@ -475,6 +476,49 @@ describe('RedisSubagentTaskControlTransport', () => {
     await Promise.all([owner.destroy(), requester.destroy()]);
   });
 
+  it('keeps a receipt-only owner registered until deletion cleanup can reach it', async () => {
+    const bus = new FakeRedisBus();
+    const owner = new RedisSubagentTaskControlTransport(
+      asRedis(bus.createClient()),
+      asRedis(bus.createClient()),
+      { namespace: 'test', instanceId: 'owner', registrationHeartbeatMs: 5 },
+    );
+    const requester = new RedisSubagentTaskControlTransport(
+      asRedis(bus.createClient()),
+      asRedis(bus.createClient()),
+      { namespace: 'test', instanceId: 'requester', requestTimeoutMs: 100, retryDelayMs: 5 },
+    );
+    let receiptPending = true;
+    const cancelScope = jest.fn(() => 0);
+    await owner.bind(
+      taskHandler({
+        retainsTaskOwnership: (_scopeId, taskId) => receiptPending && taskId === 'task-1',
+        cancelScope,
+      }),
+    );
+    await requester.bind(taskHandler());
+    await owner.registerTask('scope-1', 'task-1', 60_000);
+
+    /** Model the SDK task/result buckets dropping the task and Redis losing the
+     * directory entry before the next owner heartbeat. Pending receipt work is
+     * the only remaining reason this process can still handle deletion cleanup. */
+    bus.hashes.clear();
+    for (let attempt = 0; attempt < 100 && !(await requester.hasTasks('scope-1')); attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    await expect(requester.hasTasks('scope-1')).resolves.toBe(true);
+    await expect(requester.cancelScope('scope-1', null, ['deleted-child-thread'])).resolves.toBe(0);
+    expect(cancelScope).toHaveBeenCalledWith('scope-1', null, ['deleted-child-thread']);
+
+    receiptPending = false;
+    bus.hashes.clear();
+    for (let attempt = 0; attempt < 100 && (await requester.hasTasks('scope-1')); attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    await expect(requester.hasTasks('scope-1')).resolves.toBe(false);
+    await Promise.all([owner.destroy(), requester.destroy()]);
+  });
+
   it('expires a dead owner independently while another owner keeps the scope active', async () => {
     const bus = new FakeRedisBus();
     const deadOwner = new RedisSubagentTaskControlTransport(
@@ -505,9 +549,24 @@ describe('RedisSubagentTaskControlTransport', () => {
     await liveOwner.registerTask('scope-1', liveTask.taskId, 20);
     await deadOwner.destroy();
 
-    await new Promise<void>((resolve) => setTimeout(resolve, 35));
-
-    await expect(requester.list('scope-1')).resolves.toEqual([liveTask]);
+    /** The dead owner's entry lapses on its own TTL while the live owner's heartbeat
+     * re-registers its entry against that same TTL, so a runner that stalls past 20ms
+     * can find both gone for one beat. Poll until the directory settles rather than
+     * asserting on a single sleep. */
+    let listed: SubagentTaskSnapshot[] = [];
+    for (let attempt = 0; attempt < 100 && listed.length === 0; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      try {
+        listed = await requester.list('scope-1');
+      } catch (error) {
+        /** The dead owner is still registered, so the request routes to a process that
+         * answers nothing. Anything else is a real failure. */
+        if (!(error instanceof SubagentTaskOwnerUnavailableError)) {
+          throw error;
+        }
+      }
+    }
+    expect(listed).toEqual([liveTask]);
     await Promise.all([liveOwner.destroy(), requester.destroy()]);
   });
 

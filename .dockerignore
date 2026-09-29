@@ -15,6 +15,7 @@ docs
 
 docker-compose.override.yml
 librechat.yml
+intelequia-config/nginx/certbot
 
 # Ignore all hidden files
 .*

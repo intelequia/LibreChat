@@ -2,7 +2,7 @@ import { useId, useRef, useMemo, useState, useCallback } from 'react';
 import * as Ariakit from '@ariakit/react';
 import { useNavigate } from 'react-router-dom';
 import { Trans, useTranslation } from 'react-i18next';
-import { Play, Trash, Pencil, Ellipsis } from 'lucide-react';
+import { Play, Trash, Folder, Pencil, Ellipsis } from 'lucide-react';
 import { PermissionTypes, Permissions } from 'librechat-data-provider';
 import {
   Label,
@@ -15,6 +15,7 @@ import {
   useToastContext,
 } from '@librechat/client';
 import type { TSchedule, ScheduleRunStatus, ScheduleDisabledReason } from 'librechat-data-provider';
+import type { ImmediateScheduleMCPFailure } from './errors';
 import type { TranslationKeys } from '~/hooks';
 import {
   useGetAgentByIdQuery,
@@ -22,7 +23,14 @@ import {
   useUpdateScheduleMutation,
   useRunScheduleNowMutation,
 } from '~/data-provider';
-import { useLocalize, useHasAccess } from '~/hooks';
+import {
+  scheduleMCPErrorMessage,
+  scheduleMCPErrorOutcomes,
+  scheduleLastRunKey,
+  scheduleMCPCardOutcomes,
+} from './errors';
+import { useLocalize, useHasAccess, useClockFormat, useWeekStart } from '~/hooks';
+import ScheduleMCPRecovery from './ScheduleMCPRecovery';
 import { useAgentsMapContext } from '~/Providers';
 import { getMessageTimestamp } from '~/utils';
 import ScheduleDialog from './ScheduleDialog';
@@ -30,6 +38,9 @@ import { describeCadence } from './cadence';
 
 interface ScheduleCardProps {
   schedule: TSchedule;
+  /** Resolved by the panel, which holds ONE project-name lookup for the whole list —
+   *  deriving it per card is O(schedules x projects) on every project-list refresh. */
+  projectName?: string | null;
 }
 
 type StatusTone = 'neutral' | 'success' | 'warning' | 'error';
@@ -45,19 +56,35 @@ const STATUS_CHIPS: Record<ScheduleRunStatus, { label: TranslationKeys; tone: St
 };
 
 const DISABLED_REASON_LABELS: Record<ScheduleDisabledReason, TranslationKeys> = {
+  mcp_reauth_required: 'com_ui_schedule_disabled_mcp_reauth',
+  mcp_configuration_missing: 'com_ui_schedule_disabled_mcp_configuration',
+  mcp_permission_denied: 'com_ui_schedule_disabled_mcp_permission',
   too_many_failures: 'com_ui_schedule_disabled_too_many_failures',
   agent_deleted: 'com_ui_schedule_disabled_agent_deleted',
   invalid_schedule: 'com_ui_schedule_disabled_invalid',
   permission_revoked: 'com_ui_schedule_disabled_permission_revoked',
   insufficient_balance: 'com_ui_schedule_disabled_insufficient_balance',
+  project_deleted: 'com_ui_schedule_disabled_project_deleted',
+  project_required: 'com_ui_schedule_disabled_project_required',
 };
 
-export default function ScheduleCard({ schedule }: ScheduleCardProps) {
+export default function ScheduleCard({ schedule, projectName }: ScheduleCardProps) {
   const localize = useLocalize();
   const navigate = useNavigate();
+  const lastRunKey = scheduleLastRunKey(schedule);
+  const [immediateMCPFailure, setImmediateMCPFailure] =
+    useState<ImmediateScheduleMCPFailure | null>(null);
+  const mcpOutcomes = scheduleMCPCardOutcomes(schedule, immediateMCPFailure);
   const { i18n } = useTranslation();
   const { showToast } = useToastContext();
   const agentsMap = useAgentsMapContext();
+  const agentNames = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(agentsMap ?? {}).map(([id, agent]) => [id, agent?.name || id]),
+      ),
+    [agentsMap],
+  );
   // Enable/disable, run-now, edit and delete all hit CREATE-gated routes, so a
   // USE-only viewer sees a read-only card instead of controls that 403.
   const canWrite = useHasAccess({
@@ -79,8 +106,22 @@ export default function ScheduleCard({ schedule }: ScheduleCardProps) {
   const agentName = mappedAgent?.name || fetchedAgent?.name || schedule.agent_id;
 
   const updateSchedule = useUpdateScheduleMutation({
-    onError: () => {
-      showToast({ message: localize('com_ui_error'), status: 'error' });
+    /** Re-enabling re-validates the schedule's EFFECTIVE state — its stored agent, its
+     *  cadence against the current floor, and its project against the current policy —
+     *  so this switch is a real place to meet a 400. A generic failure toast would
+     *  leave the owner flipping a switch that keeps flipping back; point them at the
+     *  dialog, which is where the fixable settings are. */
+    onError: (error, variables) => {
+      const outcomes = scheduleMCPErrorOutcomes(error);
+      setImmediateMCPFailure(outcomes.length > 0 ? { outcomes, lastRunKey } : null);
+      const status = (error as { response?: { status?: number } } | undefined)?.response?.status;
+      const blockedEnable = status === 400 && variables.payload.enabled === true;
+      showToast({
+        message:
+          scheduleMCPErrorMessage(error, localize) ??
+          localize(blockedEnable ? 'com_ui_schedule_enable_blocked' : 'com_ui_error'),
+        status: 'error',
+      });
     },
   });
   const deleteSchedule = useDeleteScheduleMutation();
@@ -88,22 +129,29 @@ export default function ScheduleCard({ schedule }: ScheduleCardProps) {
 
   const handleToggle = useCallback(
     (checked: boolean) => {
+      setImmediateMCPFailure(null);
       updateSchedule.mutate({ id: schedule.id, payload: { enabled: checked } });
     },
     [schedule.id, updateSchedule],
   );
 
   const handleRunNow = useCallback(() => {
+    setImmediateMCPFailure(null);
     runSchedule.mutate(schedule.id, {
       onSuccess: () => {
         showToast({ message: localize('com_ui_schedule_run_now_started'), status: 'success' });
         setMenuOpen(false);
       },
-      onError: () => {
-        showToast({ message: localize('com_ui_error'), status: 'error' });
+      onError: (error) => {
+        const outcomes = scheduleMCPErrorOutcomes(error);
+        setImmediateMCPFailure(outcomes.length > 0 ? { outcomes, lastRunKey } : null);
+        showToast({
+          message: scheduleMCPErrorMessage(error, localize) ?? localize('com_ui_error'),
+          status: 'error',
+        });
       },
     });
-  }, [schedule.id, runSchedule, showToast, localize]);
+  }, [schedule.id, runSchedule, showToast, localize, lastRunKey]);
 
   const confirmDelete = useCallback(() => {
     deleteSchedule.mutate(schedule.id, {
@@ -117,18 +165,26 @@ export default function ScheduleCard({ schedule }: ScheduleCardProps) {
     });
   }, [schedule.id, deleteSchedule, showToast, localize]);
 
-  const cadenceText = describeCadence(schedule.cadence, localize, i18n.language);
+  const hour12 = useClockFormat();
+  const weekStartsOn = useWeekStart();
+  const cadenceText = describeCadence(
+    schedule.cadence,
+    localize,
+    i18n.language,
+    hour12,
+    weekStartsOn,
+  );
 
   const nextRunText = useMemo(() => {
     if (!schedule.enabled || schedule.nextRunAt == null) {
       return null;
     }
-    const timestamp = getMessageTimestamp(schedule.nextRunAt, i18n.language);
+    const timestamp = getMessageTimestamp(schedule.nextRunAt, i18n.language, hour12);
     if (!timestamp) {
       return null;
     }
     return localize('com_ui_schedule_next_run', { time: timestamp.relative });
-  }, [schedule.enabled, schedule.nextRunAt, i18n.language, localize]);
+  }, [schedule.enabled, schedule.nextRunAt, i18n.language, hour12, localize]);
 
   const dropdownItems = useMemo(
     () => [
@@ -211,6 +267,15 @@ export default function ScheduleCard({ schedule }: ScheduleCardProps) {
       <p className="mt-0.5 truncate text-xs text-text-secondary" title={agentName}>
         {agentName}
       </p>
+      {projectName != null && projectName !== '' && (
+        <p
+          className="mt-0.5 flex items-center gap-1 truncate text-xs text-text-secondary"
+          title={projectName}
+        >
+          <Folder className="size-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{projectName}</span>
+        </p>
+      )}
       <p className="mt-1 text-sm text-text-primary">{cadenceText}</p>
       {nextRunText != null && <p className="mt-0.5 text-xs text-text-secondary">{nextRunText}</p>}
       {(statusChip != null || schedule.disabledReason != null) && (
@@ -232,6 +297,14 @@ export default function ScheduleCard({ schedule }: ScheduleCardProps) {
           )}
         </div>
       )}
+      <div className="mt-1">
+        <ScheduleMCPRecovery
+          outcomes={mcpOutcomes}
+          fallbackAgentId={schedule.agent_id}
+          agentNames={agentNames}
+          onOpenAgent={(ownerId) => navigate(`/c/new?agent_id=${encodeURIComponent(ownerId)}`)}
+        />
+      </div>
       {editOpen && (
         <ScheduleDialog
           open={editOpen}

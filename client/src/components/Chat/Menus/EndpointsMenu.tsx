@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { alternateName } from 'librechat-data-provider';
+import { alternateName, EModelEndpoint } from 'librechat-data-provider';
 import { Content, Portal, Root } from '@radix-ui/react-popover';
 import type { FC, KeyboardEvent } from 'react';
 import { useChatContext, useAgentsMapContext, useAssistantsMapContext } from '~/Providers';
@@ -65,10 +65,11 @@ const EndpointsMenu: FC = () => {
     assistant_id: conversation?.assistant_id,
   });
 
-  const primaryText = entity
-    ? entity.name
-    : (alternateName[endpoint] as string | undefined) ?? endpoint;
-
+  const endpointLabel =
+    endpoint === EModelEndpoint.agents
+      ? localize('com_ui_my_agents')
+      : ((alternateName[endpoint] as string | undefined) ?? endpoint);
+  const primaryText = entity ? entity.name : endpointLabel;
 
   return (
     <Root>

@@ -1,8 +1,83 @@
 import { EModelEndpoint } from 'librechat-data-provider';
+import {
+  cacheTokenValues,
+  defaultRate,
+  premiumCacheTokenValues,
+  premiumTokenValues,
+  tokenValues,
+} from '@librechat/data-schemas';
 import type { TModelsConfig, TTokenConfigMap, TModelTokenomics } from 'librechat-data-provider';
 import type { TxMethods } from '@librechat/data-schemas';
 import type { EndpointTokenConfig } from '~/types';
 import { getModelMaxTokens, maxTokensMap } from '~/utils';
+
+export interface PricingCatalogEntry {
+  key: string;
+  prompt: number;
+  completion: number;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+  premiumThreshold: number | null;
+  premiumPrompt: number | null;
+  premiumCompletion: number | null;
+  premiumCacheRead: number | null;
+  premiumCacheWrite: number | null;
+  isDefaultRate: boolean;
+}
+
+export function buildPricingCatalog(): PricingCatalogEntry[] {
+  const modelKeys = new Set([
+    ...Object.keys(tokenValues),
+    ...Object.keys(cacheTokenValues),
+    ...Object.keys(premiumTokenValues),
+    ...Object.keys(premiumCacheTokenValues),
+  ]);
+
+  const entries = [...modelKeys]
+    .sort((left, right) =>
+      left.localeCompare(right, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      }),
+    )
+    .map((key) => {
+      const base = tokenValues[key];
+      const cache = cacheTokenValues[key];
+      const premium = premiumTokenValues[key];
+      const premiumCache = premiumCacheTokenValues[key];
+
+      return {
+        key,
+        prompt: base?.prompt ?? defaultRate,
+        completion: base?.completion ?? defaultRate,
+        cacheRead: cache?.read ?? null,
+        cacheWrite: cache?.write ?? null,
+        premiumThreshold: premium?.threshold ?? premiumCache?.threshold ?? null,
+        premiumPrompt: premium?.prompt ?? null,
+        premiumCompletion: premium?.completion ?? null,
+        premiumCacheRead: premiumCache?.read ?? null,
+        premiumCacheWrite: premiumCache?.write ?? null,
+        isDefaultRate: false,
+      };
+    });
+
+  return [
+    {
+      key: 'default',
+      prompt: defaultRate,
+      completion: defaultRate,
+      cacheRead: null,
+      cacheWrite: null,
+      premiumThreshold: null,
+      premiumPrompt: null,
+      premiumCompletion: null,
+      premiumCacheRead: null,
+      premiumCacheWrite: null,
+      isDefaultRate: true,
+    },
+    ...entries,
+  ];
+}
 
 export interface TokenomicsDeps {
   getValueKey: TxMethods['getValueKey'];

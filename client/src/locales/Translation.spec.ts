@@ -49,6 +49,11 @@ describe('i18next translation tests', () => {
     expect(i18n.t('com_ui_examples')).toBe(Spanish.com_ui_examples);
   });
 
+  it('should include every English translation key in Spanish', () => {
+    const missingKeys = Object.keys(English).filter((key) => !(key in Spanish));
+    expect(missingKeys).toEqual([]);
+  });
+
   it('should fallback to English for an invalid language code', async () => {
     // When an invalid language is provided, i18next should fallback to English
     await changeLanguageSafely('invalid-code');

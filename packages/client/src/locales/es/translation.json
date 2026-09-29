@@ -28,5 +28,7 @@
   "com_ui_disabled": "Desactivado",
   "com_ui_toggle_theme": "Alternar tema",
   "com_ui_dark_theme_enabled": "Tema oscuro habilitado",
-  "com_ui_light_theme_enabled": "Tema claro habilitado"
+  "com_ui_light_theme_enabled": "Tema claro habilitado",
+  "com_ui_high_contrast_dark_theme_enabled": "Tema oscuro de alto contraste habilitado",
+  "com_ui_high_contrast_light_theme_enabled": "Tema claro de alto contraste habilitado"
 }

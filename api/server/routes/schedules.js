@@ -34,6 +34,7 @@ const checkSchedulesCreate = generateCheckAccess({
 });
 
 const handlers = createSchedulesHandlers({
+  preflightMCP: require('~/server/services/Schedules/mcp'),
   methods,
   getLimits,
   // Full fire-equivalent access check (not mere existence): the body-based agent
@@ -42,6 +43,10 @@ const handlers = createSchedulesHandlers({
   // the actual fire requires — otherwise a role without AGENTS:USE could schedule
   // runs the chat route rejects and walks toward auto-disable.
   canViewAgent: async (agentId, req) => (await resolveAgentFireAccess(agentId, req.user)) === 'ok',
+  // Same scoped lookup the fire-time precheck uses, so a destination this write
+  // accepts is one the next fire also accepts.
+  canUseProject: async (projectId, userId) =>
+    (await methods.getChatProject(userId, projectId)) != null,
   filterOwnedFileIds: async (fileIds, userId) => {
     const files = await methods.getFiles({ file_id: { $in: fileIds }, user: userId }, null, {
       file_id: 1,

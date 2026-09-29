@@ -10,6 +10,7 @@ import {
   processOpenIDPlaceholders,
   OpenIDReauthRequiredError,
 } from './oidc';
+import { getAdminApiKeyHeader } from '~/mcp/headers';
 
 /**
  * Provenance marker for MCP servers contributed by an Agent Plugins package.
@@ -178,6 +179,15 @@ const OPENID_CREDENTIAL_PLACEHOLDER_PATTERN =
   /\{\{LIBRECHAT_OPENID_(?:ACCESS_TOKEN|ID_TOKEN|TOKEN)\}\}/;
 
 /**
+ * The credential placeholders that specifically need a usable *access* token, which is all
+ * `isOpenIDTokenValid` reports on. `ID_TOKEN` is absent because `processOpenIDPlaceholders`
+ * validates the ID token's own expiry, so an ID-token header still resolves while no access
+ * token is stored. Non-global so `exec` stays stateless.
+ */
+const OPENID_ACCESS_CREDENTIAL_PLACEHOLDER_PATTERN =
+  /\{\{LIBRECHAT_OPENID_(?:ACCESS_TOKEN|TOKEN)\}\}/;
+
+/**
  * Replaces resolvable-but-unresolved placeholders with an empty string so
  * LibreChat's internal template syntax is never sent upstream as if it were
  * real user data (e.g. a gateway trusting a literal
@@ -336,7 +346,7 @@ function processSingleValue({
   if (openidTokenInfo && isOpenIDTokenValid(openidTokenInfo)) {
     value = processOpenIDPlaceholders(value, openidTokenInfo);
   } else if (openidTokenInfo) {
-    const unresolvable = OPENID_CREDENTIAL_PLACEHOLDER_PATTERN.exec(value);
+    const unresolvable = OPENID_ACCESS_CREDENTIAL_PLACEHOLDER_PATTERN.exec(value);
     if (unresolvable) {
       logger.warn(
         `OpenID token is expired or unavailable; cannot resolve ${unresolvable[0]} for the current request`,
@@ -345,6 +355,12 @@ function processSingleValue({
         `OpenID token is expired or unavailable; re-authentication is required to resolve ${unresolvable[0]}`,
       );
     }
+    /**
+     * `isOpenIDTokenValid` reports on the access token alone, so an ID token placeholder is not
+     * its to refuse: `processOpenIDPlaceholders` validates the ID token's own expiry and raises
+     * if it is stale. Every other placeholder keeps its literal-then-strip behaviour here.
+     */
+    value = processOpenIDPlaceholders(value, openidTokenInfo, ['ID_TOKEN']);
   }
 
   if (body) {
@@ -402,36 +418,13 @@ export function processMCPEnv(params: {
 
   const newObj: MCPOptions = structuredClone(options);
 
-  // Apply admin-provided API key to headers at runtime
-  // Note: User-provided keys use {{MCP_API_KEY}} placeholder in headers,
-  // which is processed later via customUserVars replacement
-  if ('apiKey' in newObj && newObj.apiKey) {
-    const apiKeyConfig = newObj.apiKey as {
-      key?: string;
-      source: 'admin' | 'user';
-      authorization_type: 'basic' | 'bearer' | 'custom';
-      custom_header?: string;
+  const adminHeader = getAdminApiKeyHeader(newObj.apiKey);
+  if (adminHeader) {
+    const objWithHeaders = newObj as { headers?: Record<string, string> };
+    objWithHeaders.headers = {
+      ...objWithHeaders.headers,
+      [adminHeader.name]: adminHeader.value,
     };
-
-    if (apiKeyConfig.source === 'admin' && apiKeyConfig.key) {
-      const { key, authorization_type, custom_header } = apiKeyConfig;
-      const headerName =
-        authorization_type === 'custom' ? custom_header || 'X-Api-Key' : 'Authorization';
-
-      let headerValue = key;
-      if (authorization_type === 'basic') {
-        headerValue = `Basic ${key}`;
-      } else if (authorization_type === 'bearer') {
-        headerValue = `Bearer ${key}`;
-      }
-
-      // Initialize headers if needed and add the API key header (overwrites if header already exists)
-      const objWithHeaders = newObj as { headers?: Record<string, string> };
-      if (!objWithHeaders.headers) {
-        objWithHeaders.headers = {};
-      }
-      objWithHeaders.headers[headerName] = headerValue;
-    }
   }
 
   if ('env' in newObj && newObj.env) {

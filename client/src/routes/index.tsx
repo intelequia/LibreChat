@@ -1,4 +1,5 @@
 import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
+import { useLocation } from 'react-router-dom'; // Importamos useLocation
 import {
   Login,
   VerifyEmail,
@@ -8,6 +9,7 @@ import {
   TwoFactorScreen,
   RequestPasswordReset,
 } from '~/components/Auth';
+import BusinessHeader from '~/utils/intelequia/Components/BusinessHeader/businessHeader';
 import { MarketplaceProvider } from '~/components/Agents/MarketplaceContext';
 import AgentMarketplace from '~/components/Agents/Marketplace';
 import { OAuthSuccess, OAuthError } from '~/components/OAuth';
@@ -21,8 +23,6 @@ import ShareRoute from './ShareRoute';
 import ChatRoute from './ChatRoute';
 import Search from './Search';
 import Root from './Root';
-import BusinessHeader from '~/utils/intelequia/Components/BusinessHeader/businessHeader';
-import { useLocation } from 'react-router-dom'; // Importamos useLocation
 
 const AuthLayout = () => (
   <AuthContextProvider>
@@ -37,11 +37,13 @@ const ChatLayout = () => {
   const location = useLocation(); // Obtenemos la ubicación actual
 
   return (
-    <>
+    <div className="flex h-dvh min-h-0 flex-col">
       {/* Solo renderiza <BusinessHeader> si la ruta no es '/login' */}
       {location.pathname !== '/login' && <BusinessHeader />}
-      <Root />
-    </>
+      <div className="min-h-0 flex-1">
+        <Root />
+      </div>
+    </div>
   );
 };
 

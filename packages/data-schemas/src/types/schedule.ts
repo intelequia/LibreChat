@@ -3,6 +3,7 @@ import type {
   ScheduleDisabledReason,
   TScheduleCadence,
 } from 'librechat-data-provider';
+import type { ScheduleMCPOutcome } from 'librechat-data-provider';
 import type { Document, Types } from 'mongoose';
 
 export interface ISchedule {
@@ -16,6 +17,9 @@ export interface ISchedule {
   cadence: TScheduleCadence;
   timezone: string;
   target: 'new';
+  /** Chat project every run's conversation is filed under. Re-validated at each
+   *  fire; a pinned operator project (interface.schedules.projectId) overrides it. */
+  chatProjectId?: string;
   file_ids?: string[];
   tools?: string[];
   cron?: string;
@@ -54,6 +58,7 @@ export interface ISchedule {
     conversationId?: string;
     status: ScheduleRunStatus;
     error?: string;
+    mcp?: ScheduleMCPOutcome[];
     firedAt: Date;
     /** The OCCURRENCE this projection came from; orders the card against delayed
      *  outcomes (a resumed pause, a reconciler replay) arriving after a newer run. */
@@ -74,6 +79,7 @@ export interface IScheduleDocument extends Omit<ISchedule, 'id' | '_id'>, Docume
 }
 
 export interface IScheduleRun {
+  mcp?: ScheduleMCPOutcome[];
   _id?: Types.ObjectId;
   scheduleId: string;
   user: Types.ObjectId;
@@ -81,6 +87,7 @@ export interface IScheduleRun {
   scheduledFor: Date;
   firedAt?: Date;
   conversationId?: string;
+  checkpointNamespace?: string;
   status: ScheduleRunStatus;
   error?: string;
   /** Deterministic durable-trigger delivery key for this occurrence, stamped at
@@ -88,6 +95,15 @@ export interface IScheduleRun {
    *  state instead of orphan-settling a jobless run that is merely deferred (Retry-After)
    *  or that dead-lettered before a generation ever started. */
   deliveryKey?: string;
+  /** The destination project THIS occurrence actually used, recorded at reservation
+   *  because the schedule-level value can move on (an operator pin redirects later
+   *  fires, and a paused run does not block them), leaving the row describing a project
+   *  this occurrence's conversation was never filed under.
+   *
+   *  ALWAYS written, `null` for a deliberately unscoped occurrence: an absent key means
+   *  "this row predates the field", which is a different thing from "this run had no
+   *  project" and must not be validated as if it were. */
+  chatProjectId?: string | null;
   droppedFileIds?: string[];
   durationMs?: number;
   bookkept?: boolean;
@@ -95,6 +111,9 @@ export interface IScheduleRun {
   settledAt?: Date;
   /** Global concurrency slot held while `started`. */
   capacitySlot?: number;
+  /** A started row used only to durably settle admission failure bookkeeping. It
+   * never dispatched generation work and therefore does not consume capacity. */
+  admissionOnly?: boolean;
   /** When an abort was requested; capacity is held until settlement is confirmed. */
   abortRequestedAt?: Date;
   /** Who requested the abort: the interactive Stop route ('stop', which persists a
@@ -107,8 +126,8 @@ export interface IScheduleRun {
   abortPersistedAt?: Date;
   /** The schedule's configRevision at claim time. */
   configRevision?: number;
-  /** When reconciliation last examined this row; orders the paused window so no row
-   *  can be starved by a full batch of still-live pauses ahead of it. */
+  /** When reconciliation last examined this row; rotates each bounded non-terminal
+   *  window so no abandoned row can starve behind a full batch of live runs. */
   reconciledAt?: Date;
   resumeClaimedAt?: Date;
   createdAt?: Date;

@@ -79,6 +79,36 @@ describe('Gemini 3.7 Flash', () => {
   });
 });
 
+describe('Gemini 3.8 Flash', () => {
+  it('resolves the 1,048,576-token context window', () => {
+    expect(getModelMaxTokens('gemini-3.8-flash', EModelEndpoint.google)).toBe(1048576);
+  });
+
+  it('matches the longest key over the shorter gemini-3 pattern for aliases', () => {
+    expect(getModelMaxTokens('models/gemini-3.8-flash-latest', EModelEndpoint.google)).toBe(
+      1048576,
+    );
+  });
+});
+
+describe('GPT-6 Astra', () => {
+  it('resolves 1.05M context and 128K output', () => {
+    expect(getModelMaxTokens('gpt-6-astra', EModelEndpoint.openAI)).toBe(1050000);
+    expect(getModelMaxOutputTokens('gpt-6-astra', EModelEndpoint.openAI)).toBe(128000);
+  });
+
+  it('matches its own key for snapshots and provider prefixes', () => {
+    for (const model of [
+      'gpt-6-astra-2026-04-30',
+      'openai/gpt-6-astra',
+      'gpt-6-astra-2026-04-30/openai',
+    ]) {
+      expect(getModelMaxTokens(model, EModelEndpoint.openAI)).toBe(1050000);
+      expect(getModelMaxOutputTokens(model, EModelEndpoint.openAI)).toBe(128000);
+    }
+  });
+});
+
 describe('Qwen3.5 and later generations', () => {
   it('resolves 262K for the vLLM model id that regressed to the qwen3 window', () => {
     expect(getModelMaxTokens('Qwen/Qwen3.5-397B-A17B-FP8', EModelEndpoint.openAI)).toBe(262144);
@@ -180,5 +210,48 @@ describe('vendor-prefixed model ids', () => {
   it('leaves dot-separated bedrock ids alone', () => {
     expect(getModelMaxTokens('moonshot.kimi-k2-thinking', EModelEndpoint.bedrock)).toBe(262144);
     expect(getModelMaxTokens('us.anthropic.claude-3-5-sonnet-20241022-v2:0')).toBe(200000);
+  });
+});
+
+describe('Grok 4.7 context window', () => {
+  it.each(['grok-4.7', 'x-ai/grok-4.7', 'xai/grok-4.7', 'grok-4-7'])(
+    'resolves %s through the custom endpoint without falling back to Grok 4',
+    (model) => {
+      expect(getModelMaxTokens(model, EModelEndpoint.custom)).toBe(500000);
+    },
+  );
+
+  it('preserves explicit operator context overrides', () => {
+    const config: EndpointTokenConfig = {
+      'grok-4.7': { prompt: 2, completion: 6, context: 32000, output: 4096 },
+    };
+    expect(getModelMaxTokens('grok-4.7', EModelEndpoint.custom, config)).toBe(32000);
+  });
+
+  it('keeps older Grok context windows unchanged', () => {
+    expect(getModelMaxTokens('grok-4', EModelEndpoint.custom)).toBe(256000);
+    expect(getModelMaxTokens('grok-4-fast', EModelEndpoint.custom)).toBe(2000000);
+    expect(getModelMaxTokens('grok-4.6', EModelEndpoint.custom)).toBe(500000);
+  });
+});
+
+describe('Opus 5.5 token limits', () => {
+  it.each([
+    'claude-opus-5-5',
+    'claude-opus-5.5',
+    'anthropic/claude-opus-5-5',
+    'global.anthropic.claude-opus-5-5',
+  ])('resolves %s to the existing modern Claude profile', (model) => {
+    expect(getModelMaxTokens(model)).toBe(1000000);
+    expect(getModelMaxOutputTokens(model)).toBe(128000);
+  });
+});
+
+describe.each(['gpt-6-sol', 'gpt-6-luna'])('%s token limits', (model) => {
+  it('resolves exact, snapshot, and provider-prefixed IDs', () => {
+    for (const name of [model, `${model}-2026-09-22`, `openai/${model}`]) {
+      expect(getModelMaxTokens(name, EModelEndpoint.openAI)).toBe(1050000);
+      expect(getModelMaxOutputTokens(name, EModelEndpoint.openAI)).toBe(128000);
+    }
   });
 });

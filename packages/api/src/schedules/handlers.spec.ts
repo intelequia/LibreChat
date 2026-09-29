@@ -1,11 +1,13 @@
-import type { ISchedule } from '@librechat/data-schemas';
+import { createHash } from 'node:crypto';
+import type { ISchedule, IScheduleRun } from '@librechat/data-schemas';
 import type { Response } from 'express';
 import type { SchedulesHandlersDeps } from './handlers';
 import type { ServerRequest } from '~/types';
 import { createSchedulesHandlers, toWireSchedule, computeCreateDigest } from './handlers';
+import { ScheduleMCPError } from './mcp';
 
 /** A lean schedule doc carrying both public fields and internal bookkeeping. */
-function fullScheduleDoc(): ISchedule {
+function fullScheduleDoc(overrides: Partial<ISchedule> = {}): ISchedule {
   return {
     _id: 'mongo-id',
     __v: 0,
@@ -36,6 +38,7 @@ function fullScheduleDoc(): ISchedule {
     bookkept: true,
     createdAt: new Date('2026-07-01T00:00:00Z'),
     updatedAt: new Date('2026-07-10T00:00:00Z'),
+    ...overrides,
   } as unknown as ISchedule;
 }
 
@@ -60,6 +63,7 @@ describe('toWireSchedule', () => {
       [
         'agent_id',
         'cadence',
+        'chatProjectId',
         // Public so the edit dialog can fence its PATCH on the revision it opened
         // with (updateSchedulePayloadSchema.expectedConfigRevision).
         'configRevision',
@@ -103,6 +107,7 @@ function makeRes() {
   const captured: { status?: number; body?: unknown; headers: Record<string, string> } = {
     headers: {},
   };
+  const listeners = new Map<string, () => void>();
   const res = {
     status(code: number) {
       captured.status = code;
@@ -115,6 +120,19 @@ function makeRes() {
     set(name: string, value: string) {
       captured.headers[name] = value;
       return this;
+    },
+    once(event: string, listener: () => void) {
+      listeners.set(event, listener);
+      return this;
+    },
+    off(event: string, listener: () => void) {
+      if (listeners.get(event) === listener) listeners.delete(event);
+      return this;
+    },
+    emit(event: string) {
+      const listener = listeners.get(event);
+      listeners.delete(event);
+      listener?.();
     },
   };
   return { res: res as unknown as Response, captured };
@@ -152,6 +170,8 @@ function makeCreateDeps(over: Partial<SchedulesHandlersDeps> = {}): SchedulesHan
     markScheduleDeleting: jest.fn(async () => ({ id: 'sched-1' }) as ISchedule),
     updateScheduleById: jest.fn(async () => ({ id: 'sched-1' }) as ISchedule),
     armSchedule: jest.fn(async () => undefined),
+    getActiveRunsForUser: jest.fn(async () => []),
+    getActiveRunsForSchedule: jest.fn(async () => []),
   };
   return {
     methods: methods as unknown as SchedulesHandlersDeps['methods'],
@@ -160,8 +180,13 @@ function makeCreateDeps(over: Partial<SchedulesHandlersDeps> = {}): SchedulesHan
       maxPerUser: 10,
       minIntervalMinutes: 60,
       autoDisableAfterFailures: 5,
+      admissionConcurrency: 20,
       fireConcurrency: 5,
+      mcpPreflightConcurrency: 3,
+      mcpPreflightTimeoutMs: 300_000,
+      requireProject: false,
     }),
+    preflightMCP: jest.fn().mockResolvedValue([]),
     canViewAgent: async () => true,
     filterOwnedFileIds: async (ids: string[]) => ids,
     markFilesUsed: async () => undefined,
@@ -239,6 +264,11 @@ describe('createSchedule late-create compensation', () => {
 
     const inserted = (deps.methods.createScheduleWithSlot as jest.Mock).mock.calls[0][0];
     expect(inserted.nextRunAt).toBeUndefined();
+    expect(deps.preflightMCP).toHaveBeenCalledWith(
+      CREATE_BODY.agent_id,
+      expect.objectContaining({ id: 'user-1' }),
+      expect.objectContaining({ scheduleId: inserted.id }),
+    );
     // And it is never armed afterwards, because the barrier refused the create.
     expect(deps.methods.updateScheduleById).not.toHaveBeenCalled();
   });
@@ -355,6 +385,167 @@ describe('createSchedule late-create compensation', () => {
     // requested, and deleting it would erase a row a concurrent replay may already
     // have confirmed with its own 201.
     expect(captured.status).toBe(201);
+  });
+});
+
+describe('computeCreateDigest cadence shape', () => {
+  it('hashes a structured cadence exactly as it did before cron existed', () => {
+    // The digest is the idempotency key's content fence. Widening the canonical shape
+    // for every cadence would change it for schedules already out there: a create that
+    // committed before a deploy and lost its response would retry against a digest
+    // that no longer matches and be refused as if the key had been reused.
+    const legacy = createHash('sha256')
+      .update(
+        JSON.stringify({
+          name: 'Digest',
+          prompt: 'Summarize',
+          agent_id: 'agent-1',
+          timezone: 'America/New_York',
+          target: 'new',
+          enabled: true,
+          cadence: { frequency: 'daily', hour: 8, minute: 0, daysOfWeek: null },
+          file_ids: null,
+        }),
+      )
+      .digest('hex');
+
+    expect(createBodyDigest()).toBe(legacy);
+  });
+
+  it('hashes a cron cadence by its expression', () => {
+    const cron = computeCreateDigest({
+      ...CREATE_BODY,
+      target: 'new',
+      enabled: true,
+      cadence: { frequency: 'cron', expression: '0 9 * * 1-5' },
+    } as never);
+
+    expect(cron).not.toBe(createBodyDigest());
+  });
+});
+
+describe('create with a cron cadence', () => {
+  it('resolves an idempotent replay after the floor was raised beneath it', async () => {
+    // The row committed under the old floor and the client lost the response. An
+    // admin raising the floor in between must not turn the retry into a 400 for a
+    // schedule that already exists; the raised floor reaches it at fire time.
+    const committed = {
+      id: 'sched-1',
+      clientRequestId: 'intent-1',
+      name: 'Digest',
+      prompt: 'Summarize',
+      agent_id: 'agent-1',
+      cadence: { frequency: 'daily', hour: 8, minute: 0 },
+      timezone: 'America/New_York',
+      target: 'new',
+      enabled: true,
+    } as unknown as ISchedule;
+    const deps = makeCreateDeps({
+      isUserDeleting: jest.fn(async () => false),
+      preflightMCP: jest.fn(async () => {
+        throw new Error('MCP became unavailable after the first create');
+      }),
+      getLimits: async () => ({
+        enabled: true,
+        maxPerUser: 10,
+        // Above the ~1320 minutes a daily cadence reports, so the payload no longer
+        // clears the floor it was admitted under.
+        minIntervalMinutes: 100_000,
+        autoDisableAfterFailures: 5,
+        admissionConcurrency: 20,
+        fireConcurrency: 5,
+        mcpPreflightConcurrency: 3,
+        mcpPreflightTimeoutMs: 300_000,
+        requireProject: false,
+      }),
+    });
+    (deps.methods.getScheduleByClientRequestId as jest.Mock).mockResolvedValue(committed);
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).createSchedule(makeCreateReq(), res);
+
+    expect(captured.status).not.toBe(400);
+    expect(deps.preflightMCP).not.toHaveBeenCalled();
+    expect(deps.methods.createScheduleWithSlot).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a NEW create below the floor', async () => {
+    const deps = makeCreateDeps({
+      isUserDeleting: jest.fn(async () => false),
+      getLimits: async () => ({
+        enabled: true,
+        maxPerUser: 10,
+        minIntervalMinutes: 100_000,
+        autoDisableAfterFailures: 5,
+        admissionConcurrency: 20,
+        fireConcurrency: 5,
+        mcpPreflightConcurrency: 3,
+        mcpPreflightTimeoutMs: 300_000,
+        requireProject: false,
+      }),
+    });
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).createSchedule(makeCreateReq(), res);
+
+    expect(captured.status).toBe(400);
+    expect(deps.methods.createScheduleWithSlot).not.toHaveBeenCalled();
+  });
+
+  it('does not hold attachments for a create it deterministically refuses', async () => {
+    // retainFiles extends every upload's TTL to the 14-day schedule hold. Running it
+    // before a refusal nothing can retry past meant each attempt pinned uploads that
+    // no schedule will ever reference and nothing will ever release.
+    const markFilesUsed = jest.fn(async () => undefined);
+    const deps = makeCreateDeps({
+      isUserDeleting: jest.fn(async () => false),
+      markFilesUsed,
+      getLimits: async () => ({
+        enabled: true,
+        maxPerUser: 10,
+        minIntervalMinutes: 100_000,
+        autoDisableAfterFailures: 5,
+        admissionConcurrency: 20,
+        fireConcurrency: 5,
+        mcpPreflightConcurrency: 3,
+        mcpPreflightTimeoutMs: 300_000,
+        requireProject: false,
+      }),
+    });
+    const { res, captured } = makeRes();
+    const req = {
+      body: { ...CREATE_BODY, file_ids: ['file-1'] },
+      user: { id: 'user-1', tenantId: 't1', role: 'USER' },
+    } as unknown as ServerRequest;
+
+    await createSchedulesHandlers(deps).createSchedule(req, res);
+
+    expect(captured.status).toBe(400);
+    expect(markFilesUsed).not.toHaveBeenCalled();
+  });
+
+  it('accepts a recurring expression that clears the floor', async () => {
+    // The default deps raise the account-deletion barrier on the post-insert
+    // re-check; this case is about the cadence, so keep that barrier down.
+    const deps = makeCreateDeps({ isUserDeleting: jest.fn(async () => false) });
+    (deps.methods.armSchedule as jest.Mock).mockResolvedValue(true);
+    // The response re-reads the row it just armed, so it has to exist to be returned.
+    (deps.methods.getScheduleById as jest.Mock).mockResolvedValue({
+      id: 'sched-1',
+      cadence: { frequency: 'cron', expression: '0 9 * * 1-5' },
+      timezone: 'America/New_York',
+      enabled: true,
+    });
+    const { res, captured } = makeRes();
+    const req = {
+      body: { ...CREATE_BODY, cadence: { frequency: 'cron', expression: '0 9 * * 1-5' } },
+      user: { id: 'user-1', tenantId: 't1', role: 'USER' },
+    } as unknown as ServerRequest;
+
+    await createSchedulesHandlers(deps).createSchedule(req, res);
+
+    expect(captured.status).toBe(201);
+    expect(deps.methods.armSchedule).toHaveBeenCalled();
   });
 });
 
@@ -586,6 +777,80 @@ describe('deferred deletion retry', () => {
   });
 });
 
+describe('in-flight run projection', () => {
+  const schedule = { id: 'sched-1', user: 'user-1', name: 'Digest' } as unknown as ISchedule;
+  const run = (over: Partial<IScheduleRun>): IScheduleRun =>
+    ({
+      scheduleId: 'sched-1',
+      user: 'user-1',
+      scheduledFor: new Date('2026-09-06T09:00:00Z'),
+      status: 'started',
+      ...over,
+    }) as unknown as IScheduleRun;
+  type Wire = { inFlight?: Array<{ conversationId: string }> };
+
+  async function listWith(runs: IScheduleRun[], schedules: ISchedule[] = [schedule]) {
+    const deps = makeCreateDeps();
+    (deps.methods.getSchedulesByUser as jest.Mock) = jest.fn(async () => schedules);
+    (deps.methods.getActiveRunsForUser as jest.Mock) = jest.fn(async () => runs);
+    (deps.methods.getDeletingScheduleIds as jest.Mock) = jest.fn(async () => []);
+    const { res, captured } = makeRes();
+    await createSchedulesHandlers(deps).listSchedules(
+      { user: { id: 'user-1' } } as unknown as ServerRequest,
+      res,
+    );
+    return { deps, schedules: (captured.body as { schedules: Wire[] }).schedules };
+  }
+
+  it('names the chat a generating occurrence is producing', async () => {
+    const { schedules } = await listWith([run({ conversationId: 'convo-1' })]);
+    expect(schedules[0].inFlight).toEqual([{ conversationId: 'convo-1' }]);
+  });
+
+  it('asks only for generating occurrences, never the parked ones', async () => {
+    // Indexed by status rather than user, and `requires_action` rows accumulate for
+    // as long as approvals wait; `started` rows are bounded by the capacity slots.
+    const { deps } = await listWith([]);
+    expect(deps.methods.getActiveRunsForUser).toHaveBeenCalledWith('user-1', ['started']);
+  });
+
+  it('projects nothing for a reservation that has not been dispatched', async () => {
+    const { schedules } = await listWith([run({})]);
+    expect(schedules[0].inFlight).toBeUndefined();
+  });
+
+  it('projects nothing when no occurrence is generating', async () => {
+    const { schedules } = await listWith([]);
+    expect(schedules[0].inFlight).toBeUndefined();
+  });
+
+  it('files each occurrence under its own schedule', async () => {
+    const { schedules } = await listWith(
+      [run({ conversationId: 'convo-2', scheduleId: 'sched-2' })],
+      [schedule, { ...schedule, id: 'sched-2' }],
+    );
+    expect(schedules[0].inFlight).toBeUndefined();
+    expect(schedules[1].inFlight).toEqual([{ conversationId: 'convo-2' }]);
+  });
+
+  it('scopes the single-schedule read to the caller before ownership is known', async () => {
+    const deps = makeCreateDeps();
+    (deps.methods.getScheduleById as jest.Mock) = jest.fn(async () => schedule);
+    (deps.methods.getActiveRunsForUser as jest.Mock) = jest.fn(async () => [
+      run({ conversationId: 'mine' }),
+      run({ conversationId: 'other-schedule', scheduleId: 'sched-9' }),
+    ]);
+    const { res, captured } = makeRes();
+    await createSchedulesHandlers(deps).getSchedule(
+      { params: { id: 'sched-1' }, user: { id: 'user-1' } } as unknown as ServerRequest,
+      res,
+    );
+    expect(deps.methods.getActiveRunsForUser).toHaveBeenCalledWith('user-1', ['started']);
+    expect(deps.methods.getActiveRunsForSchedule).not.toHaveBeenCalled();
+    expect((captured.body as Wire).inFlight).toEqual([{ conversationId: 'mine' }]);
+  });
+});
+
 describe('deleteSchedule result mapping', () => {
   function makeDeleteReq(): ServerRequest {
     return {
@@ -765,6 +1030,117 @@ describe('attachment id deduplication', () => {
   });
 });
 
+describe('updateSchedule cadence timezone resolution', () => {
+  const nyRow = (enabled: boolean) =>
+    ({
+      id: 'sched-1',
+      enabled,
+      agent_id: 'agent-1',
+      cadence: { frequency: 'daily', hour: 8, minute: 0 },
+      timezone: 'America/New_York',
+      configRevision: 1,
+    }) as unknown as ISchedule;
+
+  const patchCadence = () =>
+    ({
+      params: { id: 'sched-1' },
+      body: { cadence: { frequency: 'cron', expression: '0 0,12 * * *' } },
+      user: { id: 'user-1', tenantId: 't1', role: 'USER' },
+    }) as unknown as ServerRequest;
+
+  it('measures a cadence-only PATCH against the STORED timezone', async () => {
+    // The payload carries no timezone, so validation used undefined (i.e. UTC) and
+    // read the nominal 720-minute gap, while the schedule actually runs in New York
+    // where spring-forward compresses it to 660. The row stays disabled, so the later
+    // effective-cadence check never runs and nothing else catches it.
+    const deps = makeCreateDeps({
+      isUserDeleting: jest.fn(async () => false),
+      getLimits: async () => ({
+        enabled: true,
+        maxPerUser: 10,
+        minIntervalMinutes: 700,
+        autoDisableAfterFailures: 5,
+        admissionConcurrency: 20,
+        fireConcurrency: 5,
+        mcpPreflightConcurrency: 3,
+        mcpPreflightTimeoutMs: 300_000,
+        requireProject: false,
+      }),
+    });
+    (deps.methods.getScheduleById as jest.Mock).mockResolvedValue(nyRow(false));
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).updateSchedule(patchCadence(), res);
+
+    expect(captured.status).toBe(400);
+    expect(deps.methods.updateScheduleById).not.toHaveBeenCalled();
+  });
+
+  it('measures a timezone-ONLY patch against the floor, even while disabled', async () => {
+    // Timing is the cadence and the zone it is read in. Checking only a submitted
+    // CADENCE let a disabled row be retimed into a zone where its gap violates the
+    // floor: accepted with 200, then refused later at enable.
+    const deps = makeCreateDeps({
+      isUserDeleting: jest.fn(async () => false),
+      getLimits: async () => ({
+        enabled: true,
+        maxPerUser: 10,
+        minIntervalMinutes: 700,
+        autoDisableAfterFailures: 5,
+        admissionConcurrency: 20,
+        fireConcurrency: 5,
+        mcpPreflightConcurrency: 3,
+        mcpPreflightTimeoutMs: 300_000,
+        requireProject: false,
+      }),
+    });
+    (deps.methods.getScheduleById as jest.Mock).mockResolvedValue({
+      ...nyRow(false),
+      cadence: { frequency: 'cron', expression: '0 0,12 * * *' },
+      timezone: 'UTC',
+    } as unknown as ISchedule);
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).updateSchedule(
+      {
+        params: { id: 'sched-1' },
+        body: { timezone: 'America/New_York' },
+        user: { id: 'user-1', tenantId: 't1', role: 'USER' },
+      } as unknown as ServerRequest,
+      res,
+    );
+
+    expect(captured.status).toBe(400);
+    expect(deps.methods.updateScheduleById).not.toHaveBeenCalled();
+  });
+
+  it('accepts the same PATCH where the stored zone does not compress it', async () => {
+    const deps = makeCreateDeps({
+      isUserDeleting: jest.fn(async () => false),
+      getLimits: async () => ({
+        enabled: true,
+        maxPerUser: 10,
+        minIntervalMinutes: 700,
+        autoDisableAfterFailures: 5,
+        admissionConcurrency: 20,
+        fireConcurrency: 5,
+        mcpPreflightConcurrency: 3,
+        mcpPreflightTimeoutMs: 300_000,
+        requireProject: false,
+      }),
+    });
+    (deps.methods.getScheduleById as jest.Mock).mockResolvedValue({
+      ...nyRow(false),
+      timezone: 'UTC',
+    } as unknown as ISchedule);
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).updateSchedule(patchCadence(), res);
+
+    expect(captured.status ?? 200).toBe(200);
+  });
+});
+
 describe('updateSchedule re-enable attachment revalidation', () => {
   const disabledWithFiles = () =>
     ({
@@ -814,8 +1190,39 @@ describe('updateSchedule re-enable attachment revalidation', () => {
     await createSchedulesHandlers(deps).updateSchedule(makeReEnableReq(), res);
 
     expect(markFilesUsed).toHaveBeenCalledWith(['file-a', 'file-b'], 'user-1');
+    expect(deps.preflightMCP).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ id: 'user-1', tenantId: 't1' }),
+      expect.objectContaining({ scheduleId: 'sched-1' }),
+    );
     expect(captured.status ?? 200).toBe(200);
     expect(deps.methods.updateScheduleById).toHaveBeenCalled();
+  });
+
+  it('preserves run history when re-enable preflight succeeds', async () => {
+    const deps = makeCreateDeps({ isUserDeleting: async () => false });
+    jest.mocked(deps.methods.getScheduleById).mockResolvedValue({
+      ...disabledWithFiles(),
+      file_ids: [],
+      lastRun: {
+        status: 'error',
+        firedAt: new Date(),
+        error: 'mcp_reauth_required: [{"server":"Notion","status":"mcp_reauth_required"}]',
+      },
+    } as ISchedule);
+    const { res } = makeRes();
+
+    await createSchedulesHandlers(deps).updateSchedule(makeReEnableReq(), res);
+
+    expect(deps.methods.updateScheduleById).toHaveBeenCalledWith(
+      'sched-1',
+      'user-1',
+      expect.objectContaining({ enabled: true }),
+      expect.objectContaining({ disabledReason: 1 }),
+      expect.any(Object),
+    );
+    const [, , , unset] = jest.mocked(deps.methods.updateScheduleById).mock.calls[0];
+    expect(unset).not.toHaveProperty('lastRun');
   });
 
   it('skips the stored-attachment recheck when the edit replaces file_ids', async () => {
@@ -855,4 +1262,229 @@ describe('late-create compensation with a live manual run', () => {
     expect(deps.methods.markScheduleDeleting).not.toHaveBeenCalled();
     expect(captured.status).toBe(410);
   });
+});
+
+describe('unattended MCP admission', () => {
+  it('does not treat a consumed request stream as a client disconnect', async () => {
+    const deps = makeCreateDeps({ isUserDeleting: async () => false });
+    const req = Object.assign(makeCreateReq(), { destroyed: true });
+    (req as unknown as { body: Record<string, unknown> }).body = {
+      ...(req.body as unknown as Record<string, unknown>),
+      enabled: false,
+    };
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).createSchedule(req, res);
+
+    expect(captured.status).toBe(201);
+    expect(deps.preflightMCP).not.toHaveBeenCalled();
+    expect(deps.methods.createScheduleWithSlot).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'mcp_reauth_required',
+    'mcp_configuration_missing',
+    'mcp_permission_denied',
+    'mcp_unavailable',
+  ] as const)('refuses create before persisting when preflight reports %s', async (status) => {
+    const deps = makeCreateDeps({
+      preflightMCP: async () => {
+        throw new ScheduleMCPError([{ server: 'Notion', status }]);
+      },
+    });
+    const { res, captured } = makeRes();
+    await createSchedulesHandlers(deps).createSchedule(makeCreateReq(), res);
+    expect(captured.status).toBe(status === 'mcp_unavailable' ? 503 : 400);
+    expect(captured.body).toMatchObject({ code: status, mcp: [{ server: 'Notion', status }] });
+    expect(deps.methods.createScheduleWithSlot).not.toHaveBeenCalled();
+  });
+
+  it('cancels MCP preflight and does not persist after the request closes', async () => {
+    let markStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const deps = makeCreateDeps({
+      preflightMCP: async (_agentId, _user, options) =>
+        new Promise((_resolve, reject) => {
+          markStarted();
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+            once: true,
+          });
+        }),
+    });
+    const { res, captured } = makeRes();
+    const pending = createSchedulesHandlers(deps).createSchedule(makeCreateReq(), res);
+    await started;
+
+    (res as unknown as { emit: (event: string) => void }).emit('close');
+    await pending;
+
+    expect(captured.body).toBeUndefined();
+    expect(deps.methods.createScheduleWithSlot).not.toHaveBeenCalled();
+  });
+
+  it('observes a disconnect that occurs during the first awaited admission read', async () => {
+    let release: () => void = () => undefined;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const preflightMCP = jest.fn(async () => []);
+    const deps = makeCreateDeps({
+      isUserDeleting: async () => {
+        await blocked;
+        return false;
+      },
+      preflightMCP,
+    });
+    const { res, captured } = makeRes();
+    const pending = createSchedulesHandlers(deps).createSchedule(makeCreateReq(), res);
+
+    (res as unknown as { emit: (event: string) => void }).emit('close');
+    release();
+    await pending;
+
+    expect(captured.body).toBeUndefined();
+    expect(deps.methods.createScheduleWithSlot).not.toHaveBeenCalled();
+  });
+});
+
+describe('Run Now MCP failures', () => {
+  it.each([
+    ['mcp_unavailable', 503],
+    ['mcp_reauth_required', 400],
+    ['mcp_configuration_missing', 400],
+    ['mcp_permission_denied', 400],
+  ] as const)('returns the correct status for %s', async (mcpStatus, expectedStatus) => {
+    const deps = makeCreateDeps({
+      isUserDeleting: async () => false,
+      fireNow: async () => ({
+        fired: false,
+        error: 'MCP preflight failed',
+        mcp: [
+          { server: 'Ready', status: 'ready' },
+          { server: 'Blocked', status: mcpStatus },
+        ],
+      }),
+    });
+    jest.mocked(deps.methods.getScheduleById).mockResolvedValue(fullScheduleDoc());
+    const req = makeCreateReq();
+    req.params = { id: 'sched-1' };
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).runScheduleNow(req, res);
+
+    expect(captured.status).toBe(expectedStatus);
+    expect(captured.body).toMatchObject({ code: mcpStatus });
+  });
+
+  it.each([
+    [
+      [
+        { server: 'OAuth', status: 'mcp_reauth_required' as const },
+        { server: 'Config', status: 'mcp_configuration_missing' as const },
+      ],
+      'mcp_configuration_missing',
+    ],
+    [
+      [
+        { server: 'OAuth', status: 'mcp_reauth_required' as const },
+        { server: 'Config', status: 'mcp_configuration_missing' as const },
+        { server: 'Policy', status: 'mcp_permission_denied' as const },
+      ],
+      'mcp_permission_denied',
+    ],
+  ])('uses shared failure precedence for mixed outcomes: %j', async (mcp, expectedCode) => {
+    const deps = makeCreateDeps({
+      isUserDeleting: async () => false,
+      fireNow: async () => ({ fired: false, error: 'MCP preflight failed', mcp }),
+    });
+    jest.mocked(deps.methods.getScheduleById).mockResolvedValue(fullScheduleDoc());
+    const req = makeCreateReq();
+    req.params = { id: 'sched-1' };
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).runScheduleNow(req, res);
+
+    expect(captured.status).toBe(400);
+    expect(captured.body).toMatchObject({ code: expectedCode });
+  });
+
+  it('returns service unavailable when MCP infrastructure preflight fails', async () => {
+    const deps = makeCreateDeps({
+      isUserDeleting: async () => false,
+      fireNow: async () => ({
+        fired: false,
+        error: 'MCP preflight unavailable',
+        mcpPreflightUnavailable: true,
+      }),
+    });
+    jest.mocked(deps.methods.getScheduleById).mockResolvedValue(fullScheduleDoc());
+    const req = makeCreateReq();
+    req.params = { id: 'sched-1' };
+    const { res, captured } = makeRes();
+
+    await createSchedulesHandlers(deps).runScheduleNow(req, res);
+
+    expect(captured.status).toBe(503);
+    expect(captured.body).toMatchObject({
+      code: 'mcp_unavailable',
+      error: 'MCP preflight unavailable',
+    });
+  });
+});
+
+it.each([{ enabled: true }, { prompt: 'Updated prompt' }, { agent_id: 'replacement' }])(
+  'rechecks effective MCP configuration for edits and enable: %j',
+  async (body) => {
+    const deps = makeCreateDeps({
+      isUserDeleting: async () => false,
+      preflightMCP: async () => {
+        throw new ScheduleMCPError([{ server: 'Notion', status: 'mcp_reauth_required' }]);
+      },
+    });
+    jest.mocked(deps.methods.getScheduleById).mockResolvedValue(fullScheduleDoc());
+    const req = makeCreateReq();
+    req.params = { id: 'sched-1' };
+    Object.assign(req, { body });
+    const { res, captured } = makeRes();
+    await createSchedulesHandlers(deps).updateSchedule(req, res);
+    expect(captured.status).toBe(400);
+    expect(deps.methods.updateScheduleById).not.toHaveBeenCalled();
+  },
+);
+
+it('allows pausing even when MCP preflight would fail', async () => {
+  const preflightMCP = jest.fn(async () => {
+    throw new Error('unavailable');
+  });
+  const deps = makeCreateDeps({ isUserDeleting: async () => false, preflightMCP });
+  jest.mocked(deps.methods.getScheduleById).mockResolvedValue(fullScheduleDoc());
+  const req = makeCreateReq();
+  req.params = { id: 'sched-1' };
+  Object.assign(req, { body: { enabled: false } });
+  const { res } = makeRes();
+  await createSchedulesHandlers(deps).updateSchedule(req, res);
+  expect(preflightMCP).not.toHaveBeenCalled();
+  expect(deps.methods.updateScheduleById).toHaveBeenCalled();
+});
+
+it('allows repointing a disabled schedule without MCP preflight', async () => {
+  const preflightMCP = jest.fn(async () => {
+    throw new Error('unavailable');
+  });
+  const deps = makeCreateDeps({ isUserDeleting: async () => false, preflightMCP });
+  jest
+    .mocked(deps.methods.getScheduleById)
+    .mockResolvedValue(fullScheduleDoc({ enabled: false, nextRunAt: undefined }));
+  const req = makeCreateReq();
+  req.params = { id: 'sched-1' };
+  Object.assign(req, { body: { agent_id: 'replacement' } });
+  const { res, captured } = makeRes();
+
+  await createSchedulesHandlers(deps).updateSchedule(req, res);
+
+  expect(captured.status ?? 200).toBe(200);
+  expect(preflightMCP).not.toHaveBeenCalled();
+  expect(deps.methods.updateScheduleById).toHaveBeenCalled();
 });

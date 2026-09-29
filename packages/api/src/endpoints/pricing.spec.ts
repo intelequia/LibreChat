@@ -2,8 +2,8 @@ import mongoose from 'mongoose';
 import { EModelEndpoint } from 'librechat-data-provider';
 import { createTxMethods } from '@librechat/data-schemas';
 import type { EndpointTokenConfig } from '~/types';
+import { buildPricingCatalog, buildTokenConfigMap } from './pricing';
 import { matchModelName, findMatchingPattern } from '~/utils';
-import { buildTokenConfigMap } from './pricing';
 
 /** Adapters: TxDeps types are looser than the utils signatures (string endpoint, undefined miss) */
 const { getValueKey, getMultiplier, getCacheMultiplier } = createTxMethods(mongoose, {
@@ -12,6 +12,41 @@ const { getValueKey, getMultiplier, getCacheMultiplier } = createTxMethods(mongo
 });
 
 const deps = { getValueKey, getMultiplier, getCacheMultiplier };
+
+describe('buildPricingCatalog', () => {
+  it('returns LibreChat base, cache, premium and fallback rates per million tokens', () => {
+    const catalog = buildPricingCatalog();
+    const gpt4o = catalog.find((entry) => entry.key === 'gpt-4o');
+    const gpt54 = catalog.find((entry) => entry.key === 'gpt-5.4');
+    const fallback = catalog.find((entry) => entry.isDefaultRate);
+
+    expect(catalog.length).toBeGreaterThan(100);
+    expect(gpt4o).toMatchObject({
+      prompt: 2.5,
+      completion: 10,
+      cacheRead: 1.25,
+      cacheWrite: 2.5,
+      isDefaultRate: false,
+    });
+    expect(gpt54).toMatchObject({
+      prompt: 2.5,
+      completion: 15,
+      cacheRead: 0.25,
+      cacheWrite: 2.5,
+      premiumThreshold: 272000,
+      premiumPrompt: 5,
+      premiumCompletion: 22.5,
+      premiumCacheRead: 0.5,
+      premiumCacheWrite: 5,
+    });
+    expect(fallback).toMatchObject({
+      key: 'default',
+      prompt: 6,
+      completion: 6,
+      isDefaultRate: true,
+    });
+  });
+});
 
 describe('buildTokenConfigMap', () => {
   it('resolves context windows without pricing by default', () => {

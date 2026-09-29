@@ -8,7 +8,7 @@ import type { IJobStore, IJobStoreV2 } from './interfaces/IJobStore';
  * while rejecting an implementation that cannot provide the atomic guarantees
  * required by the current generation manager.
  */
-export const JOB_STORE_V2_REQUIRED_METHODS = [
+export const JOB_STORE_V2_REQUIRED_METHODS: readonly [
   'acknowledgeReplacedJobs',
   'markProviderExecutionDrained',
   'beginProviderExecution',
@@ -22,6 +22,7 @@ export const JOB_STORE_V2_REQUIRED_METHODS = [
   'enqueueSteerWithReceipt',
   'getSteerReceipt',
   'restoreClaimedSteers',
+  'admitTerminalSteers',
   'peekClaimedSteers',
   'armSteer',
   'armSteerVersioned',
@@ -29,6 +30,40 @@ export const JOB_STORE_V2_REQUIRED_METHODS = [
   'claimParkedSteersDetailed',
   'consumeParkedSteer',
   'discardSteerLeftover',
+  'settleEarlyBufferRecovery',
+  'finalizeEarlyBufferOverflow',
+  'hasSubscriberAttached',
+  'claimFirstSubscriber',
+  'detachSubscriber',
+  'hasActiveSubscriber',
+] = [
+  'acknowledgeReplacedJobs',
+  'markProviderExecutionDrained',
+  'beginProviderExecution',
+  'getCleanupBlockingJobIdsByUser',
+  'finalizeTerminalPersistence',
+  'transitionStatusAndDrainSteers',
+  'takeoverIdempotencyKey',
+  'markIdempotencyKeyStarted',
+  'adoptIdempotencyKeyForJob',
+  'enqueueSteerVersioned',
+  'enqueueSteerWithReceipt',
+  'getSteerReceipt',
+  'restoreClaimedSteers',
+  'admitTerminalSteers',
+  'peekClaimedSteers',
+  'armSteer',
+  'armSteerVersioned',
+  'downgradeSteerPreempts',
+  'claimParkedSteersDetailed',
+  'consumeParkedSteer',
+  'discardSteerLeftover',
+  'settleEarlyBufferRecovery',
+  'finalizeEarlyBufferOverflow',
+  'hasSubscriberAttached',
+  'claimFirstSubscriber',
+  'detachSubscriber',
+  'hasActiveSubscriber',
 ] as const satisfies ReadonlyArray<keyof IJobStoreV2>;
 
 export type JobStoreV2RequiredMethod = (typeof JOB_STORE_V2_REQUIRED_METHODS)[number];

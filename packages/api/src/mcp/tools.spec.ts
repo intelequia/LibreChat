@@ -495,6 +495,49 @@ describe('createMCPToolCacheService', () => {
       });
     });
 
+    it('strips a redundant server-name prefix from keys and records the raw name', async () => {
+      /** `acme_trace..._mcp_acme` carries the server twice and can push the
+       *  model-facing name past provider function-name limits (64). */
+      const deps = createMockDeps();
+      const tools: MCPToolInput[] = [
+        { name: 'acme_trace_top_time_consuming_operations', description: 'Trace' },
+        { name: 'list_services', description: 'List' },
+      ];
+      const result = await createMCPToolCacheService(deps).updateMCPServerTools({
+        userId: 'u1',
+        serverName: 'acme',
+        tools,
+      });
+
+      const strippedKey = toolName('trace_top_time_consuming_operations', 'acme');
+      const plainKey = toolName('list_services', 'acme');
+      expect(Object.keys(result ?? {}).sort()).toEqual([plainKey, strippedKey].sort());
+      expect(result?.[strippedKey]?.['function'].name).toBe(strippedKey);
+      expect(result?.[strippedKey]?.serverToolName).toBe(
+        'acme_trace_top_time_consuming_operations',
+      );
+      expect(result?.[plainKey]?.serverToolName).toBeUndefined();
+    });
+
+    it('keeps the prefixed key when stripping would collide with a sibling tool', async () => {
+      const deps = createMockDeps();
+      const tools: MCPToolInput[] = [
+        { name: 'search', description: 'Plain' },
+        { name: 'acme_search', description: 'Prefixed' },
+      ];
+      const result = await createMCPToolCacheService(deps).updateMCPServerTools({
+        userId: 'u1',
+        serverName: 'acme',
+        tools,
+      });
+
+      const plainKey = toolName('search', 'acme');
+      const prefixedKey = toolName('acme_search', 'acme');
+      expect(Object.keys(result ?? {}).sort()).toEqual([prefixedKey, plainKey].sort());
+      expect(result?.[plainKey]?.serverToolName).toBeUndefined();
+      expect(result?.[prefixedKey]?.serverToolName).toBeUndefined();
+    });
+
     it('builds request-scoped tools without caching them', async () => {
       const deps = createMockDeps({
         getServerConfig: jest.fn().mockResolvedValue(requestScopedConfig),
@@ -506,6 +549,25 @@ describe('createMCPToolCacheService', () => {
       });
 
       expect(result?.[toolName('search', 'body-scoped')]).toBeDefined();
+      expect(deps.setCachedTools).not.toHaveBeenCalled();
+      expect(deps.setCachedAppServerTools).not.toHaveBeenCalled();
+    });
+
+    it('builds explicitly ephemeral tools without requiring a cache generation', async () => {
+      const deps = createMockDeps({
+        getServerConfig: jest.fn().mockResolvedValue(cacheableConfig),
+        setCachedToolsIfCurrent: jest.fn().mockResolvedValue(true),
+      });
+      const result = await createMCPToolCacheService(deps).updateMCPServerTools({
+        userId: 'u1',
+        serverName: 'dynamic-auth',
+        tools: [{ name: 'get_customer_account' }],
+        serverConfig: cacheableConfig,
+        ephemeralConnection: true,
+      });
+
+      expect(result?.[toolName('get_customer_account', 'dynamic-auth')]).toBeDefined();
+      expect(deps.setCachedToolsIfCurrent).not.toHaveBeenCalled();
       expect(deps.setCachedTools).not.toHaveBeenCalled();
       expect(deps.setCachedAppServerTools).not.toHaveBeenCalled();
     });

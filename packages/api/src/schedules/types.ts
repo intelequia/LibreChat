@@ -4,6 +4,7 @@ import type {
   AgentTriggerDeliveryStatus,
   AgentTriggerDeliveryFailure,
 } from '@librechat/data-schemas';
+import type { ScheduleMCPOutcome } from 'librechat-data-provider';
 import type { Types } from 'mongoose';
 import type { AgentTriggerEnqueueOptions, AgentTriggerEnvelope } from '../agents/triggers';
 import type { SlotClaimResult } from './capacity';
@@ -14,7 +15,20 @@ export interface ScheduleLimits {
   maxPerUser: number;
   minIntervalMinutes: number;
   autoDisableAfterFailures: number;
+  /** Maximum claimed occurrences concurrently passing readiness admission per replica. */
+  admissionConcurrency: number;
   fireConcurrency: number;
+  /** Maximum MCP readiness probes active during one schedule admission. */
+  mcpPreflightConcurrency: number;
+  /** Maximum wall-clock time for one unattended MCP readiness admission. */
+  mcpPreflightTimeoutMs: number;
+  /** Every schedule must be filed under a chat project. A pinned `projectId`
+   *  implies this, so callers only ever have to read one flag. */
+  requireProject: boolean;
+  /** Operator-pinned destination project. When set it OVERRIDES whatever the row
+   *  stores, at write time and at fire time alike — the pin is a policy about where
+   *  scheduled runs land, and a stored id from before the pin must not outrank it. */
+  projectId?: string;
 }
 
 export const DEFAULT_SCHEDULE_LIMITS: ScheduleLimits = {
@@ -22,8 +36,26 @@ export const DEFAULT_SCHEDULE_LIMITS: ScheduleLimits = {
   maxPerUser: 10,
   minIntervalMinutes: 60,
   autoDisableAfterFailures: 5,
+  admissionConcurrency: 20,
   fireConcurrency: 5,
+  mcpPreflightConcurrency: 3,
+  mcpPreflightTimeoutMs: 5 * 60_000,
+  requireProject: false,
 };
+
+/**
+ * The project a schedule's runs must land in under the CURRENT policy: an operator
+ * pin outranks the stored choice, otherwise the owner's own selection stands.
+ * Single source of truth for the write handlers, the fire path, and the wire
+ * projection, so the form, the precheck, and the dispatched conversation can never
+ * disagree about the destination.
+ */
+export function resolveScheduleProjectId(
+  limits: Pick<ScheduleLimits, 'projectId'>,
+  stored?: string | null,
+): string | undefined {
+  return limits.projectId ?? stored ?? undefined;
+}
 
 export interface ScheduleUserContext {
   id: string;
@@ -148,6 +180,7 @@ export interface ScheduleFileRef {
 }
 
 export interface ScheduleEngineDeps {
+  preflightMCP: ScheduleMCPPreflight;
   methods: ScheduleMethods;
   /** Resolves interface.schedules limits, per-principal when a user is given. */
   getLimits: (user?: ScheduleUserContext) => Promise<ScheduleLimits>;
@@ -160,6 +193,13 @@ export interface ScheduleEngineDeps {
     agentId: string,
     user: ScheduleUserContext,
   ) => Promise<'ok' | 'missing' | 'forbidden'>;
+  /**
+   * Whether the owner still owns the schedule's destination chat project. Projects
+   * are user-owned, so 'missing' covers both deletion and a pinned id belonging to
+   * someone else — the fire path treats them identically because the observable
+   * outcome is the same: the conversation would be filed nowhere.
+   */
+  projectAccess: (projectId: string, user: ScheduleUserContext) => Promise<'ok' | 'missing'>;
   /** Whether the owning user's current role still grants SCHEDULES access. */
   hasScheduleAccess: (user: ScheduleUserContext) => Promise<boolean>;
   /** Re-resolves stored file_ids to attachment payloads; missing files are simply absent. */
@@ -171,8 +211,8 @@ export interface ScheduleEngineDeps {
   ) => Promise<unknown>;
   /**
    * Reads the durable trigger delivery for a reservation's `deliveryKey`, so
-   * reconciliation can tell a still-live admission (`staging`/`pending`/`leased`, which a
-   * `Retry-After` can defer up to 24h) or a dead-letter (`dead`, with its `lastError`)
+   * reconciliation can tell a still-live admission (`staging`/`batched`/`pending`/`leased`, which
+   * a `Retry-After` can defer up to 24h) or a dead-letter (`dead`, with its `lastError`)
    * apart from a genuinely orphaned jobless run. Null when no delivery record exists.
    */
   getTriggerDelivery: (deliveryKey: string) => Promise<{
@@ -246,6 +286,7 @@ export interface JobIdentity {
 /** Job-store state plus the job's scheduled identity (absent on a replacement turn). */
 export interface JobState {
   status: string;
+  checkpointNamespace?: string;
   createdAt?: number;
   scheduleId?: string;
   scheduledFor?: string;
@@ -262,6 +303,8 @@ export interface JobState {
 }
 
 export interface FireResult {
+  mcp?: ScheduleMCPOutcome[];
+  mcpPreflightUnavailable?: boolean;
   fired: boolean;
   conversationId?: string;
   skipped?:
@@ -274,9 +317,17 @@ export interface FireResult {
     | 'user_missing'
     | 'user_deleting'
     | 'permission_revoked'
+    | 'project_deleted'
+    | 'project_required'
     | 'rate_limited'
     | 'disabled';
   error?: string;
 }
 
 export type FireableSchedule = ISchedule;
+
+export type ScheduleMCPPreflight = (
+  agentId: string,
+  user: ScheduleUserContext,
+  options: { concurrency: number; signal?: AbortSignal; deadlineMs?: number; scheduleId?: string },
+) => Promise<ScheduleMCPOutcome[]>;

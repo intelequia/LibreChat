@@ -12,6 +12,30 @@ describe('loadDefaultInterface', () => {
     expect(interfaceConfig?.autoSubmitFromUrl).toBe(true);
   });
 
+  it('uses the schema default for code highlight throttling when not configured', async () => {
+    const interfaceConfig = await loadDefaultInterface({
+      config: {},
+      configDefaults: getConfigDefaults(),
+    });
+
+    expect(interfaceConfig?.codeHighlightThrottleMs).toBe(300);
+  });
+
+  it('preserves a configured code highlight throttle interval', async () => {
+    const config: Partial<TCustomConfig> = {
+      interface: {
+        codeHighlightThrottleMs: 100,
+      },
+    };
+
+    const interfaceConfig = await loadDefaultInterface({
+      config,
+      configDefaults: getConfigDefaults(),
+    });
+
+    expect(interfaceConfig?.codeHighlightThrottleMs).toBe(100);
+  });
+
   it('preserves disabled URL auto-submit config', async () => {
     const config: Partial<TCustomConfig> = {
       interface: {
@@ -64,6 +88,30 @@ describe('loadDefaultInterface', () => {
     });
 
     expect(interfaceConfig?.buildInfo).toBe(true);
+  });
+
+  it('enables response feedback by default', async () => {
+    const interfaceConfig = await loadDefaultInterface({
+      config: {},
+      configDefaults: getConfigDefaults(),
+    });
+
+    expect(interfaceConfig?.feedback).toBe(true);
+  });
+
+  it('preserves a disabled response feedback flag', async () => {
+    const config: Partial<TCustomConfig> = {
+      interface: {
+        feedback: false,
+      },
+    };
+
+    const interfaceConfig = await loadDefaultInterface({
+      config,
+      configDefaults: getConfigDefaults(),
+    });
+
+    expect(interfaceConfig?.feedback).toBe(false);
   });
 
   it('disables context cost by default', async () => {
@@ -144,10 +192,11 @@ describe('loadDefaultInterface', () => {
     expect(interfaceConfig?.autoSubmitFromUrl).toBe(true);
   });
 
-  it('preserves the configured temporary chat retention period', async () => {
+  it('preserves the configured chat retention periods', async () => {
     const config: Partial<TCustomConfig> = {
       interface: {
         temporaryChatRetention: 24,
+        generalChatRetention: 2160,
       },
     };
 
@@ -157,6 +206,7 @@ describe('loadDefaultInterface', () => {
     });
 
     expect(interfaceConfig?.temporaryChatRetention).toBe(24);
+    expect(interfaceConfig?.generalChatRetention).toBe(2160);
   });
 
   it('omits temporary chat retention when it is not explicitly configured', async () => {
@@ -166,6 +216,7 @@ describe('loadDefaultInterface', () => {
     });
 
     expect(interfaceConfig).not.toHaveProperty('temporaryChatRetention');
+    expect(interfaceConfig).not.toHaveProperty('generalChatRetention');
   });
 
   it('preserves the configured agent file retention exemption', async () => {
@@ -207,5 +258,24 @@ describe('loadDefaultInterface', () => {
     });
 
     expect(interfaceConfig).not.toHaveProperty('defaultPinnedTools');
+  });
+
+  it('passes the trace viewer section through unchanged', async () => {
+    const traceViewer = { enabled: true, showInputOutput: false, maxRecords: 200 };
+    const interfaceConfig = await loadDefaultInterface({
+      config: { interface: { traceViewer } },
+      configDefaults: getConfigDefaults(),
+    });
+
+    expect(interfaceConfig?.traceViewer).toEqual(traceViewer);
+  });
+
+  it('leaves the trace viewer unset when not configured', async () => {
+    const interfaceConfig = await loadDefaultInterface({
+      config: {},
+      configDefaults: getConfigDefaults(),
+    });
+
+    expect(interfaceConfig?.traceViewer).toBeUndefined();
   });
 });

@@ -19,6 +19,7 @@ import logger from '~/config/winston';
  */
 export const defaultVertexModels: string[] = [
   'claude-opus-5',
+  'claude-opus-5-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
@@ -191,8 +192,7 @@ export function validateVertexConfig(
  */
 export function vertexConfigSetup(config: Partial<TCustomConfig>): TVertexAIConfig | null {
   const anthropicConfig = config.endpoints?.[EModelEndpoint.anthropic] as
-    | TAnthropicEndpoint
-    | undefined;
+    TAnthropicEndpoint | undefined;
 
   if (!anthropicConfig?.vertex) {
     return null;

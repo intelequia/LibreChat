@@ -29,10 +29,17 @@ const scheduleRunSchema: Schema<IScheduleRunDocument> = new Schema(
     conversationId: {
       type: String,
     },
+    checkpointNamespace: {
+      type: String,
+      select: false,
+    },
     /** Deterministic durable-trigger delivery key for this occurrence, stamped at
      *  reservation before enqueue so reconciliation can read the delivery's live/dead
      *  state rather than orphan-settling a deferred or dead-lettered run. */
     deliveryKey: {
+      type: String,
+    },
+    chatProjectId: {
       type: String,
     },
     /** Fresh while a RESUME of this paused run is mid-flight; a re-pause hand-off's
@@ -58,6 +65,27 @@ const scheduleRunSchema: Schema<IScheduleRunDocument> = new Schema(
       type: String,
       maxlength: 2048,
     },
+    mcp: {
+      type: [
+        {
+          _id: false,
+          server: { type: String, required: true },
+          agentId: { type: String },
+          status: {
+            type: String,
+            required: true,
+            enum: [
+              'ready',
+              'mcp_reauth_required',
+              'mcp_configuration_missing',
+              'mcp_permission_denied',
+              'mcp_unavailable',
+            ],
+          },
+        },
+      ],
+      default: undefined,
+    },
     droppedFileIds: {
       type: [String],
       default: undefined,
@@ -81,6 +109,11 @@ const scheduleRunSchema: Schema<IScheduleRunDocument> = new Schema(
       type: Number,
       min: 0,
     },
+    /** Marks a transient started row that exists only to settle an admission failure.
+     * It never owns generation capacity, including if settlement must be reconciled. */
+    admissionOnly: {
+      type: Boolean,
+    },
     /** When an abort was requested. The run keeps holding its capacity slot until the
      *  generation owner confirms settlement, so capacity is never freed early. */
     abortRequestedAt: {
@@ -96,8 +129,8 @@ const scheduleRunSchema: Schema<IScheduleRunDocument> = new Schema(
     abortPersistedAt: {
       type: Date,
     },
-    /** When reconciliation last examined this row. Orders the paused window so a full
-     *  batch of still-live pauses cannot starve an abandoned row behind them. */
+    /** When reconciliation last examined this row. Rotates each bounded non-terminal
+     *  window so a full batch of live runs cannot starve an abandoned row behind it. */
     reconciledAt: {
       type: Date,
     },
@@ -147,8 +180,8 @@ scheduleRunSchema.index({ scheduleId: 1, firedAt: -1 });
 // Reconciliation sweeps by status; keeps `started` (capacity) fetch cheap and
 // prevents long-lived `requires_action` rows from starving the scan.
 scheduleRunSchema.index({ status: 1, firedAt: 1 });
-// The paused reconciliation window sorts on {reconciledAt, firedAt} within a status;
-// without this the round-robin rotation re-sorts the whole paused set every tick.
+// Non-terminal reconciliation windows sort on {reconciledAt, firedAt} within a status;
+// without this the round-robin rotation re-sorts the whole live set every tick.
 scheduleRunSchema.index({ status: 1, reconciledAt: 1, firedAt: 1 });
 
 export default scheduleRunSchema;

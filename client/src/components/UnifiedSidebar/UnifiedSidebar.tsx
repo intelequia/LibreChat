@@ -1,5 +1,6 @@
 import { useCallback, useState, useEffect, useRef, memo } from 'react';
 import { useForm } from 'react-hook-form';
+import { useMediaQuery } from '@librechat/client';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import type { ChatFormValues } from '~/common';
@@ -8,9 +9,11 @@ import {
   EXPANDED_MIN,
   TRANSITION_MS,
   EASING,
-  SIDEBAR_TRANSITION,
+  MOBILE_DRAWER_TRANSITION,
   DRAWER_Z_INDEX,
   MOBILE_DRAWER_ID,
+  MOBILE_DRAWER_WIDTH,
+  DRAWER_UNPAINTED,
 } from './constants';
 import { ChatContext, ChatFormProvider, ActivePanelProvider } from '~/Providers';
 import { MobileHeader, MobileBottomBar, MobileShortcutTargets } from './mobile';
@@ -43,12 +46,13 @@ function SidebarChatProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function UnifiedSidebar() {
+function UnifiedSidebar({ isSliding = false }: { isSliding?: boolean }) {
   const localize = useLocalize();
   const location = useLocation();
   const navigate = useNavigate();
   const { isSmallScreen, expanded } = useSidebarState();
   const { setSidebarOpen } = useSidebarToggle();
+  const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const [sidebarWidth, setSidebarWidth] = useState(getInitialWidth);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [isResizing, setIsResizing] = useState(false);
@@ -188,10 +192,23 @@ function UnifiedSidebar() {
           /** The close swipe reads horizontal touches here (the drawer holds no
            * horizontal scrollers), while pinch-zoom stays with the browser —
            * this full-viewport surface must not disable zooming entirely. */
-          'fixed inset-y-0 left-0 flex w-full touch-pan-y touch-pinch-zoom flex-col bg-surface-primary-alt',
+          'fixed inset-y-0 left-0 flex touch-pan-y touch-pinch-zoom flex-col bg-surface-primary-alt',
           expanded ? 'translate-x-0' : '-translate-x-full',
         )}
-        style={{ transition: SIDEBAR_TRANSITION, zIndex: DRAWER_Z_INDEX }}
+        style={{
+          width: MOBILE_DRAWER_WIDTH,
+          /** The strip setting changes the width without passing through the
+           *  snap path, so the preference has to reach the declarative style
+           *  too or that one change still animates. */
+          transition: prefersReducedMotion ? undefined : MOBILE_DRAWER_TRANSITION,
+          zIndex: DRAWER_Z_INDEX,
+          /** Why a closed drawer is not painted at all: see DRAWER_UNPAINTED.
+           *  The travel stays painted — `isSliding` covers the frames Recoil's
+           *  deferred flip leaves uncovered at both ends, and a drag claims
+           *  painting inline (see useDrawerSwipe), which hands this value back
+           *  explicitly because React cannot re-assert it on its own. */
+          visibility: expanded || isSliding ? undefined : DRAWER_UNPAINTED,
+        }}
         inert={!expanded ? '' : undefined}
       >
         <SidebarChatProvider>
