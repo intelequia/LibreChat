@@ -1,32 +1,41 @@
 <!doctype html>
 <html lang="en-US">
-
-<head>
-  <meta charset="utf-8" />
-  <base href="/" />
-  <meta name="theme-color" content="#171717" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="description" content="An open source chat application with support for multiple AI models" />
-  <title>Intelewriter</title>
-  <link rel="icon" type="image/x-icon" sizes="32x32" href="assets/favicon-32x32.ico" />
-  <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" />
-  <link rel="apple-touch-icon" href="assets/apple-touch-icon-180x180.png" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
-  <style>
-    html,
-    body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-    }
-  </style>
-  <script>
-    const theme = localStorage.getItem('color-theme');
-    const loadingContainerStyle = document.createElement('style');
-    let backgroundColor;
-
+  <head>
+    <meta charset="utf-8" />
+    <base href="/" />
+    <meta name="theme-color" content="#171717" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="description"
+      content="LibreChat - An open source chat application with support for multiple AI models"
+    />
+    <title>Intelewriter</title>
+    <link rel="icon" type="image/x-icon" sizes="32x32" href="assets/favicon-32x32.ico" />
+    <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon-180x180.png" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+    </style>
+    <script>
+      let theme = null;
+      try {
+        theme = localStorage.getItem('color-theme');
+      } catch (e) {
+        /* Web Storage denied by browser policy: the shell falls back to the system theme. */
+      }
+      const loadingContainerStyle = document.createElement('style');
+      let backgroundColor;
     if (theme === 'high-contrast-dark') {
       backgroundColor = '#000000';
     } else if (theme === 'high-contrast-light') {

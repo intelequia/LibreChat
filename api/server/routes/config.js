@@ -2,20 +2,21 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs').promises;
 const {
-    isEnabled,
-    isLangfuseConnectionAvailable,
-    isLangfuseFanoutEnabled,
-    getBalanceConfig,
-    getCloudFrontConfig,
-    getAppConfigOptionsFromUser,
-    resolveBuildInfo,
-    resolveTitleTiming,
-    sanitizeModelSpecs,
-    excludeHiddenModelSpecs,
-    isFileSnapshotEnabled,
-    getEndpointsDropParamsMap,
-    resolveCodeEnvironmentDecisionVersion,
-    resolveCodeEnvironmentMoveVersion,
+  isEnabled,
+  isLangfuseConnectionAvailable,
+  isLangfuseFanoutEnabled,
+  getBalanceConfig,
+  getCloudFrontConfig,
+  getAppConfigOptionsFromUser,
+  resolveBuildInfo,
+  resolveTitleTiming,
+  sanitizeModelSpecs,
+  excludeHiddenModelSpecs,
+  isFileSnapshotEnabled,
+  getEndpointsDropParamsMap,
+  resolveCodeEnvironmentDecisionVersion,
+  resolveCodeEnvironmentMoveCapabilities,
+  resolveCodeEnvironmentTransitionVersion,
 } = require('@librechat/api');
 const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
 const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
@@ -362,7 +363,8 @@ router.get('/', async function (req, res) {
         const codeEnvironmentDecisionVersion = resolveCodeEnvironmentDecisionVersion(
             process.env.CODE_ENVIRONMENT_DECISION_VERSION,
         );
-        const codeEnvironmentMoveVersion = resolveCodeEnvironmentMoveVersion(appConfig);
+        const codeEnvironmentMoveCapabilities = resolveCodeEnvironmentMoveCapabilities(appConfig);
+        const codeEnvironmentTransitionVersion = resolveCodeEnvironmentTransitionVersion(appConfig);
 
         const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints);
 
@@ -424,7 +426,8 @@ router.get('/', async function (req, res) {
             insightsEnabled: isEnabled(process.env.ENABLE_INSIGHTS),
             compactionEnabled: appConfig?.summarization?.enabled !== false,
             ...(codeEnvironmentDecisionVersion != null ? { codeEnvironmentDecisionVersion } : {}),
-            ...(codeEnvironmentMoveVersion != null ? { codeEnvironmentMoveVersion } : {}),
+            ...codeEnvironmentMoveCapabilities,
+            ...(codeEnvironmentTransitionVersion != null ? { codeEnvironmentTransitionVersion } : {}),
             ...(cloudFront ? { cloudFront } : {}),
             ...(rum ? { rum } : {}),
             fileUploadSseEnabled: isEnabled(process.env.FILE_UPLOAD_SSE_ENABLED),

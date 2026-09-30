@@ -1520,6 +1520,10 @@ export async function initializeAgent(
      * references no files to the whole conversation would provision a sibling branch's
      * attachments, sending files this branch never mentioned to the Code API or RAG. */
     const provisionFileIds = threadAnchor == null ? fileIds : (threadFileIds ?? []);
+    /* Conversation.files can omit a previous turn's embedded upload. Follow the same
+     * parent chain for provisioned tool files so search restores it without loading a
+     * sibling branch; unanchored continuations retain the conversation-level list. */
+    const replayToolFileIds = needsThreadWalk ? (threadFileIds ?? []) : fileIds;
 
     /**
      * Retrieve execute_code files filtered to the current thread.
@@ -1537,9 +1541,11 @@ export async function initializeAgent(
      * three, and this runs on the agent initialization path. */
     const [toolFiles, codeGeneratedFiles, userCodeFiles, deferredFiles] = await Promise.all([
       resendFiles && requestFileOwnerScope
-        ? (db.getToolFilesByIds(fileIds, toolResourceSet, requestFileOwnerScope) as Promise<
-            IMongoFile[]
-          >)
+        ? (db.getToolFilesByIds(
+            replayToolFileIds,
+            toolResourceSet,
+            requestFileOwnerScope,
+          ) as Promise<IMongoFile[]>)
         : ([] as IMongoFile[]),
       resendFiles && wantsCodeFiles && db.getCodeGeneratedFiles && requestFileOwnerScope
         ? (db.getCodeGeneratedFiles(
@@ -2079,6 +2085,7 @@ export async function initializeAgent(
       workspaceOperations: attachedWorkspaceOperations,
       workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
       workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
+      workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
     });
     toolDefinitions = codeExecResult.toolDefinitions;
     recordCapabilityToolNames(AgentCapabilities.execute_code, codeExecResult.toolNames);
@@ -2324,6 +2331,7 @@ export async function initializeAgent(
       userId: user?.id,
       workspaceCommandTimeoutMaxMs: attachedWorkspaceCommandTimeoutMaxMs,
       workspaceEnvironment: trustedCodeExecutionContext.codeWorkspace?.environment,
+      workspaceLinkedWorktrees: trustedCodeExecutionContext.codeWorkspace?.linkedWorktrees,
       skillStates: params.skillStates,
       defaultActiveOnShare: params.defaultActiveOnShare,
       maxCatalogSkills: getMaxCatalogSkills(runtime),

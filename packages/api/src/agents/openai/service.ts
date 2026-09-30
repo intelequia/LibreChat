@@ -46,7 +46,7 @@ import type {
   FileContentInput,
 } from '~/protection';
 import type { InitializeAgentParams as CoreInitializeAgentParams } from '../initialize';
-import type { OpenAIStreamHandlerConfig, EventHandler } from './handlers';
+import type { OpenAIStreamWriterConfig, EventHandler } from './handlers';
 import type { LangfuseTraceContext } from '~/langfuse/identity';
 import type { MCPRuntimeRequestBody } from '~/mcp/request';
 import type { ToolExecuteOptions } from '../handlers';
@@ -569,9 +569,12 @@ export function buildNonStreamingResponse(
   reasoning: string,
   toolCalls: Map<number, ToolCall>,
   usage: CompletionUsage,
+  /** True when the map contains only accepted client-owned calls, not legacy run-step history. */
+  acceptedToolCallsOnly = false,
 ): ChatCompletionResponse {
   const toolCallsArray = Array.from(toolCalls.values());
-  const finishReason = toolCallsArray.length > 0 && !text ? 'tool_calls' : 'stop';
+  const finishReason =
+    toolCallsArray.length > 0 && (acceptedToolCallsOnly || !text) ? 'tool_calls' : 'stop';
 
   return {
     id: context.requestId,
@@ -823,10 +826,10 @@ export async function createAgentChatCompletion(
     }
 
     // Create handler config (only used for streaming)
-    const handlerConfig: OpenAIStreamHandlerConfig | null =
+    const handlerConfig: OpenAIStreamWriterConfig | null =
       isStreaming && tracker
         ? {
-            res,
+            writer: res,
             context,
             tracker,
           }
@@ -919,7 +922,7 @@ export async function createAgentChatCompletion(
 
     // Finalize response
     if (isStreaming && handlerConfig) {
-      sendFinalChunk(handlerConfig);
+      sendFinalChunk(handlerConfig, 'stop', undefined, true);
       res.end();
     } else if (aggregator) {
       aggregator.finishToolCalls?.();
@@ -938,6 +941,7 @@ export async function createAgentChatCompletion(
         aggregator.getReasoning(),
         aggregator.toolCalls,
         usage,
+        true,
       );
       res.json(response);
     }
