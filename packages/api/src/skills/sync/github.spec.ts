@@ -2991,7 +2991,7 @@ describe('createGitHubSkillSyncRunner', () => {
           bytes: row.bytes,
           category: 'script' as const,
           isExecutable: row.isExecutable ?? false,
-          author: row.author,
+          author: new Types.ObjectId(row.author),
           tenantId: row.tenantId,
         };
         files.set(row.relativePath, next);
@@ -3069,6 +3069,7 @@ describe('createGitHubSkillSyncRunner', () => {
         ...row,
         _id: oldFile._id,
         skillId: row.skillId as Types.ObjectId,
+        author: new Types.ObjectId(row.author),
       })),
       saveBuffer: jest.fn(async () => ({
         filepath: '/uploads/new-file-id__run.sh',

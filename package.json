@@ -1,6 +1,6 @@
 {
   "name": "LibreChat",
-  "version": "v0.8.8-rc4",
+  "version": "v0.8.8",
   "description": "",
   "packageManager": "npm@11.13.0",
   "scarfSettings": {
@@ -159,12 +159,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/danny-avila/LibreChat.git"
+    "url": "git+https://github.com/LibreChat-AI/LibreChat.git"
   },
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/danny-avila/LibreChat/issues"
+    "url": "https://github.com/LibreChat-AI/LibreChat/issues"
   },
   "homepage": "https://librechat.ai/",
   "devDependencies": {
@@ -220,9 +220,10 @@
     "baseline-browser-mapping": "^2.11.0",
     "browserslist": "^4.28.7",
     "elliptic": "^6.6.1",
-    "fast-uri": "^3.1.6",
+    "fast-uri": "^3.1.7",
     "fflate": "^0.8.3",
     "form-data": "^4.0.6",
+    "ip-address": "^10.5.1",
     "langsmith": "^0.6.0",
     "postcss": "^8.5.18",
     "postcss-selector-parser@6": "^6.1.3",
