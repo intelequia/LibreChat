@@ -1256,6 +1256,46 @@ describe('MCP SSRF protection – customFetch input shapes', () => {
     }
   });
 
+  it.each([
+    {
+      scenario: 'global PROXY',
+      serverProxy: undefined,
+      dispatcherName: 'Agent',
+    },
+    {
+      scenario: 'server proxy override',
+      serverProxy: 'http://server-proxy.example.com:8080',
+      dispatcherName: 'ProxyAgent',
+    },
+  ])(
+    'should select $scenario dispatchers with a matching NO_PROXY entry',
+    ({ serverProxy, dispatcherName }) => {
+      const originalEnv = snapshotProxyEnv();
+      clearProxyEnv();
+      process.env.PROXY = 'http://env-proxy.example.com:8080';
+      process.env.NO_PROXY = 'mcp.example.com';
+
+      try {
+        conn = new MCPConnection({
+          serverName: 'customfetch-global-proxy-bypass',
+          serverConfig: {
+            type: 'streamable-http',
+            url: 'https://mcp.example.com/mcp',
+            ...(serverProxy ? { proxy: serverProxy } : {}),
+          },
+          useSSRFProtection: false,
+        });
+
+        expect(createBaseUrlDispatchers(conn, 'https://mcp.example.com/mcp')).toEqual([
+          dispatcherName,
+          dispatcherName,
+        ]);
+      } finally {
+        restoreProxyEnv(originalEnv);
+      }
+    },
+  );
+
   it('should use standard HTTP proxy env vars for streamable-http when PROXY is absent', () => {
     const originalProxy = process.env.PROXY;
     const originalHttpProxy = process.env.HTTP_PROXY;

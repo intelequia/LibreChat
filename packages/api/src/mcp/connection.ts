@@ -617,13 +617,9 @@ function getMCPProxyConfig(options: t.MCPOptions): MCPProxyConfig | undefined {
     return { type: 'explicit', proxyUrl: configuredProxy };
   }
 
-  const libreChatProxy = process.env.PROXY?.trim() ?? '';
-  if (libreChatProxy) {
-    return { type: 'explicit', proxyUrl: libreChatProxy };
-  }
-
-  const httpProxy = getTrimmedEnv('http_proxy', 'HTTP_PROXY');
-  const httpsProxy = getTrimmedEnv('https_proxy', 'HTTPS_PROXY');
+  const libreChatProxy = process.env.PROXY?.trim();
+  const httpProxy = libreChatProxy || getTrimmedEnv('http_proxy', 'HTTP_PROXY');
+  const httpsProxy = libreChatProxy || getTrimmedEnv('https_proxy', 'HTTPS_PROXY');
   if (!httpProxy && !httpsProxy) {
     return undefined;
   }
