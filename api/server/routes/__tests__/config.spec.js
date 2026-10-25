@@ -94,6 +94,8 @@ afterEach(() => {
   delete process.env.OPENID_CLIENT_SECRET;
   delete process.env.OPENID_ISSUER;
   delete process.env.OPENID_SESSION_SECRET;
+  delete process.env.OPENID_LOGIN_MODE;
+  delete process.env.OPENID_USE_END_SESSION_ENDPOINT;
   delete process.env.GITHUB_CLIENT_ID;
   delete process.env.GITHUB_CLIENT_SECRET;
   delete process.env.DISCORD_CLIENT_ID;
@@ -120,6 +122,19 @@ afterEach(() => {
 });
 
 describe('GET /api/config', () => {
+  it.each([null, mockUser])('exposes popup mode with YAML precedence for user %p', async (user) => {
+    process.env.OPENID_LOGIN_MODE = 'redirect';
+    process.env.OPENID_USE_END_SESSION_ENDPOINT = 'true';
+    mockGetAppConfig.mockResolvedValue({
+      ...baseAppConfig,
+      registration: { openidLoginMode: 'popup', oauthStateTtlMs: 60_000 },
+    });
+    const response = await request(createApp(user)).get('/api/config').expect(200);
+    expect(response.body.openidLoginMode).toBe('popup');
+    expect(response.body.openidUseEndSessionEndpoint).toBe(true);
+    expect(response.body.oauthStateTtlMs).toBe(60_000);
+  });
+
   describe('unauthenticated (no req.user)', () => {
     it('should call getAppConfig with baseOnly when no tenant context', async () => {
       mockGetAppConfig.mockResolvedValue(baseAppConfig);

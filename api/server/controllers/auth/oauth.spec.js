@@ -9,6 +9,7 @@ const mockGetLogStores = jest.fn();
 const mockCheckBan = jest.fn();
 const mockGenerateToken = jest.fn();
 const mockLogger = { info: jest.fn(), error: jest.fn() };
+const mockRedirectOpenIDResult = jest.fn((res, { redirectUri }) => res.redirect(redirectUri));
 
 jest.mock('librechat-data-provider', () => ({
   CacheKeys: { ADMIN_OAUTH_EXCHANGE: 'admin-oauth-exchange' },
@@ -20,6 +21,7 @@ jest.mock('@librechat/data-schemas', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
+  redirectOpenIDResult: (...args) => mockRedirectOpenIDResult(...args),
   isEnabled: (...args) => mockIsEnabled(...args),
   getAdminPanelUrl: (...args) => mockGetAdminPanelUrl(...args),
   isAdminPanelRedirect: (...args) => mockIsAdminPanelRedirect(...args),
@@ -176,6 +178,21 @@ describe('createOAuthHandler', () => {
     expect(res.redirect).toHaveBeenCalledWith('http://localhost:3080');
   });
 
+  it('keeps token reuse and returns popup completion instead of navigating the chat', async () => {
+    process.env.OPENID_REUSE_TOKENS = 'true';
+    mockIsAdminPanelRedirect.mockReturnValue(false);
+    const req = buildReq();
+    const res = buildRes();
+    res.locals = { openidPopupId: 'a'.repeat(32) };
+    const next = jest.fn();
+    await createOAuthHandler('http://localhost:3080')(req, res, next);
+    expect(mockSendOpenIDAuthResponse).toHaveBeenCalled();
+    expect(mockRedirectOpenIDResult).toHaveBeenCalledWith(res, {
+      clientDomain: undefined,
+      redirectUri: 'http://localhost:3080',
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
   it('forwards the refresh token from req.authInfo for non-openid admin providers', async () => {
     const handler = createOAuthHandler('http://admin.example.com/auth/google/callback');
     const req = buildReq({

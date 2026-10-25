@@ -26,6 +26,7 @@ const {
   getOpenIdRolesForOpenIdSync,
   getLibreChatRolesForOpenIdSync,
   DEFAULT_OAUTH_TOKEN_TTL_SECONDS,
+  shouldGenerateOpenIDNonce,
 } = require('@librechat/api');
 const { getStrategyFunctions } = require('~/server/services/Files/strategies');
 const { resizeAvatar } = require('~/server/services/Files/images/avatar');
@@ -140,7 +141,10 @@ class CustomOpenIDStrategy extends OpenIDStrategy {
     }
 
     /** Generate nonce for federated providers that require it */
-    const shouldGenerateNonce = isEnabled(process.env.OPENID_GENERATE_NONCE);
+    const shouldGenerateNonce = shouldGenerateOpenIDNonce(
+      options?.state,
+      process.env.OPENID_GENERATE_NONCE,
+    );
     if (shouldGenerateNonce && !params.has('nonce') && this._sessionKey) {
       const crypto = require('crypto');
       const nonce = crypto.randomBytes(16).toString('hex');
@@ -531,8 +535,8 @@ async function applyOpenIdRoleSync({
   /** Role definitions are tenant-scoped, so validate configured roles in the matched user's tenant. */
   const { rolePriority, fallbackRole } = user?.tenantId
     ? await tenantStorage.run({ tenantId: user.tenantId }, async () =>
-      getLibreChatRolesForOpenIdSync(libreChatRoles),
-    )
+        getLibreChatRolesForOpenIdSync(libreChatRoles),
+      )
     : await getLibreChatRolesForOpenIdSync(libreChatRoles);
   const result = selectOpenIdRole({
     currentRole: user.role,
@@ -713,7 +717,11 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
    * @Organization Intelequia
    * @Author Pablo Suárez Romero
    */
-  await global.myCache.set(user.email.toString() + '-token', tokenset.access_token, process.env.USER_GROUPS_CACHE_TTL);
+  await global.myCache.set(
+    user.email.toString() + '-token',
+    tokenset.access_token,
+    process.env.USER_GROUPS_CACHE_TTL,
+  );
 
   /**
    * Saves Graph Token
@@ -723,7 +731,7 @@ async function processOpenIDAuth(tokenset, existingUsersOnly = false) {
   await saveGraphToken(tokenset.refresh_token, user);
 
   /**
-  * OPENID_ADMIN_ROLE: Assign admin role based on OpenID token claims.
+   * OPENID_ADMIN_ROLE: Assign admin role based on OpenID token claims.
    */
   const adminRole = process.env.OPENID_ADMIN_ROLE;
   const adminRoleParameterPath = process.env.OPENID_ADMIN_ROLE_PARAMETER_PATH;

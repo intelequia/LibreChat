@@ -5,6 +5,7 @@ import {
   type OAuthFailureLog,
   type OAuthFailureRequest,
 } from './failure';
+import { getOpenIDPopupRedirect } from '~/auth/popup';
 
 type LoginFunction = (
   user: unknown,
@@ -65,7 +66,10 @@ export function redirectToAuthFailure(
   res: Response,
   { clientDomain, authFailedError }: AuthFailureRedirectOptions,
 ): void {
-  res.redirect(`${clientDomain}/login?redirect=false&error=${authFailedError}`);
+  res.redirect(
+    getOpenIDPopupRedirect(res, clientDomain, authFailedError) ??
+      `${clientDomain}/login?redirect=false&error=${authFailedError}`,
+  );
 }
 
 export function logOpenIDCallbackFailure({

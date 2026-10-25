@@ -25,7 +25,7 @@ const oauthErrorKeys: Record<string, TranslationKeys> = {
 function Login() {
   const localize = useLocalize();
   const { showToast } = useToastContext();
-  const { error, setError, login } = useAuthContext();
+  const { error, setError, login, isAuthReady, isAuthenticated } = useAuthContext();
   const { startupConfig } = useOutletContext<TLoginLayoutContext>();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -71,11 +71,13 @@ function Login() {
     }
   }, [disableAutoRedirect, searchParams, setSearchParams]);
 
-  const shouldAutoRedirect =
+  const shouldPromptOpenID =
     startupConfig?.openidLoginEnabled &&
     startupConfig?.openidAutoRedirect &&
     startupConfig?.serverDomain &&
+    !disableAutoRedirect &&
     !isAutoRedirectDisabled;
+  const shouldAutoRedirect = shouldPromptOpenID && startupConfig?.openidLoginMode !== 'popup';
 
   useEffect(() => {
     if (shouldAutoRedirect) {
@@ -84,15 +86,20 @@ function Login() {
     }
   }, [shouldAutoRedirect, startupConfig]);
 
-  if (shouldAutoRedirect) {
+  if (shouldPromptOpenID) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center p-4">
         <p className="text-lg font-semibold">
-          {localize('com_ui_redirecting_to_provider', { 0: startupConfig.openidLabel })}
+          {shouldAutoRedirect
+            ? localize('com_ui_redirecting_to_provider', { 0: startupConfig.openidLabel })
+            : localize('com_auth_popup_prompt')}
         </p>
         <div className="mt-4">
           <SocialButton
             key="openid"
+            loginMode={startupConfig.openidLoginMode}
+            oauthStateTtlMs={startupConfig.oauthStateTtlMs}
+            autoStart={isAuthReady && !isAuthenticated}
             enabled={startupConfig.openidLoginEnabled}
             serverDomain={startupConfig.serverDomain}
             oauthPath="openid"

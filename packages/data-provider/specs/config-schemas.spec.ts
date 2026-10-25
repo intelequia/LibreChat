@@ -28,6 +28,24 @@ import {
 import { specsConfigSchema, materializeModelSpecEndpoints } from '../src/models';
 import { FileSources } from '../src/types/files';
 
+describe('OpenID login mode configuration', () => {
+  it.each(['redirect', 'popup'])('accepts registration.openidLoginMode=%s', (openidLoginMode) => {
+    expect(
+      configSchema.parse({ version: '1.3.8', registration: { openidLoginMode } }).registration
+        .openidLoginMode,
+    ).toBe(openidLoginMode);
+  });
+
+  it('rejects unknown login modes', () => {
+    expect(
+      configSchema.safeParse({
+        version: '1.3.8',
+        registration: { openidLoginMode: 'invalid' },
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('paramDefinitionSchema', () => {
   it('accepts a minimal definition with only key', () => {
     const result = paramDefinitionSchema.safeParse({ key: 'temperature' });

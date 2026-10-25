@@ -7,6 +7,7 @@ import * as miscDataProvider from '~/data-provider/Misc/queries';
 import * as authMutations from '~/data-provider/Auth/mutations';
 import * as authQueries from '~/data-provider/Auth/queries';
 import AuthLayout from '~/components/Auth/AuthLayout';
+import * as authContext from '~/hooks/AuthContext';
 import Login from '~/components/Auth/Login';
 
 jest.mock('librechat-data-provider/react-query');
@@ -29,6 +30,8 @@ const mockStartupConfig = {
     githubLoginEnabled: true,
     googleLoginEnabled: true,
     openidLoginEnabled: true,
+    openidAutoRedirect: false,
+    openidLoginMode: 'redirect' as 'redirect' | 'popup',
     openidLabel: 'Test OpenID',
     openidImageUrl: 'http://test-server.com',
     samlLoginEnabled: true,
@@ -161,6 +164,64 @@ test('renders login form', () => {
   );
 });
 
+test('popup mode automatically attempts login and retains its button if blocked', async () => {
+  const open = jest.spyOn(window, 'open').mockReturnValue(null);
+  setup({
+    useGetStartupConfigReturnValue: {
+      ...mockStartupConfig,
+      data: {
+        ...mockStartupConfig.data,
+        openidAutoRedirect: true,
+        openidLoginMode: 'popup',
+        socialLoginEnabled: false,
+        emailLoginEnabled: false,
+      },
+    },
+  });
+  expect(document.querySelector('button[data-testid="openid"]')).toBeInTheDocument();
+  expect(document.querySelector('input[type="password"]')).not.toBeInTheDocument();
+  await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }));
+});
+
+test.each([
+  { isAuthReady: false, isAuthenticated: false },
+  { isAuthReady: true, isAuthenticated: true },
+])(
+  'does not auto-open before session bootstrap or for an existing session: %p',
+  async (session) => {
+    const originalUseAuthContext = authContext.useAuthContext;
+    jest.spyOn(authContext, 'useAuthContext').mockImplementation(() => ({
+      ...originalUseAuthContext(),
+      ...session,
+    }));
+    const open = jest.spyOn(window, 'open').mockReturnValue(null);
+    setup({
+      useGetStartupConfigReturnValue: {
+        ...mockStartupConfig,
+        data: { ...mockStartupConfig.data, openidAutoRedirect: true, openidLoginMode: 'popup' },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(open).not.toHaveBeenCalled();
+  },
+);
+
+test('redirect=false suppresses automatic popup and keeps manual sign-in available', async () => {
+  window.history.pushState({}, '', '/login?redirect=false');
+  const open = jest.spyOn(window, 'open').mockReturnValue(null);
+  const view = setup({
+    useGetStartupConfigReturnValue: {
+      ...mockStartupConfig,
+      data: { ...mockStartupConfig.data, openidAutoRedirect: true, openidLoginMode: 'popup' },
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(open).not.toHaveBeenCalled();
+  await userEvent.click(view.getByRole('button', { name: 'Test OpenID' }));
+  expect(open).toHaveBeenCalledTimes(1);
+  window.history.pushState({}, '', '/login');
+});
 test('calls loginUser.mutate on login', async () => {
   const mutate = jest.fn();
   const { getByLabelText } = setup({

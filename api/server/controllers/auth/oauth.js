@@ -5,6 +5,7 @@ const {
   getAdminPanelUrl,
   isAdminPanelRedirect,
   generateAdminExchangeCode,
+  redirectOpenIDResult,
 } = require('@librechat/api');
 const { syncUserEntraGroupMemberships } = require('~/server/services/PermissionService');
 const { setAuthTokens } = require('~/server/services/AuthService');
@@ -96,7 +97,7 @@ function createOAuthHandler(redirectUri = domains.client) {
           req.session.openidLogoutIdToken = req.user.tokenset?.id_token;
         }
       }
-      res.redirect(redirectUri);
+      redirectOpenIDResult(res, { clientDomain: domains.client, redirectUri });
     } catch (err) {
       logger.error('Error in setting authentication tokens:', err);
       next(err);

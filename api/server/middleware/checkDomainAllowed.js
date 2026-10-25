@@ -1,5 +1,9 @@
 const { logger } = require('@librechat/data-schemas');
-const { getAppConfigOptionsFromUser, isEmailDomainAllowed } = require('@librechat/api');
+const {
+  getAppConfigOptionsFromUser,
+  isEmailDomainAllowed,
+  redirectOpenIDResult,
+} = require('@librechat/api');
 const { getAppConfig } = require('~/server/services/Config');
 
 /**
@@ -20,14 +24,22 @@ const checkDomainAllowed = async (req, res, next) => {
 
     if (email && !isEmailDomainAllowed(email, appConfig?.registration?.allowedDomains)) {
       logger.error(`[Social Login] [Social Login not allowed] [Email: ${email}]`);
-      res.redirect('/login');
+      redirectOpenIDResult(res, {
+        clientDomain: process.env.DOMAIN_CLIENT,
+        redirectUri: '/login',
+        error: 'auth_failed',
+      });
       return;
     }
 
     next();
   } catch (error) {
     logger.error('[checkDomainAllowed] Error checking domain:', error);
-    res.redirect('/login');
+    redirectOpenIDResult(res, {
+      clientDomain: process.env.DOMAIN_CLIENT,
+      redirectUri: '/login',
+      error: 'auth_failed',
+    });
   }
 };
 

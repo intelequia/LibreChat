@@ -17,6 +17,7 @@ const {
   resolveCodeEnvironmentDecisionVersion,
   resolveCodeEnvironmentMoveCapabilities,
   resolveCodeEnvironmentTransitionVersion,
+  resolveOpenIDLoginMode,
 } = require('@librechat/api');
 const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
 const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
@@ -28,58 +29,61 @@ const { getAppConfig } = require('~/server/services/Config/app');
 const router = express.Router();
 
 const loadBusinessHeaderHTML = async (htmlPath) => {
-    try {
-        const defaultPath = path.join(__dirname, '../../../client/public/business-header/index.html');
-        const resolvedPath = htmlPath
-            ? path.join(__dirname, '../../../client/public', htmlPath)
-            : defaultPath;
+  try {
+    const defaultPath = path.join(__dirname, '../../../client/public/business-header/index.html');
+    const resolvedPath = htmlPath
+      ? path.join(__dirname, '../../../client/public', htmlPath)
+      : defaultPath;
 
-        return await fs.readFile(resolvedPath, 'utf-8');
-    } catch (error) {
-        logger.warn(`Could not load business header HTML: ${error.message}`);
-        return null;
-    }
+    return await fs.readFile(resolvedPath, 'utf-8');
+  } catch (error) {
+    logger.warn(`Could not load business header HTML: ${error.message}`);
+    return null;
+  }
 };
 
 const injectBusinessHeaderCSS = async (html, cssPath) => {
-    try {
-        const defaultCssPath = path.join(__dirname, '../../../client/public/business-header/styles.css');
-        const resolvedCssPath = cssPath
-            ? path.join(__dirname, '../../../client/public', cssPath)
-            : defaultCssPath;
+  try {
+    const defaultCssPath = path.join(
+      __dirname,
+      '../../../client/public/business-header/styles.css',
+    );
+    const resolvedCssPath = cssPath
+      ? path.join(__dirname, '../../../client/public', cssPath)
+      : defaultCssPath;
 
-        const cssContent = await fs.readFile(resolvedCssPath, 'utf-8');
-        const styleTag = `<style>${cssContent}</style>`;
-        return html.replace('</head>', `${styleTag}</head>`);
-    } catch (error) {
-        logger.warn(`Could not load business header CSS: ${error.message}`);
-        return html;
-    }
+    const cssContent = await fs.readFile(resolvedCssPath, 'utf-8');
+    const styleTag = `<style>${cssContent}</style>`;
+    return html.replace('</head>', `${styleTag}</head>`);
+  } catch (error) {
+    logger.warn(`Could not load business header CSS: ${error.message}`);
+    return html;
+  }
 };
 
 const substituteVariables = (html, variables) => {
-    if (!html) {
-        return null;
-    }
+  if (!html) {
+    return null;
+  }
 
-    let result = html;
-    for (const [key, value] of Object.entries(variables)) {
-        if (value == null) {
-            continue;
-        }
-        result = result.replace(new RegExp(`{{${key}}}`, 'g'), value);
+  let result = html;
+  for (const [key, value] of Object.entries(variables)) {
+    if (value == null) {
+      continue;
     }
+    result = result.replace(new RegExp(`{{${key}}}`, 'g'), value);
+  }
 
-    return result;
+  return result;
 };
 
 const emailLoginEnabled =
-    process.env.ALLOW_EMAIL_LOGIN === undefined || isEnabled(process.env.ALLOW_EMAIL_LOGIN);
+  process.env.ALLOW_EMAIL_LOGIN === undefined || isEnabled(process.env.ALLOW_EMAIL_LOGIN);
 const passwordResetEnabled = isEnabled(process.env.ALLOW_PASSWORD_RESET);
 const sharedLinksEnabled =
-    process.env.ALLOW_SHARED_LINKS === undefined || isEnabled(process.env.ALLOW_SHARED_LINKS);
+  process.env.ALLOW_SHARED_LINKS === undefined || isEnabled(process.env.ALLOW_SHARED_LINKS);
 const publicSharedLinksEnabled =
-    sharedLinksEnabled && isEnabled(process.env.ALLOW_SHARED_LINKS_PUBLIC);
+  sharedLinksEnabled && isEnabled(process.env.ALLOW_SHARED_LINKS_PUBLIC);
 
 const sharePointFilePickerEnabled = isEnabled(process.env.ENABLE_SHAREPOINT_FILEPICKER);
 const openidReuseTokens = isEnabled(process.env.OPENID_REUSE_TOKENS);
@@ -92,8 +96,8 @@ const openidReuseTokens = isEnabled(process.env.OPENID_REUSE_TOKENS);
 resolveBuildInfo();
 
 function isBirthday() {
-    const today = new Date();
-    return today.getMonth() === 1 && today.getDate() === 11;
+  const today = new Date();
+  return today.getMonth() === 1 && today.getDate() === 11;
 }
 
 /**
@@ -104,75 +108,75 @@ function isBirthday() {
  * See client consumers under `client/src/components/Auth/` and `client/src/routes/Layouts/Startup.tsx`.
  */
 function buildPreLoginPayload() {
-    const isOpenIdEnabled =
-        !!process.env.OPENID_CLIENT_ID &&
-        (isEnabled(process.env.OPENID_USE_PKCE) || !!process.env.OPENID_CLIENT_SECRET?.trim()) &&
-        !!process.env.OPENID_ISSUER &&
-        !!process.env.OPENID_SESSION_SECRET;
+  const isOpenIdEnabled =
+    !!process.env.OPENID_CLIENT_ID &&
+    (isEnabled(process.env.OPENID_USE_PKCE) || !!process.env.OPENID_CLIENT_SECRET?.trim()) &&
+    !!process.env.OPENID_ISSUER &&
+    !!process.env.OPENID_SESSION_SECRET;
 
-    const isSamlEnabled =
-        !!process.env.SAML_ENTRY_POINT &&
-        !!process.env.SAML_ISSUER &&
-        !!process.env.SAML_CERT &&
-        !!process.env.SAML_SESSION_SECRET;
+  const isSamlEnabled =
+    !!process.env.SAML_ENTRY_POINT &&
+    !!process.env.SAML_ISSUER &&
+    !!process.env.SAML_CERT &&
+    !!process.env.SAML_SESSION_SECRET;
 
-    const ldap = getLdapConfig();
+  const ldap = getLdapConfig();
 
-    /** @type {Partial<TStartupConfig>} */
-    const payload = {
-        appTitle: process.env.APP_TITLE || 'Intelewriter',
-        discordLoginEnabled: !!process.env.DISCORD_CLIENT_ID && !!process.env.DISCORD_CLIENT_SECRET,
-        facebookLoginEnabled:
-            !!process.env.FACEBOOK_CLIENT_ID && !!process.env.FACEBOOK_CLIENT_SECRET,
-        githubLoginEnabled: !!process.env.GITHUB_CLIENT_ID && !!process.env.GITHUB_CLIENT_SECRET,
-        googleLoginEnabled: !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET,
-        appleLoginEnabled:
-            !!process.env.APPLE_CLIENT_ID &&
-            !!process.env.APPLE_TEAM_ID &&
-            !!process.env.APPLE_KEY_ID &&
-            !!process.env.APPLE_PRIVATE_KEY_PATH,
-        openidLoginEnabled: isOpenIdEnabled,
-        openidLabel: process.env.OPENID_BUTTON_LABEL || 'Continue with OpenID',
-        openidImageUrl: process.env.OPENID_IMAGE_URL,
-        openidAutoRedirect:
-            isEnabled(process.env.OPENID_AUTO_REDIRECT) || isEnabled(process.env.OPENID_AUTOREDIRECT),
-        samlLoginEnabled: !isOpenIdEnabled && isSamlEnabled,
-        samlLabel: process.env.SAML_BUTTON_LABEL,
-        samlImageUrl: process.env.SAML_IMAGE_URL,
-        serverDomain: process.env.DOMAIN_SERVER || 'http://localhost:3080',
-        emailLoginEnabled,
-        registrationEnabled: !ldap?.enabled && isEnabled(process.env.ALLOW_REGISTRATION),
-        socialLoginEnabled: isEnabled(process.env.ALLOW_SOCIAL_LOGIN),
-        emailEnabled:
-            (!!process.env.EMAIL_SERVICE || !!process.env.EMAIL_HOST) &&
-            !!process.env.EMAIL_USERNAME &&
-            !!process.env.EMAIL_PASSWORD &&
-            !!process.env.EMAIL_FROM,
-        passwordResetEnabled,
-        showBirthdayIcon:
-            isBirthday() ||
-            isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
-            process.env.SHOW_BIRTHDAY_ICON === '',
-        helpAndFaqURL: process.env.HELP_AND_FAQ_URL || 'https://librechat.ai',
-        sharedLinksEnabled,
-        publicSharedLinksEnabled,
-        analyticsGtmId: process.env.ANALYTICS_GTM_ID,
-        openidReuseTokens: isEnabled(process.env.OPENID_REUSE_TOKENS),
-        allowAccountDeletion:
-            process.env.ALLOW_ACCOUNT_DELETION === undefined ||
-            isEnabled(process.env.ALLOW_ACCOUNT_DELETION),
-    };
+  /** @type {Partial<TStartupConfig>} */
+  const payload = {
+    appTitle: process.env.APP_TITLE || 'Intelewriter',
+    discordLoginEnabled: !!process.env.DISCORD_CLIENT_ID && !!process.env.DISCORD_CLIENT_SECRET,
+    facebookLoginEnabled: !!process.env.FACEBOOK_CLIENT_ID && !!process.env.FACEBOOK_CLIENT_SECRET,
+    githubLoginEnabled: !!process.env.GITHUB_CLIENT_ID && !!process.env.GITHUB_CLIENT_SECRET,
+    googleLoginEnabled: !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET,
+    appleLoginEnabled:
+      !!process.env.APPLE_CLIENT_ID &&
+      !!process.env.APPLE_TEAM_ID &&
+      !!process.env.APPLE_KEY_ID &&
+      !!process.env.APPLE_PRIVATE_KEY_PATH,
+    openidLoginEnabled: isOpenIdEnabled,
+    openidLabel: process.env.OPENID_BUTTON_LABEL || 'Continue with OpenID',
+    openidImageUrl: process.env.OPENID_IMAGE_URL,
+    openidAutoRedirect:
+      isEnabled(process.env.OPENID_AUTO_REDIRECT) || isEnabled(process.env.OPENID_AUTOREDIRECT),
+    openidUseEndSessionEndpoint: isEnabled(process.env.OPENID_USE_END_SESSION_ENDPOINT),
+    samlLoginEnabled: !isOpenIdEnabled && isSamlEnabled,
+    samlLabel: process.env.SAML_BUTTON_LABEL,
+    samlImageUrl: process.env.SAML_IMAGE_URL,
+    serverDomain: process.env.DOMAIN_SERVER || 'http://localhost:3080',
+    emailLoginEnabled,
+    registrationEnabled: !ldap?.enabled && isEnabled(process.env.ALLOW_REGISTRATION),
+    socialLoginEnabled: isEnabled(process.env.ALLOW_SOCIAL_LOGIN),
+    emailEnabled:
+      (!!process.env.EMAIL_SERVICE || !!process.env.EMAIL_HOST) &&
+      !!process.env.EMAIL_USERNAME &&
+      !!process.env.EMAIL_PASSWORD &&
+      !!process.env.EMAIL_FROM,
+    passwordResetEnabled,
+    showBirthdayIcon:
+      isBirthday() ||
+      isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
+      process.env.SHOW_BIRTHDAY_ICON === '',
+    helpAndFaqURL: process.env.HELP_AND_FAQ_URL || 'https://librechat.ai',
+    sharedLinksEnabled,
+    publicSharedLinksEnabled,
+    analyticsGtmId: process.env.ANALYTICS_GTM_ID,
+    openidReuseTokens: isEnabled(process.env.OPENID_REUSE_TOKENS),
+    allowAccountDeletion:
+      process.env.ALLOW_ACCOUNT_DELETION === undefined ||
+      isEnabled(process.env.ALLOW_ACCOUNT_DELETION),
+  };
 
-    const minPasswordLength = parseInt(process.env.MIN_PASSWORD_LENGTH, 10);
-    if (minPasswordLength && !isNaN(minPasswordLength)) {
-        payload.minPasswordLength = minPasswordLength;
-    }
+  const minPasswordLength = parseInt(process.env.MIN_PASSWORD_LENGTH, 10);
+  if (minPasswordLength && !isNaN(minPasswordLength)) {
+    payload.minPasswordLength = minPasswordLength;
+  }
 
-    if (ldap) {
-        payload.ldap = ldap;
-    }
+  if (ldap) {
+    payload.ldap = ldap;
+  }
 
-    return payload;
+  return payload;
 }
 
 /**
@@ -181,76 +185,76 @@ function buildPreLoginPayload() {
  * checks, not through the generic startup config endpoint.
  */
 function buildPublicSharePayload() {
-    /** @type {Partial<TStartupConfig>} */
-    const payload = {
-        analyticsGtmId: process.env.ANALYTICS_GTM_ID,
-    };
+  /** @type {Partial<TStartupConfig>} */
+  const payload = {
+    analyticsGtmId: process.env.ANALYTICS_GTM_ID,
+  };
 
-    if (typeof process.env.CUSTOM_FOOTER === 'string') {
-        payload.customFooter = process.env.CUSTOM_FOOTER;
-    }
+  if (typeof process.env.CUSTOM_FOOTER === 'string') {
+    payload.customFooter = process.env.CUSTOM_FOOTER;
+  }
 
-    return payload;
+  return payload;
 }
 
 function buildWebSearchConfig(appConfig) {
-    const ws = appConfig?.webSearch;
-    if (!ws) {
-        return undefined;
-    }
-    const { searchProvider, scraperProvider, rerankerType } = ws;
-    if (!searchProvider && !scraperProvider && !rerankerType) {
-        return undefined;
-    }
-    return {
-        ...(searchProvider && { searchProvider }),
-        ...(scraperProvider && { scraperProvider }),
-        ...(rerankerType && { rerankerType }),
-    };
+  const ws = appConfig?.webSearch;
+  if (!ws) {
+    return undefined;
+  }
+  const { searchProvider, scraperProvider, rerankerType } = ws;
+  if (!searchProvider && !scraperProvider && !rerankerType) {
+    return undefined;
+  }
+  return {
+    ...(searchProvider && { searchProvider }),
+    ...(scraperProvider && { scraperProvider }),
+    ...(rerankerType && { rerankerType }),
+  };
 }
 
 const applyBusinessHeaderConfig = async (payload) => {
-    payload.businessChatTitle = process.env.BUSINESS_CHAT_TITLE || 'Intelewriter';
-    payload.businessChatTitleFont = process.env.BUSINESS_CHAT_TITLE_FONT || 'Inter, sans-serif';
-    payload.businessChatTitleFontWeight = process.env.BUSINESS_CHAT_TITLE_FONT_WEIGHT || 'bold';
-    payload.businessChatTitleFontSize = process.env.BUSINESS_CHAT_TITLE_FONT_SIZE || '16px';
-    payload.businessChatTitleLight = process.env.BUSINESS_CHAT_TITLE_COLOR_LIGHT || 'black';
-    payload.businessChatTitleDark = process.env.BUSINESS_CHAT_TITLE_COLOR_DARK || 'white';
-    payload.businessChatLogo =
-        process.env.BUSINESS_CHAT_LOGO || 'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';
-    payload.businessChatLogoDark =
-        process.env.BUSINESS_CHAT_LOGO_DARK ||
-        'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';
-    payload.businessChatBackgroundLight = process.env.BUSINESS_CHAT_BACKGROUND_LIGHT || '#f3f3f3';
-    payload.businessChatBackgroundDark = process.env.BUSINESS_CHAT_BACKGROUND_DARK || '#141414';
-    payload.businessHeaderEnabled = false;
+  payload.businessChatTitle = process.env.BUSINESS_CHAT_TITLE || 'Intelewriter';
+  payload.businessChatTitleFont = process.env.BUSINESS_CHAT_TITLE_FONT || 'Inter, sans-serif';
+  payload.businessChatTitleFontWeight = process.env.BUSINESS_CHAT_TITLE_FONT_WEIGHT || 'bold';
+  payload.businessChatTitleFontSize = process.env.BUSINESS_CHAT_TITLE_FONT_SIZE || '16px';
+  payload.businessChatTitleLight = process.env.BUSINESS_CHAT_TITLE_COLOR_LIGHT || 'black';
+  payload.businessChatTitleDark = process.env.BUSINESS_CHAT_TITLE_COLOR_DARK || 'white';
+  payload.businessChatLogo =
+    process.env.BUSINESS_CHAT_LOGO || 'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';
+  payload.businessChatLogoDark =
+    process.env.BUSINESS_CHAT_LOGO_DARK ||
+    'https://intelequia.com/Portals/0/Images/iss-logo-grey.png';
+  payload.businessChatBackgroundLight = process.env.BUSINESS_CHAT_BACKGROUND_LIGHT || '#f3f3f3';
+  payload.businessChatBackgroundDark = process.env.BUSINESS_CHAT_BACKGROUND_DARK || '#141414';
+  payload.businessHeaderEnabled = false;
 
-    const useCustomHeader = isEnabled(process.env.BUSINESS_HEADER_USE_CUSTOM_HTML);
-    const headerHtmlPath = process.env.BUSINESS_HEADER_HTML_PATH;
-    if (!useCustomHeader) {
-        return;
-    }
+  const useCustomHeader = isEnabled(process.env.BUSINESS_HEADER_USE_CUSTOM_HTML);
+  const headerHtmlPath = process.env.BUSINESS_HEADER_HTML_PATH;
+  if (!useCustomHeader) {
+    return;
+  }
 
-    const headerHTML = await loadBusinessHeaderHTML(headerHtmlPath);
-    if (!headerHTML) {
-        logger.warn(
-            'BUSINESS_HEADER_USE_CUSTOM_HTML enabled but HTML file not found, falling back to default header',
-        );
-        return;
-    }
+  const headerHTML = await loadBusinessHeaderHTML(headerHtmlPath);
+  if (!headerHTML) {
+    logger.warn(
+      'BUSINESS_HEADER_USE_CUSTOM_HTML enabled but HTML file not found, falling back to default header',
+    );
+    return;
+  }
 
-    const htmlWithCSS = await injectBusinessHeaderCSS(headerHTML);
-    const substitutedHTML = substituteVariables(htmlWithCSS, {
-        BUSINESS_CHAT_TITLE: payload.businessChatTitle,
-        BUSINESS_CHAT_LOGO: payload.businessChatLogo,
-        BUSINESS_CHAT_LOGO_DARK: payload.businessChatLogoDark,
-    });
+  const htmlWithCSS = await injectBusinessHeaderCSS(headerHTML);
+  const substitutedHTML = substituteVariables(htmlWithCSS, {
+    BUSINESS_CHAT_TITLE: payload.businessChatTitle,
+    BUSINESS_CHAT_LOGO: payload.businessChatLogo,
+    BUSINESS_CHAT_LOGO_DARK: payload.businessChatLogoDark,
+  });
 
-    if (substitutedHTML) {
-        payload.businessHeaderHTML = substitutedHTML;
-        payload.businessHeaderEnabled = true;
-        logger.info('Custom business header HTML loaded successfully');
-    }
+  if (substitutedHTML) {
+    payload.businessHeaderHTML = substitutedHTML;
+    payload.businessHeaderEnabled = true;
+    logger.info('Custom business header HTML loaded successfully');
+  }
 };
 
 /**
@@ -260,219 +264,229 @@ const applyBusinessHeaderConfig = async (payload) => {
  * are not exposed to unauthenticated callers.
  */
 function buildPostLoginPayload() {
-    /** @type {Partial<TStartupConfig>} */
-    const payload = {
-        showBirthdayIcon:
-            isBirthday() ||
-            isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
-            process.env.SHOW_BIRTHDAY_ICON === '',
-        helpAndFaqURL: process.env.HELP_AND_FAQ_URL || 'https://librechat.ai',
-        sharedLinksEnabled,
-        publicSharedLinksEnabled,
-        openidReuseTokens,
-        /** Read inline (not module-level) for per-request evaluation and test isolation */
-        allowAccountDeletion:
-            process.env.ALLOW_ACCOUNT_DELETION === undefined ||
-            isEnabled(process.env.ALLOW_ACCOUNT_DELETION),
-    };
+  /** @type {Partial<TStartupConfig>} */
+  const payload = {
+    showBirthdayIcon:
+      isBirthday() ||
+      isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
+      process.env.SHOW_BIRTHDAY_ICON === '',
+    helpAndFaqURL: process.env.HELP_AND_FAQ_URL || 'https://librechat.ai',
+    sharedLinksEnabled,
+    publicSharedLinksEnabled,
+    openidReuseTokens,
+    /** Read inline (not module-level) for per-request evaluation and test isolation */
+    allowAccountDeletion:
+      process.env.ALLOW_ACCOUNT_DELETION === undefined ||
+      isEnabled(process.env.ALLOW_ACCOUNT_DELETION),
+  };
 
-    return payload;
+  return payload;
 }
 
 function buildBuildInfoPayload(interfaceConfig) {
-    if (interfaceConfig?.buildInfo === false) {
-        return undefined;
-    }
-    const info = resolveBuildInfo();
-    if (!info.commit && !info.branch && !info.buildDate) {
-        return undefined;
-    }
-    return {
-        commit: info.commit,
-        commitShort: info.commitShort,
-        branch: info.branch,
-        buildDate: info.buildDate,
-    };
+  if (interfaceConfig?.buildInfo === false) {
+    return undefined;
+  }
+  const info = resolveBuildInfo();
+  if (!info.commit && !info.branch && !info.buildDate) {
+    return undefined;
+  }
+  return {
+    commit: info.commit,
+    commitShort: info.commitShort,
+    branch: info.branch,
+    buildDate: info.buildDate,
+  };
 }
 
 function buildCloudFrontStartupConfig() {
-    const config = getCloudFrontConfig();
-    if (
-        config?.imageSigning !== 'cookies' ||
-        !config.domain ||
-        !config.cookieDomain ||
-        !config.privateKey ||
-        !config.keyPairId
-    ) {
-        return undefined;
-    }
+  const config = getCloudFrontConfig();
+  if (
+    config?.imageSigning !== 'cookies' ||
+    !config.domain ||
+    !config.cookieDomain ||
+    !config.privateKey ||
+    !config.keyPairId
+  ) {
+    return undefined;
+  }
 
-    return {
-        cookieRefresh: {
-            endpoint: '/api/auth/cloudfront/refresh',
-            domain: config.domain,
-        },
-    };
+  return {
+    cookieRefresh: {
+      endpoint: '/api/auth/cloudfront/refresh',
+      domain: config.domain,
+    },
+  };
 }
 
 router.get('/', async function (req, res) {
-    try {
-        const preLoginPayload = buildPreLoginPayload();
-        const publicSharePayload = buildPublicSharePayload();
-        const rum = getRumConfig();
+  try {
+    const preLoginPayload = buildPreLoginPayload();
+    const publicSharePayload = buildPublicSharePayload();
+    const rum = getRumConfig();
 
-        if (!req.user) {
-            const tenantId = getTenantId();
-            const baseConfig = await getAppConfig(tenantId ? { tenantId } : { baseOnly: true });
+    if (!req.user) {
+      const tenantId = getTenantId();
+      const baseConfig = await getAppConfig(tenantId ? { tenantId } : { baseOnly: true });
 
-            /** @type {Partial<TStartupConfig>} */
-            const payload = {
-                ...preLoginPayload,
-                socialLogins: baseConfig?.registration?.socialLogins ?? defaultSocialLogins,
-                turnstile: baseConfig?.turnstileConfig,
-                ...(rum ? { rum } : {}),
-            };
+      /** @type {Partial<TStartupConfig>} */
+      const payload = {
+        ...preLoginPayload,
+        openidLoginMode: resolveOpenIDLoginMode(
+          baseConfig?.registration,
+          process.env.OPENID_LOGIN_MODE,
+        ),
+        oauthStateTtlMs: baseConfig?.registration?.oauthStateTtlMs,
+        socialLogins: baseConfig?.registration?.socialLogins ?? defaultSocialLogins,
+        turnstile: baseConfig?.turnstileConfig,
+        ...(rum ? { rum } : {}),
+      };
 
-            const interfaceConfig = baseConfig?.interfaceConfig;
-            const buildInfoDisabled = interfaceConfig?.buildInfo === false;
-            if (interfaceConfig?.privacyPolicy || interfaceConfig?.termsOfService || buildInfoDisabled) {
-                payload.interface = {};
-                if (interfaceConfig.privacyPolicy) {
-                    payload.interface.privacyPolicy = interfaceConfig.privacyPolicy;
-                }
-                if (interfaceConfig.termsOfService) {
-                    payload.interface.termsOfService = interfaceConfig.termsOfService;
-                }
-                if (buildInfoDisabled) {
-                    payload.interface.buildInfo = false;
-                }
-            }
-
-            const unauthBuildInfo = buildBuildInfoPayload(interfaceConfig);
-            if (unauthBuildInfo) {
-                payload.buildInfo = unauthBuildInfo;
-            }
-
-            await applyBusinessHeaderConfig(payload);
-            payload.balanceEnabled = process.env.CHECK_BALANCE === 'true';
-
-            return res.status(200).send(payload);
+      const interfaceConfig = baseConfig?.interfaceConfig;
+      const buildInfoDisabled = interfaceConfig?.buildInfo === false;
+      if (interfaceConfig?.privacyPolicy || interfaceConfig?.termsOfService || buildInfoDisabled) {
+        payload.interface = {};
+        if (interfaceConfig.privacyPolicy) {
+          payload.interface.privacyPolicy = interfaceConfig.privacyPolicy;
         }
-
-        const appConfig = await getAppConfig(getAppConfigOptionsFromUser(req.user));
-        const codeEnvironmentDecisionVersion = resolveCodeEnvironmentDecisionVersion(
-            process.env.CODE_ENVIRONMENT_DECISION_VERSION,
-        );
-        const codeEnvironmentMoveCapabilities = resolveCodeEnvironmentMoveCapabilities(appConfig);
-        const codeEnvironmentTransitionVersion = resolveCodeEnvironmentTransitionVersion(appConfig);
-
-        const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints);
-
-        const balanceConfig = getBalanceConfig(appConfig);
-        const cloudFront = buildCloudFrontStartupConfig();
-        const langfuseFanoutEnabled = isLangfuseFanoutEnabled();
-        const langfuseConnectionAvailable = isLangfuseConnectionAvailable();
-        let langfuseConnectionAccess = false;
-
-        if (langfuseConnectionAvailable) {
-            try {
-                const userId = req.user.id ?? req.user._id?.toString();
-                if (userId) {
-                    const capabilityUser = {
-                        id: userId,
-                        role: req.user.role ?? '',
-                        tenantId: req.user.tenantId,
-                        idOnTheSource: req.user.idOnTheSource ?? null,
-                    };
-                    const hasAdminAccess = await hasCapability(
-                        capabilityUser,
-                        SystemCapabilities.ACCESS_ADMIN,
-                    );
-                    if (hasAdminAccess) {
-                        langfuseConnectionAccess = await hasConfigCapability(capabilityUser, 'langfuse');
-                    }
-                }
-            } catch (err) {
-                logger.warn(`[config] Langfuse capability check failed: ${err.message}`);
-            }
+        if (interfaceConfig.termsOfService) {
+          payload.interface.termsOfService = interfaceConfig.termsOfService;
         }
-
-        /** @type {TStartupConfig} */
-        const payload = {
-            ...preLoginPayload,
-            ...publicSharePayload,
-            ...buildPostLoginPayload(),
-            sharedLinksSnapshotFilesEnabled: sharedLinksEnabled && isFileSnapshotEnabled(appConfig),
-            socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
-            interface: appConfig?.interfaceConfig,
-            titleGenerationTiming: resolveTitleTiming({
-                appConfig,
-                endpoint: EModelEndpoint.agents,
-            }),
-            turnstile: appConfig?.turnstileConfig,
-            modelSpecs: sanitizeModelSpecs(excludeHiddenModelSpecs(appConfig?.modelSpecs)),
-            balance: balanceConfig,
-            bundlerURL: process.env.SANDPACK_BUNDLER_URL,
-            staticBundlerURL: process.env.SANDPACK_STATIC_BUNDLER_URL,
-            sharePointFilePickerEnabled,
-            sharePointBaseUrl: process.env.SHAREPOINT_BASE_URL,
-            sharePointPickerGraphScope: process.env.SHAREPOINT_PICKER_GRAPH_SCOPE,
-            sharePointPickerSharePointScope: process.env.SHAREPOINT_PICKER_SHAREPOINT_SCOPE,
-            conversationImportMaxFileSize: process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES
-                ? parseInt(process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES, 10)
-                : 0,
-            langfuseFanoutEnabled,
-            langfuseConnectionAccess,
-            insightsEnabled: isEnabled(process.env.ENABLE_INSIGHTS),
-            compactionEnabled: appConfig?.summarization?.enabled !== false,
-            ...(codeEnvironmentDecisionVersion != null ? { codeEnvironmentDecisionVersion } : {}),
-            ...codeEnvironmentMoveCapabilities,
-            ...(codeEnvironmentTransitionVersion != null ? { codeEnvironmentTransitionVersion } : {}),
-            ...(cloudFront ? { cloudFront } : {}),
-            ...(rum ? { rum } : {}),
-            fileUploadSseEnabled: isEnabled(process.env.FILE_UPLOAD_SSE_ENABLED),
-            endpointsDropParamsMap: endpointsDropParamsMap,
-        };
-
-        const webSearch = buildWebSearchConfig(appConfig);
-        if (webSearch) {
-            payload.webSearch = webSearch;
+        if (buildInfoDisabled) {
+          payload.interface.buildInfo = false;
         }
+      }
 
-        const buildInfo = buildBuildInfoPayload(appConfig?.interfaceConfig);
-        if (buildInfo) {
-            payload.buildInfo = buildInfo;
-        }
+      const unauthBuildInfo = buildBuildInfoPayload(interfaceConfig);
+      if (unauthBuildInfo) {
+        payload.buildInfo = unauthBuildInfo;
+      }
 
-        const adminPanelURL = process.env.ADMIN_PANEL_URL;
-        if (adminPanelURL || !payload.allowAccountDeletion) {
-            try {
-                const userId = req.user.id ?? req.user._id?.toString();
-                if (userId) {
-                    const hasAdminAccess = await hasCapability(
-                        { id: userId, role: req.user.role ?? '', tenantId: req.user.tenantId },
-                        SystemCapabilities.ACCESS_ADMIN,
-                    );
-                    if (hasAdminAccess && adminPanelURL) {
-                        payload.adminPanelURL = adminPanelURL;
-                    }
-                    if (hasAdminAccess && !payload.allowAccountDeletion) {
-                        payload.allowAccountDeletion = true;
-                    }
-                }
-            } catch (err) {
-                logger.warn(`[config] ACCESS_ADMIN capability check failed: ${err.message}`);
-            }
-        }
+      await applyBusinessHeaderConfig(payload);
+      payload.balanceEnabled = process.env.CHECK_BALANCE === 'true';
 
-        await applyBusinessHeaderConfig(payload);
-        payload.balanceEnabled = process.env.CHECK_BALANCE === 'true';
-
-        return res.status(200).send(payload);
-    } catch (err) {
-        logger.error('Error in startup config', err);
-        return res.status(500).send({ error: err.message });
+      return res.status(200).send(payload);
     }
+
+    const appConfig = await getAppConfig(getAppConfigOptionsFromUser(req.user));
+    const codeEnvironmentDecisionVersion = resolveCodeEnvironmentDecisionVersion(
+      process.env.CODE_ENVIRONMENT_DECISION_VERSION,
+    );
+    const codeEnvironmentMoveCapabilities = resolveCodeEnvironmentMoveCapabilities(appConfig);
+    const codeEnvironmentTransitionVersion = resolveCodeEnvironmentTransitionVersion(appConfig);
+
+    const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints);
+
+    const balanceConfig = getBalanceConfig(appConfig);
+    const cloudFront = buildCloudFrontStartupConfig();
+    const langfuseFanoutEnabled = isLangfuseFanoutEnabled();
+    const langfuseConnectionAvailable = isLangfuseConnectionAvailable();
+    let langfuseConnectionAccess = false;
+
+    if (langfuseConnectionAvailable) {
+      try {
+        const userId = req.user.id ?? req.user._id?.toString();
+        if (userId) {
+          const capabilityUser = {
+            id: userId,
+            role: req.user.role ?? '',
+            tenantId: req.user.tenantId,
+            idOnTheSource: req.user.idOnTheSource ?? null,
+          };
+          const hasAdminAccess = await hasCapability(
+            capabilityUser,
+            SystemCapabilities.ACCESS_ADMIN,
+          );
+          if (hasAdminAccess) {
+            langfuseConnectionAccess = await hasConfigCapability(capabilityUser, 'langfuse');
+          }
+        }
+      } catch (err) {
+        logger.warn(`[config] Langfuse capability check failed: ${err.message}`);
+      }
+    }
+
+    /** @type {TStartupConfig} */
+    const payload = {
+      ...preLoginPayload,
+      openidLoginMode: resolveOpenIDLoginMode(
+        appConfig?.registration,
+        process.env.OPENID_LOGIN_MODE,
+      ),
+      oauthStateTtlMs: appConfig?.registration?.oauthStateTtlMs,
+      ...publicSharePayload,
+      ...buildPostLoginPayload(),
+      sharedLinksSnapshotFilesEnabled: sharedLinksEnabled && isFileSnapshotEnabled(appConfig),
+      socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
+      interface: appConfig?.interfaceConfig,
+      titleGenerationTiming: resolveTitleTiming({
+        appConfig,
+        endpoint: EModelEndpoint.agents,
+      }),
+      turnstile: appConfig?.turnstileConfig,
+      modelSpecs: sanitizeModelSpecs(excludeHiddenModelSpecs(appConfig?.modelSpecs)),
+      balance: balanceConfig,
+      bundlerURL: process.env.SANDPACK_BUNDLER_URL,
+      staticBundlerURL: process.env.SANDPACK_STATIC_BUNDLER_URL,
+      sharePointFilePickerEnabled,
+      sharePointBaseUrl: process.env.SHAREPOINT_BASE_URL,
+      sharePointPickerGraphScope: process.env.SHAREPOINT_PICKER_GRAPH_SCOPE,
+      sharePointPickerSharePointScope: process.env.SHAREPOINT_PICKER_SHAREPOINT_SCOPE,
+      conversationImportMaxFileSize: process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES
+        ? parseInt(process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES, 10)
+        : 0,
+      langfuseFanoutEnabled,
+      langfuseConnectionAccess,
+      insightsEnabled: isEnabled(process.env.ENABLE_INSIGHTS),
+      compactionEnabled: appConfig?.summarization?.enabled !== false,
+      ...(codeEnvironmentDecisionVersion != null ? { codeEnvironmentDecisionVersion } : {}),
+      ...codeEnvironmentMoveCapabilities,
+      ...(codeEnvironmentTransitionVersion != null ? { codeEnvironmentTransitionVersion } : {}),
+      ...(cloudFront ? { cloudFront } : {}),
+      ...(rum ? { rum } : {}),
+      fileUploadSseEnabled: isEnabled(process.env.FILE_UPLOAD_SSE_ENABLED),
+      endpointsDropParamsMap: endpointsDropParamsMap,
+    };
+
+    const webSearch = buildWebSearchConfig(appConfig);
+    if (webSearch) {
+      payload.webSearch = webSearch;
+    }
+
+    const buildInfo = buildBuildInfoPayload(appConfig?.interfaceConfig);
+    if (buildInfo) {
+      payload.buildInfo = buildInfo;
+    }
+
+    const adminPanelURL = process.env.ADMIN_PANEL_URL;
+    if (adminPanelURL || !payload.allowAccountDeletion) {
+      try {
+        const userId = req.user.id ?? req.user._id?.toString();
+        if (userId) {
+          const hasAdminAccess = await hasCapability(
+            { id: userId, role: req.user.role ?? '', tenantId: req.user.tenantId },
+            SystemCapabilities.ACCESS_ADMIN,
+          );
+          if (hasAdminAccess && adminPanelURL) {
+            payload.adminPanelURL = adminPanelURL;
+          }
+          if (hasAdminAccess && !payload.allowAccountDeletion) {
+            payload.allowAccountDeletion = true;
+          }
+        }
+      } catch (err) {
+        logger.warn(`[config] ACCESS_ADMIN capability check failed: ${err.message}`);
+      }
+    }
+
+    await applyBusinessHeaderConfig(payload);
+    payload.balanceEnabled = process.env.CHECK_BALANCE === 'true';
+
+    return res.status(200).send(payload);
+  } catch (err) {
+    logger.error('Error in startup config', err);
+    return res.status(500).send({ error: err.message });
+  }
 });
 
 module.exports = router;

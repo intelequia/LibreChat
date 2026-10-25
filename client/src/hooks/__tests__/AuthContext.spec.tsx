@@ -18,6 +18,11 @@ import { AuthContextProvider, useAuthContext } from '../AuthContext';
 import { SESSION_KEY } from '~/utils';
 
 const mockNavigate = jest.fn();
+const mockShowToast = jest.fn();
+jest.mock('@librechat/client', () => ({
+  ...jest.requireActual('@librechat/client'),
+  useToastContext: () => ({ showToast: mockShowToast }),
+}));
 jest.mock('react-router-dom', () => ({
   ...jest.requireActual('react-router-dom'),
   useNavigate: () => mockNavigate,
@@ -76,6 +81,7 @@ const authConfig: TAuthConfig = { loginRedirect: '/login', test: true };
 
 function TestConsumer() {
   const ctx = useAuthContext();
+  const logoutLabel = 'Log out';
   return (
     <div
       data-testid="consumer"
@@ -83,7 +89,11 @@ function TestConsumer() {
       data-auth-ready={ctx.isAuthReady}
       data-error={ctx.error ?? ''}
       data-roles={JSON.stringify(ctx.roles ?? {})}
-    />
+    >
+      <button type="button" onClick={() => ctx.logout()}>
+        {logoutLabel}
+      </button>
+    </div>
   );
 }
 
@@ -270,6 +280,68 @@ describe('AuthContextProvider — logout onSuccess/onError handling', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     window.history.replaceState({}, '', '/c/some-chat');
+  });
+
+  describe('AuthContextProvider — embedded popup logout', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.clearAllMocks();
+      jest.spyOn(window, 'top', 'get').mockReturnValue({} as Window);
+      jest.spyOn(QueryClient.prototype, 'getQueriesData').mockReturnValue([
+        [
+          ['startupConfig', true, 'default'],
+          {
+            openidLoginMode: 'popup',
+            openidUseEndSessionEndpoint: true,
+          },
+        ],
+      ]);
+    });
+    afterEach(() => jest.useRealTimers());
+
+    const signIn = () => {
+      const view = renderProvider();
+      act(() => {
+        mockCapturedLoginOptions.onSuccess({
+          user: { id: 'user-1', provider: 'openid' },
+          token: 'token',
+        });
+        jest.advanceTimersByTime(100);
+      });
+      return view;
+    };
+
+    it('opens the logout window during the click and never navigates the iframe to Entra', () => {
+      const popup = {
+        closed: false,
+        close: jest.fn(),
+        location: { replace: jest.fn() },
+      } as unknown as Window;
+      const open = jest.spyOn(window, 'open').mockReturnValue(popup);
+      const replace = jest.spyOn(window.location, 'replace').mockImplementation(() => {});
+      const view = signIn();
+      act(() => view.getByRole('button', { name: 'Log out' }).click());
+      expect(open).toHaveBeenCalledWith(
+        'about:blank',
+        'openid-logout',
+        'popup,width=520,height=700',
+      );
+      act(() =>
+        mockCapturedLogoutOptions.onSuccess({
+          message: 'Logout successful',
+          redirect: 'https://idp.example.com/logout',
+        }),
+      );
+      expect(popup.location.replace).toHaveBeenCalledWith('https://idp.example.com/logout');
+      expect(replace).not.toHaveBeenCalled();
+    });
+
+    it('reports a blocked logout popup so the user can allow it and retry', () => {
+      jest.spyOn(window, 'open').mockReturnValue(null);
+      const view = signIn();
+      act(() => view.getByRole('button', { name: 'Log out' }).click());
+      expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }));
+    });
   });
 
   afterEach(() => {

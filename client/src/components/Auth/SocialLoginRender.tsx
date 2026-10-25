@@ -81,6 +81,8 @@ function SocialLoginRender({
     openid: startupConfig.openidLoginEnabled && (
       <SocialButton
         key="openid"
+        loginMode={startupConfig.openidLoginMode}
+        oauthStateTtlMs={startupConfig.oauthStateTtlMs}
         enabled={startupConfig.openidLoginEnabled}
         serverDomain={startupConfig.serverDomain}
         oauthPath="openid"

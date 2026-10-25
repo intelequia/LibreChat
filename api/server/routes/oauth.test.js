@@ -70,6 +70,8 @@ jest.mock('librechat-data-provider', () => ({
 }));
 
 jest.mock('@librechat/api', () => ({
+  captureOpenIDPopup: jest.requireActual('@librechat/api').captureOpenIDPopup,
+  createOpenIDLoginHandler: jest.requireActual('@librechat/api').createOpenIDLoginHandler,
   buildOAuthFailureLog: (...args) => mockBuildOAuthFailureLog(...args),
   createOpenIDCallbackAuthenticator: (...args) => mockCreateOpenIDCallbackAuthenticator(...args),
   createSetBalanceConfig: jest.fn(() => (_req, _res, next) => next()),
