@@ -10,9 +10,12 @@ import {
 import { debounce } from 'lodash';
 import { getDefaultStore } from 'jotai';
 import { useNavigate } from 'react-router-dom';
+import { useToastContext } from '@librechat/client';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRecoilState, useSetRecoilState } from 'recoil';
 import {
   apiBaseUrl,
+  QueryKeys,
   ErrorTypes,
   SystemRoles,
   setTokenHeader,
@@ -39,6 +42,7 @@ import {
 } from '~/data-provider';
 import { resetChatFilterSessionAtom } from '~/components/Conversations/chatFilters';
 import { TAuthConfig, TUserContext, TAuthContext, TResError } from '~/common';
+import useLocalize from './useLocalize';
 import useTimeout from './useTimeout';
 import store from '~/store';
 
@@ -68,6 +72,10 @@ const AuthContextProvider = ({
   children: ReactNode;
 }) => {
   const isExternalRedirectRef = useRef(false);
+  const logoutPopupRef = useRef<Window | null>(null);
+  const queryClient = useQueryClient();
+  const { showToast } = useToastContext();
+  const localize = useLocalize();
   const [user, setUser] = useRecoilState(store.user);
   const logoutRedirectRef = useRef<string | undefined>(undefined);
   const [token, setToken] = useState<string | undefined>(undefined);
@@ -163,6 +171,27 @@ const AuthContextProvider = ({
   });
   const logoutUser = useLogoutUserMutation({
     onSuccess: (data) => {
+      if (logoutPopupRef.current) {
+        const popup = logoutPopupRef.current;
+        logoutPopupRef.current = null;
+        if (data.redirect && !popup.closed) {
+          popup.location.replace(data.redirect);
+        } else {
+          popup.close();
+          if (data.redirect) {
+            showToast({ message: localize('com_auth_popup_cancelled'), status: 'error' });
+          }
+        }
+        setTokenHeader(undefined);
+        endSessionClientState();
+        setUserContext({
+          token: undefined,
+          isAuthenticated: false,
+          user: undefined,
+          redirect: '/login',
+        });
+        return;
+      }
       if (data.redirect) {
         /** data.redirect is the IdP's end_session_endpoint URL: an absolute URL generated
          * server-side from trusted IdP metadata (not user input), so isSafeRedirect is bypassed.
@@ -183,6 +212,8 @@ const AuthContextProvider = ({
       });
     },
     onError: (error) => {
+      logoutPopupRef.current?.close();
+      logoutPopupRef.current = null;
       endSessionClientState();
       doSetError((error as Error).message);
       setUserContext({
@@ -197,12 +228,26 @@ const AuthContextProvider = ({
 
   const logout = useCallback(
     (redirect?: string) => {
+      const popupLogout = queryClient
+        .getQueriesData<t.TStartupConfig>([QueryKeys.startupConfig])
+        .some(
+          ([, config]) =>
+            config?.openidLoginMode === 'popup' && config.openidUseEndSessionEndpoint === true,
+        );
+      if (popupLogout && user?.provider === 'openid' && window.self !== window.top) {
+        const popup = window.open('about:blank', 'openid-logout', 'popup,width=520,height=700');
+        if (!popup) {
+          showToast({ message: localize('com_auth_popup_blocked'), status: 'error' });
+          return;
+        }
+        logoutPopupRef.current = popup;
+      }
       if (redirect) {
         logoutRedirectRef.current = redirect;
       }
       logoutUser.mutate(undefined);
     },
-    [logoutUser],
+    [logoutUser, queryClient, user?.provider, showToast, localize],
   );
 
   const userQuery = useGetUserQuery({ enabled: !!(token ?? '') });

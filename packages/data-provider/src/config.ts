@@ -2541,6 +2541,9 @@ export type TStartupConfig = {
   openidLabel: string;
   openidImageUrl: string;
   openidAutoRedirect: boolean;
+  openidLoginMode?: 'redirect' | 'popup';
+  openidUseEndSessionEndpoint?: boolean;
+  oauthStateTtlMs?: number;
   samlLabel: string;
   samlImageUrl: string;
   /** LDAP Auth Configuration */
@@ -3210,6 +3213,8 @@ export const configSchema = z.object({
   registration: z
     .object({
       socialLogins: z.array(z.string()).optional(),
+      /** Overrides OPENID_LOGIN_MODE; omitted preserves redirect login. */
+      openidLoginMode: z.enum(['redirect', 'popup']).optional(),
       allowedDomains: z.array(z.string()).optional(),
       /** Milliseconds a started social login may take to reach its callback; defaults to `DEFAULT_OAUTH_STATE_TTL_MS`. */
       oauthStateTtlMs: z.number().int().min(60_000).max(3_600_000).optional(),

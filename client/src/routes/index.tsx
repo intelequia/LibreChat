@@ -14,6 +14,7 @@ import { MarketplaceProvider } from '~/components/Agents/MarketplaceContext';
 import AgentMarketplace from '~/components/Agents/Marketplace';
 import { OAuthSuccess, OAuthError } from '~/components/OAuth';
 import { AuthContextProvider } from '~/hooks/AuthContext';
+import OpenIDPopup from '~/components/OAuth/OpenIDPopup';
 import RouteErrorBoundary from './RouteErrorBoundary';
 import StartupLayout from './Layouts/Startup';
 import LoginLayout from './Layouts/Login';
@@ -86,6 +87,10 @@ export const router = createBrowserRouter(
       path: 'oauth',
       errorElement: <RouteErrorBoundary />,
       children: [
+        {
+          path: 'openid/popup',
+          element: <OpenIDPopup />,
+        },
         {
           path: 'success',
           element: <OAuthSuccess />,

@@ -350,6 +350,10 @@ interface:
 # Example Registration Object Structure (optional)
 registration:
   socialLogins: ['github', 'google', 'discord', 'openid', 'facebook', 'apple', 'saml']
+  # OpenID login presentation: redirect (default) or popup. Overrides OPENID_LOGIN_MODE.
+  # popup keeps Microsoft sign-in outside embedded iframes. OPENID_AUTO_REDIRECT=true
+  # attempts one automatic popup; the button remains available if the browser blocks it.
+  # openidLoginMode: popup
   # allowedDomains:
   # - "gmail.com"
   # How long a started social login may take to return from the provider (ms, default 600000)

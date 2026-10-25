@@ -5,6 +5,7 @@ import type { MongoServerError, ValidationError, CustomError } from '~/types';
 import { MCPAuthenticationRefreshError, MCPAuthenticationRejectedError } from '~/mcp/errors';
 import { buildTenantIsolationErrorLogContext } from './auth';
 import { OpenIDReauthRequiredError } from '~/utils/oidc';
+import { getOpenIDPopupRedirect } from '~/auth/popup';
 
 const handleDuplicateKeyError = (err: MongoServerError, res: Response) => {
   logger.warn('Duplicate key error: ' + (err.errmsg || err.message));
@@ -66,6 +67,16 @@ export const ErrorController = (
       return next();
     }
     const error = err as CustomError;
+
+    const popupRedirect = getOpenIDPopupRedirect(
+      res,
+      process.env.DOMAIN_CLIENT || 'http://localhost:3080',
+      ErrorTypes.AUTH_FAILED,
+    );
+    if (popupRedirect && !res.headersSent) {
+      logger.error('OpenID popup authentication failed', { name: err.name });
+      return res.redirect(popupRedirect);
+    }
 
     if (
       (error.message === ErrorTypes.AUTH_FAILED || error.code === ErrorTypes.AUTH_FAILED) &&

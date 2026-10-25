@@ -384,6 +384,15 @@ describe('setupOpenId', () => {
   describe('authorizationRequestParams', () => {
     const getLoginStrategy = () => require('openid-client/passport').__getStrategyByName('openid');
 
+    it('preserves popup correlation through a nonce even when PKCE is not advertised', () => {
+      const strategy = getLoginStrategy();
+      strategy._sessionKey = 'provider-session';
+      const state = `openid-popup.${'a'.repeat(32)}.server-entropy`;
+      const params = strategy.authorizationRequestParams({}, { state });
+      expect(params.get('state')).toBe(state);
+      expect(params.get('nonce')).toMatch(/^[a-f0-9]{32}$/);
+    });
+
     it('adds a single OpenID audience to authorization requests', () => {
       process.env.OPENID_AUDIENCE = 'librechat';
 
