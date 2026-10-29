@@ -17,6 +17,7 @@ import { ArchivedChatsModal } from '~/components/Nav/SettingsTabs/General/Archiv
 // Intelequia Admin Panel
 import { SystemRoles } from 'librechat-data-provider';
 import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
+import { NewsMenuItem, NewsDialog } from '~/intelequia/news';
 import { useAuthContext } from '~/hooks/AuthContext';
 import { openInNewTab } from '~/utils';
 import { useLocalize } from '~/hooks';
@@ -173,6 +174,7 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
           <GearIcon className="icon-md" aria-hidden="true" />
           {localize('com_nav_settings')}
         </Menu.MenuItem>
+        <NewsMenuItem />
         {/* Intelequia Admin Panel */}
         {user?.role === SystemRoles.ADMIN && (
           <Menu.MenuItem
@@ -197,6 +199,7 @@ function AccountSettings({ collapsed = false }: { collapsed?: boolean }) {
         />
       )}
       {showSettings && <Settings open={showSettings} onOpenChange={setShowSettings} />}
+      <NewsDialog triggerRef={accountSettingsButtonRef} />
     </Menu.MenuProvider>
   );
 }

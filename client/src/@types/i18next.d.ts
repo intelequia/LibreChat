@@ -6,6 +6,7 @@ declare module 'i18next' {
     defaultNS: typeof defaultNS;
     resources: {
       translation: typeof translationEn;
+      'intelequia-news': typeof translationEn;
     };
     strictKeyChecks: true;
   }

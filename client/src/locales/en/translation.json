@@ -1,4 +1,11 @@
 {
+  "com_intelequia_news_title": "What's New",
+  "com_intelequia_news_product": "Intelewriter",
+  "com_intelequia_news_deployed": "Deployed version: {{0}}",
+  "com_intelequia_news_empty": "No release notes are available for this version.",
+  "com_intelequia_news_error": "Release notes could not be loaded.",
+  "com_intelequia_news_source": "Original release notes",
+  "com_intelequia_news_breaking": "Breaking changes",
   "com_ui_background_tasks": "Background tasks",
   "com_ui_background_tasks_cancel_disabled": "Stopping background tools is not enabled on this server",
   "com_ui_background_tasks_checked": "Checked background tasks",
