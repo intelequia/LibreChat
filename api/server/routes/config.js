@@ -3,25 +3,42 @@ const path = require('path');
 const fs = require('fs').promises;
 const {
   isEnabled,
-  isLangfuseConnectionAvailable,
+  resolveEmailChangeSettings,
+  checkEmailConfig,
+  isLangfuseSettingsAvailable,
+  getLangfuseSettingsAccess,
   isLangfuseFanoutEnabled,
   getBalanceConfig,
   getCloudFrontConfig,
   getAppConfigOptionsFromUser,
   resolveBuildInfo,
   resolveTitleTiming,
+  getConversationTitleCapabilities,
   sanitizeModelSpecs,
   excludeHiddenModelSpecs,
   isFileSnapshotEnabled,
   getEndpointsDropParamsMap,
   resolveCodeEnvironmentDecisionVersion,
+  isPasskeyEnabled,
+  buildPreLoginInterface,
+  resolveMaxPasskeysPerUser,
   resolveCodeEnvironmentMoveCapabilities,
+  resolveCodeWorkspaceInheritanceCapability,
   resolveCodeEnvironmentTransitionVersion,
   resolveOpenIDLoginMode,
+  loadConversationListLimits,
+  resolvePullRequestCapabilities,
+  resolvePreLoginAppConfig,
+  withSafePolicyLinks,
 } = require('@librechat/api');
-const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
-const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
-const { hasCapability, hasConfigCapability } = require('~/server/middleware/roles/capabilities');
+const {
+  DEFAULT_MCP_APP_CSP_LIMITS,
+  EModelEndpoint,
+  defaultSocialLogins,
+  resolveMCPAppsPolicy,
+} = require('librechat-data-provider');
+const { logger, SystemCapabilities, configCapability } = require('@librechat/data-schemas');
+const { hasCapability, getHeldCapabilities } = require('~/server/middleware/roles/capabilities');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getRumConfig } = require('~/server/services/Config/rum');
 const { getAppConfig } = require('~/server/services/Config/app');
@@ -134,6 +151,7 @@ function buildPreLoginPayload() {
       !!process.env.APPLE_TEAM_ID &&
       !!process.env.APPLE_KEY_ID &&
       !!process.env.APPLE_PRIVATE_KEY_PATH,
+    passkeyLoginEnabled: isPasskeyEnabled(),
     openidLoginEnabled: isOpenIdEnabled,
     openidLabel: process.env.OPENID_BUTTON_LABEL || 'Continue with OpenID',
     openidImageUrl: process.env.OPENID_IMAGE_URL,
@@ -147,24 +165,9 @@ function buildPreLoginPayload() {
     emailLoginEnabled,
     registrationEnabled: !ldap?.enabled && isEnabled(process.env.ALLOW_REGISTRATION),
     socialLoginEnabled: isEnabled(process.env.ALLOW_SOCIAL_LOGIN),
-    emailEnabled:
-      (!!process.env.EMAIL_SERVICE || !!process.env.EMAIL_HOST) &&
-      !!process.env.EMAIL_USERNAME &&
-      !!process.env.EMAIL_PASSWORD &&
-      !!process.env.EMAIL_FROM,
+    emailEnabled: checkEmailConfig(),
     passwordResetEnabled,
-    showBirthdayIcon:
-      isBirthday() ||
-      isEnabled(process.env.SHOW_BIRTHDAY_ICON) ||
-      process.env.SHOW_BIRTHDAY_ICON === '',
-    helpAndFaqURL: process.env.HELP_AND_FAQ_URL || 'https://librechat.ai',
-    sharedLinksEnabled,
-    publicSharedLinksEnabled,
-    analyticsGtmId: process.env.ANALYTICS_GTM_ID,
-    openidReuseTokens: isEnabled(process.env.OPENID_REUSE_TOKENS),
-    allowAccountDeletion:
-      process.env.ALLOW_ACCOUNT_DELETION === undefined ||
-      isEnabled(process.env.ALLOW_ACCOUNT_DELETION),
+    twoFactorAuthenticationRequired: isEnabled(process.env.ENFORCE_TWO_FACTOR_AUTHENTICATION),
   };
 
   const minPasswordLength = parseInt(process.env.MIN_PASSWORD_LENGTH, 10);
@@ -263,7 +266,7 @@ const applyBusinessHeaderConfig = async (payload) => {
  * openid token-reuse marker) and are not needed on the pre-login screens, so they
  * are not exposed to unauthenticated callers.
  */
-function buildPostLoginPayload() {
+function buildPostLoginPayload(appConfig) {
   /** @type {Partial<TStartupConfig>} */
   const payload = {
     showBirthdayIcon:
@@ -274,10 +277,13 @@ function buildPostLoginPayload() {
     sharedLinksEnabled,
     publicSharedLinksEnabled,
     openidReuseTokens,
+    ragEnabled: Boolean(process.env.RAG_API_URL?.trim()),
     /** Read inline (not module-level) for per-request evaluation and test isolation */
     allowAccountDeletion:
       process.env.ALLOW_ACCOUNT_DELETION === undefined ||
       isEnabled(process.env.ALLOW_ACCOUNT_DELETION),
+    allowEmailChange: resolveEmailChangeSettings(appConfig?.emailChange).enabled,
+    maxPasskeysPerUser: resolveMaxPasskeysPerUser(appConfig?.passkeys),
   };
 
   return payload;
@@ -323,11 +329,9 @@ router.get('/', async function (req, res) {
   try {
     const preLoginPayload = buildPreLoginPayload();
     const publicSharePayload = buildPublicSharePayload();
-    const rum = getRumConfig();
 
     if (!req.user) {
-      const tenantId = getTenantId();
-      const baseConfig = await getAppConfig(tenantId ? { tenantId } : { baseOnly: true });
+      const baseConfig = await resolvePreLoginAppConfig(getAppConfig);
 
       /** @type {Partial<TStartupConfig>} */
       const payload = {
@@ -339,22 +343,13 @@ router.get('/', async function (req, res) {
         oauthStateTtlMs: baseConfig?.registration?.oauthStateTtlMs,
         socialLogins: baseConfig?.registration?.socialLogins ?? defaultSocialLogins,
         turnstile: baseConfig?.turnstileConfig,
-        ...(rum ? { rum } : {}),
+        rum: getRumConfig(baseConfig?.config?.telemetry),
       };
 
       const interfaceConfig = baseConfig?.interfaceConfig;
-      const buildInfoDisabled = interfaceConfig?.buildInfo === false;
-      if (interfaceConfig?.privacyPolicy || interfaceConfig?.termsOfService || buildInfoDisabled) {
-        payload.interface = {};
-        if (interfaceConfig.privacyPolicy) {
-          payload.interface.privacyPolicy = interfaceConfig.privacyPolicy;
-        }
-        if (interfaceConfig.termsOfService) {
-          payload.interface.termsOfService = interfaceConfig.termsOfService;
-        }
-        if (buildInfoDisabled) {
-          payload.interface.buildInfo = false;
-        }
+      const preLoginInterface = buildPreLoginInterface(interfaceConfig);
+      if (preLoginInterface) {
+        payload.interface = preLoginInterface;
       }
 
       const unauthBuildInfo = buildBuildInfoPayload(interfaceConfig);
@@ -368,7 +363,13 @@ router.get('/', async function (req, res) {
       return res.status(200).send(payload);
     }
 
-    const appConfig = await getAppConfig(getAppConfigOptionsFromUser(req.user));
+    const [appConfig, conversationListLimits] = await Promise.all([
+      getAppConfig({
+        ...getAppConfigOptionsFromUser(req.user),
+        failClosed: true,
+      }),
+      loadConversationListLimits(getAppConfig),
+    ]);
     const codeEnvironmentDecisionVersion = resolveCodeEnvironmentDecisionVersion(
       process.env.CODE_ENVIRONMENT_DECISION_VERSION,
     );
@@ -380,10 +381,12 @@ router.get('/', async function (req, res) {
     const balanceConfig = getBalanceConfig(appConfig);
     const cloudFront = buildCloudFrontStartupConfig();
     const langfuseFanoutEnabled = isLangfuseFanoutEnabled();
-    const langfuseConnectionAvailable = isLangfuseConnectionAvailable();
-    let langfuseConnectionAccess = false;
+    const langfuseSettingsAvailable = isLangfuseSettingsAvailable();
+    let canManageLangfuse = false;
+    // Running a sync also requires the prompt-management capability.
+    let langfusePromptManageAccess = false;
 
-    if (langfuseConnectionAvailable) {
+    if (langfuseSettingsAvailable) {
       try {
         const userId = req.user.id ?? req.user._id?.toString();
         if (userId) {
@@ -393,13 +396,18 @@ router.get('/', async function (req, res) {
             tenantId: req.user.tenantId,
             idOnTheSource: req.user.idOnTheSource ?? null,
           };
-          const hasAdminAccess = await hasCapability(
-            capabilityUser,
+          const held = await getHeldCapabilities(capabilityUser, [
             SystemCapabilities.ACCESS_ADMIN,
-          );
-          if (hasAdminAccess) {
-            langfuseConnectionAccess = await hasConfigCapability(capabilityUser, 'langfuse');
-          }
+            SystemCapabilities.MANAGE_CONFIGS,
+            configCapability('langfuse'),
+            SystemCapabilities.MANAGE_PROMPTS,
+          ]);
+          const hasAdminAccess = held.has(SystemCapabilities.ACCESS_ADMIN);
+          canManageLangfuse =
+            hasAdminAccess &&
+            (held.has(SystemCapabilities.MANAGE_CONFIGS) || held.has(configCapability('langfuse')));
+          langfusePromptManageAccess =
+            canManageLangfuse && held.has(SystemCapabilities.MANAGE_PROMPTS);
         }
       } catch (err) {
         logger.warn(`[config] Langfuse capability check failed: ${err.message}`);
@@ -415,10 +423,13 @@ router.get('/', async function (req, res) {
       ),
       oauthStateTtlMs: appConfig?.registration?.oauthStateTtlMs,
       ...publicSharePayload,
-      ...buildPostLoginPayload(),
+      ...buildPostLoginPayload(appConfig),
+      ...getConversationTitleCapabilities(appConfig?.interfaceConfig),
+      conversationListLimits,
       sharedLinksSnapshotFilesEnabled: sharedLinksEnabled && isFileSnapshotEnabled(appConfig),
       socialLogins: appConfig?.registration?.socialLogins ?? defaultSocialLogins,
-      interface: appConfig?.interfaceConfig,
+      projects: appConfig?.projects,
+      interface: withSafePolicyLinks(appConfig?.interfaceConfig),
       titleGenerationTiming: resolveTitleTiming({
         appConfig,
         endpoint: EModelEndpoint.agents,
@@ -436,14 +447,28 @@ router.get('/', async function (req, res) {
         ? parseInt(process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES, 10)
         : 0,
       langfuseFanoutEnabled,
-      langfuseConnectionAccess,
+      ...getLangfuseSettingsAccess(canManageLangfuse),
+      langfusePromptManageAccess,
       insightsEnabled: isEnabled(process.env.ENABLE_INSIGHTS),
+      /** Lets the client skip the pull request lookup entirely when the feature is off. */
+      ...resolvePullRequestCapabilities(appConfig, process.env),
       compactionEnabled: appConfig?.summarization?.enabled !== false,
       ...(codeEnvironmentDecisionVersion != null ? { codeEnvironmentDecisionVersion } : {}),
+      mcpApps: resolveMCPAppsPolicy(
+        appConfig?.mcpSettings?.apps,
+        appConfig?.mcpAppSandbox ?? DEFAULT_MCP_APP_CSP_LIMITS,
+        appConfig?.mcpAppSandbox?.maxPersistedAppBytes,
+        appConfig?.mcpAppSandbox?.maxAdmissionRequestsPerMinute,
+        appConfig?.mcpAppSandbox?.url,
+        appConfig?.mcpAppSandbox?.maxActiveViews,
+        appConfig?.mcpAppSandbox?.maxActionPreviewChars,
+        appConfig?.mcpAppSandbox?.operationLimits,
+      ),
       ...codeEnvironmentMoveCapabilities,
+      ...resolveCodeWorkspaceInheritanceCapability(process.env.CODE_ENVIRONMENT_DECISION_VERSION),
       ...(codeEnvironmentTransitionVersion != null ? { codeEnvironmentTransitionVersion } : {}),
       ...(cloudFront ? { cloudFront } : {}),
-      ...(rum ? { rum } : {}),
+      rum: getRumConfig(appConfig?.config?.telemetry),
       fileUploadSseEnabled: isEnabled(process.env.FILE_UPLOAD_SSE_ENABLED),
       endpointsDropParamsMap: endpointsDropParamsMap,
     };
@@ -485,7 +510,7 @@ router.get('/', async function (req, res) {
     return res.status(200).send(payload);
   } catch (err) {
     logger.error('Error in startup config', err);
-    return res.status(500).send({ error: err.message });
+    return res.status(500).send({ error: 'Failed to load startup config' });
   }
 });
 

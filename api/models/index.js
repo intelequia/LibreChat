@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 const { createMethods } = require('@librechat/data-schemas');
-const { matchModelName, findMatchingPattern, isDeploymentSkillId } = require('@librechat/api');
+const {
+  matchModelName,
+  findMatchingPattern,
+  isDeploymentSkillId,
+  createMessageBudgetReader,
+} = require('@librechat/api');
 const getLogStores = require('~/cache/getLogStores');
 const {
   trackQueryEvent,
@@ -10,11 +15,14 @@ const {
   createGlobalTrackingSpendStructuredTokens,
 } = require('~/utils/intelequia/appInsights');
 
+const messageBudget = createMessageBudgetReader();
+
 const methods = createMethods(mongoose, {
   matchModelName,
   findMatchingPattern,
   isExternalSkillId: isDeploymentSkillId,
   getCache: getLogStores,
+  getMCPAppMessageBudget: messageBudget.getBudget,
 });
 
 configureAppInsights({ pricing: methods, findUser: methods.findUser });
@@ -32,5 +40,6 @@ module.exports = {
   spendStructuredTokens: createGlobalTrackingSpendStructuredTokens(methods.spendStructuredTokens),
   trackQueryEvent,
   trackStartEvent,
+  initializeMessageBudget: messageBudget.initialize,
   seedDatabase,
 };

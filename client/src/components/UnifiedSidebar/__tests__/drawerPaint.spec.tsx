@@ -22,6 +22,7 @@ const mockSidebarState = { isSmallScreen: true, expanded: false, setExpanded: je
 
 jest.mock('@librechat/client', () => ({
   useMediaQuery: () => false,
+  useRemScale: () => 1,
 }));
 
 jest.mock('~/hooks/Nav/useSidebarState', () => ({
@@ -41,11 +42,14 @@ jest.mock('~/hooks/Nav/useUnifiedSidebarLinks', () => ({
 
 jest.mock('~/hooks', () => ({
   useLocalize: () => (key: string) => key,
-  useChatHelpers: () => ({}),
+  useShowMarketplace: () => false,
+}));
+
+jest.mock('~/hooks/Chat/provider', () => ({
+  ChatProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 jest.mock('~/Providers', () => ({
-  ChatContext: { Provider: ({ children }: { children: ReactNode }) => <>{children}</> },
   ChatFormProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   ActivePanelProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
@@ -70,7 +74,7 @@ const drawerVisibility = (expanded: boolean, isSliding: boolean): string => {
   mockSidebarState.expanded = expanded;
   const { unmount } = render(
     <MemoryRouter>
-      <UnifiedSidebar isSliding={isSliding} />
+      <UnifiedSidebar isSliding={isSliding} switchToHistory={true} />
     </MemoryRouter>,
   );
   const drawer = document.getElementById(MOBILE_DRAWER_ID);

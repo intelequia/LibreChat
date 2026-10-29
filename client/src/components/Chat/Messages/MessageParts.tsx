@@ -116,6 +116,7 @@ function MessageParts(props: TMessageProps) {
     >
       <div className="m-auto justify-center px-4 py-3 sm:px-0">
         <MessageRow
+          message={message}
           id={messageId ?? ''}
           icon={author.icon}
           label={author.label}
@@ -162,7 +163,6 @@ function MessageParts(props: TMessageProps) {
                 isEditing={edit}
                 message={message}
                 enterEdit={enterEdit}
-                isSubmitting={isSubmitting}
                 conversation={conversation ?? null}
                 regenerate={() => regenerateMessage()}
                 copyToClipboard={copyToClipboard}
@@ -186,6 +186,7 @@ function MessageParts(props: TMessageProps) {
                 searchResults={searchResults}
                 manualSkills={message.manualSkills}
                 messageId={message.messageId}
+                renderOwnerId={message.clientQueueParentMessageId}
                 authorHeader={isCreatedByUser === true ? undefined : RESUME_AUTHOR_HEADER}
                 setSiblingIdx={setSiblingIdx}
                 isCreatedByUser={message.isCreatedByUser}

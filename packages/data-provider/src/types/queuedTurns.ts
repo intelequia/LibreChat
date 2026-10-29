@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { CODE_APPROVAL_MODES } from '../code/approval';
+import { reasoningOverrideSchema } from '../schemas';
+import { Constants } from '../config';
 
 export const agentQueuedTurnStatuses = [
   'queued',
@@ -25,7 +27,7 @@ export type TAgentQueuedTurnFileRef = z.infer<typeof agentQueuedTurnFileRefSchem
 
 export const enqueueAgentQueuedTurnSchema = z.object({
   conversationId: z.string().trim().min(1),
-  parentMessageId: z.string().trim().min(1),
+  parentMessageId: z.string().trim().min(1).max(Constants.MAX_RESPONSE_MESSAGE_ID_LENGTH),
   clientRequestId: z.string().trim().min(1).max(128),
   text: z.string(),
   files: z.array(agentQueuedTurnFileRefSchema).optional(),
@@ -33,6 +35,7 @@ export const enqueueAgentQueuedTurnSchema = z.object({
   manualSkills: z.array(z.string().trim().min(1)).optional(),
   /** Selected when queued, revalidated against live policy at turn admission. */
   codeApprovalMode: z.enum(CODE_APPROVAL_MODES).optional(),
+  reasoningOverride: reasoningOverrideSchema.optional(),
   priority: z.boolean().optional(),
   expectedPredecessorCreatedAt: z.number().int().nonnegative().optional(),
 });

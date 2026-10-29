@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { ReasoningEffort } from 'librechat-data-provider';
 import { AgentQueuedTurnLaneRetiredError } from '@librechat/data-schemas';
 import type { AgentQueuedTurnMethods, AgentQueuedTurnRecord } from '@librechat/data-schemas';
 import type { Request, Response } from 'express';
@@ -25,6 +26,7 @@ function turn(status: AgentQueuedTurnRecord['status']): AgentQueuedTurnRecord {
     status,
     priority: false,
     text: 'follow up',
+    reasoningOverride: { key: 'reasoning_effort', value: ReasoningEffort.high },
     attempts: status === 'admitted' ? 1 : 0,
     availableAt: new Date('2026-08-30T12:00:00Z'),
     createdAt: new Date('2026-08-30T12:00:00Z'),
@@ -37,10 +39,60 @@ function requestBody() {
     parentMessageId: 'assistant-1',
     clientRequestId: 'client-request-1',
     text: 'follow up',
+    reasoningOverride: { key: 'reasoning_effort', value: ReasoningEffort.high },
   };
 }
 
 describe('Agent queued-turn HTTP admission receipts', () => {
+  it.each(['a'.repeat(257), 'a'.repeat(256) + '_'])(
+    'accepts and replays a queued turn under a maximum-length response parent',
+    async (parentMessageId) => {
+      const saved = { ...turn('queued'), parentMessageId };
+      const enqueue = jest.fn(async () => ({ turn: saved, replayed: false }));
+      const getConvo = jest.fn(async () => ({ agent_id: 'agent_1', endpoint: 'agents' }));
+      const methods = {
+        getConvo,
+        getAgentQueuedTurnByClientRequestId: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(saved),
+        enqueueAgentQueuedTurn: enqueue,
+        listActiveAgentQueuedTurns: jest.fn(async () => [saved]),
+      } as unknown as AgentQueuedTurnMethods & { getConvo: typeof getConvo };
+      const deps = {
+        methods,
+        checkAgentAccess: jest.fn(async () => true),
+        lifecycle: { schedule: jest.fn(), cancel: jest.fn() },
+      } satisfies AgentQueuedTurnHttpDeps;
+      const body = { ...requestBody(), parentMessageId };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await expect(
+          handleAgentQueuedTurnEnqueue({ id: USER_ID }, body, deps),
+        ).resolves.toMatchObject({ status: 202, body: { receipt: { parentMessageId } } });
+      }
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      expect(getConvo).toHaveBeenCalledTimes(1);
+      expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ parentMessageId }));
+    },
+  );
+
+  it('rejects oversized response parents before ownership lookup or persistence', async () => {
+    const getConvo = jest.fn();
+    const enqueueAgentQueuedTurn = jest.fn();
+    const methods = { getConvo, enqueueAgentQueuedTurn } as unknown as AgentQueuedTurnMethods & {
+      getConvo: typeof getConvo;
+    };
+    await expect(
+      handleAgentQueuedTurnEnqueue(
+        { id: USER_ID },
+        { ...requestBody(), parentMessageId: 'a'.repeat(258) },
+        { methods, lifecycle: { schedule: jest.fn(), cancel: jest.fn() } },
+      ),
+    ).resolves.toMatchObject({ status: 400, body: { code: 'INVALID_QUEUED_TURN' } });
+    expect(getConvo).not.toHaveBeenCalled();
+    expect(enqueueAgentQueuedTurn).not.toHaveBeenCalled();
+  });
+
   it('refuses snapshot writes on v1 before ownership lookup or persistence', async () => {
     const getConvo = jest.fn();
     const methods = { getConvo } as unknown as AgentQueuedTurnMethods & {
@@ -209,8 +261,44 @@ describe('Agent queued-turn HTTP admission receipts', () => {
       getAgentQueuedTurnByClientRequestId.mock.calls[0][0],
     );
     expect(enqueueAgentQueuedTurn).toHaveBeenCalledTimes(1);
+    expect(enqueueAgentQueuedTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasoningOverride: { key: 'reasoning_effort', value: ReasoningEffort.high },
+      }),
+    );
     expect(methods.getConvo).toHaveBeenCalledTimes(1);
     expect(schedule).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an idempotent replay when only the reasoning override changes', async () => {
+    const existing = turn('queued');
+    const methods = {
+      getConvo: jest.fn(),
+      getAgentQueuedTurnByClientRequestId: jest.fn(async () => existing),
+      enqueueAgentQueuedTurn: jest.fn(),
+    };
+    const deps = {
+      methods: methods as unknown as AgentQueuedTurnMethods & {
+        getConvo: typeof methods.getConvo;
+      },
+      lifecycle: { schedule: jest.fn(), cancel: jest.fn() },
+    } satisfies AgentQueuedTurnHttpDeps;
+
+    await expect(
+      handleAgentQueuedTurnEnqueue(
+        { id: USER_ID },
+        {
+          ...requestBody(),
+          reasoningOverride: { key: 'reasoning_effort', value: ReasoningEffort.low },
+        },
+        deps,
+      ),
+    ).resolves.toEqual({
+      status: 409,
+      body: { code: 'QUEUED_TURN_IDEMPOTENCY_CONFLICT' },
+    });
+    expect(methods.getConvo).not.toHaveBeenCalled();
+    expect(methods.enqueueAgentQueuedTurn).not.toHaveBeenCalled();
   });
 
   it('surfaces a dead receipt and lets the user dismiss its delivery', async () => {

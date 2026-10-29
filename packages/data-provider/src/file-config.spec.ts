@@ -979,6 +979,15 @@ describe('getEndpointFileConfig', () => {
       expect(merged.skills?.fileSizeLimit).toBe(50 * 1024 * 1024);
     });
 
+    it('defaults whole-Skill deletion concurrency and preserves configured overrides', () => {
+      expect(mergeFileConfig(undefined).skills?.deletionCleanupConcurrency).toBe(8);
+      const parsed = fileConfigSchema.parse({ skills: { deletionCleanupConcurrency: 3 } });
+      expect(mergeFileConfig(parsed).skills?.deletionCleanupConcurrency).toBe(3);
+      expect(
+        fileConfigSchema.safeParse({ skills: { deletionCleanupConcurrency: 0 } }).success,
+      ).toBe(false);
+    });
+
     it.each([0, -1, 1.5])('rejects invalid rollback concurrency %s', (concurrency) => {
       expect(
         fileConfigSchema.safeParse({ skills: { importCleanupConcurrency: concurrency } }).success,
@@ -2221,4 +2230,60 @@ it('selects web-search routing without changing stored route selection', () => {
       routing,
     }),
   ).toBe(false);
+});
+
+describe('mergeFileConfig memoization', () => {
+  it('returns the same instance for the same dynamic object and for undefined', () => {
+    const dynamic = fileConfigSchema.parse({ serverFileSizeLimit: 5 });
+    expect(mergeFileConfig(dynamic)).toBe(mergeFileConfig(dynamic));
+    expect(mergeFileConfig(undefined)).toBe(mergeFileConfig(undefined));
+    expect(mergeFileConfig(fileConfigSchema.parse({ serverFileSizeLimit: 5 }))).not.toBe(
+      mergeFileConfig(dynamic),
+    );
+  });
+
+  it('clears the cache when the regex compiler is swapped', () => {
+    const dynamic = fileConfigSchema.parse({ serverFileSizeLimit: 5 });
+    const before = mergeFileConfig(dynamic);
+    const beforeStatic = mergeFileConfig(undefined);
+    setFileConfigRegexCompiler((pattern) => new RegExp(pattern));
+    expect(mergeFileConfig(dynamic)).not.toBe(before);
+    expect(mergeFileConfig(undefined)).not.toBe(beforeStatic);
+  });
+});
+
+describe('retained file cleanup rollout', () => {
+  it('defaults to retaining embedded files until readers are upgraded', () => {
+    expect(mergeFileConfig(undefined).retainedFileCleanup).toBe(false);
+    expect(mergeFileConfig({}).retainedFileCleanup).toBe(false);
+  });
+
+  it('accepts an explicit activation only after marker-aware reader rollout', () => {
+    expect(mergeFileConfig({ retainedFileCleanup: true }).retainedFileCleanup).toBe(true);
+    expect(mergeFileConfig({ retainedFileCleanup: false }).retainedFileCleanup).toBe(false);
+  });
+});
+
+describe('vector erasure rollout and concurrency settings', () => {
+  it('leaves ownership trust disabled until an operator sets the post-upgrade cutoff', () => {
+    expect(mergeFileConfig(undefined).vectorOwnershipTrackingStart).toBeUndefined();
+    expect(mergeFileConfig(undefined).vectorDeletionConcurrency).toBe(4);
+    const config = fileConfigSchema.parse({
+      vectorOwnershipTrackingStart: '2026-10-26T21:00:00.000Z',
+      vectorDeletionConcurrency: 2,
+    });
+    expect(mergeFileConfig(config)).toEqual(expect.objectContaining(config));
+  });
+  it.each(['not-a-date', '', '2026-10-26'])(
+    'rejects a non-UTC rollout cutoff: %j',
+    (vectorOwnershipTrackingStart) => {
+      expect(fileConfigSchema.safeParse({ vectorOwnershipTrackingStart }).success).toBe(false);
+    },
+  );
+  it.each([0, -1, 1.5, 17])(
+    'rejects unsafe namespace concurrency: %s',
+    (vectorDeletionConcurrency) => {
+      expect(fileConfigSchema.safeParse({ vectorDeletionConcurrency }).success).toBe(false);
+    },
+  );
 });

@@ -23,7 +23,7 @@ const CollapseChat = ({
     : localize('com_ui_collapse_chat');
 
   return (
-    <div className="relative ml-auto items-end justify-end">
+    <div className="relative ms-auto items-end justify-end">
       <TooltipAnchor
         description={description}
         render={
@@ -37,7 +37,7 @@ const CollapseChat = ({
             className={cn(
               // 'absolute right-1.5 top-1.5',
               'z-10 size-5 rounded-full transition-colors',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-text-primary focus-visible:ring-opacity-50',
+              'focus-visible:ring-text-primary/50 focus-visible:ring-2 focus-visible:outline-hidden',
             )}
           >
             <MorphIcon icon={isCollapsed ? ChevronUp : ChevronDown} className="h-full w-full" />
