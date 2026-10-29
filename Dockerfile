@@ -32,6 +32,7 @@ COPY --chown=node:node client/package.json ./client/package.json
 COPY --chown=node:node packages/data-provider/package.json ./packages/data-provider/package.json
 COPY --chown=node:node packages/data-schemas/package.json ./packages/data-schemas/package.json
 COPY --chown=node:node packages/api/package.json ./packages/api/package.json
+COPY --chown=node:node packages/client/package.json ./packages/client/package.json
 COPY --chown=node:node vendor/code ./vendor/code
 COPY --chown=node:node packages/chat/package.json ./packages/chat/package.json
 
@@ -44,14 +45,13 @@ RUN \
     npm config set fetch-retry-maxtimeout 600000 ; \
     npm config set fetch-retries 5 ; \
     npm config set fetch-retry-mintimeout 15000 ; \
-    npm install --force --no-audit; \
     attempt=1 ; \
-    until timeout "$NPM_CI_TIMEOUT_SECONDS" npm ci --no-audit ; do \
+    until timeout "$NPM_CI_TIMEOUT_SECONDS" npm ci --include=optional --no-audit ; do \
         status=$? ; \
         if [ "$attempt" -ge "$NPM_CI_ATTEMPTS" ]; then \
             exit "$status" ; \
         fi ; \
-        echo "npm ci --no-audit failed with exit code $status; retrying attempt $((attempt + 1))/$NPM_CI_ATTEMPTS" ; \
+        echo "npm ci --include=optional --no-audit failed with exit code $status; retrying attempt $((attempt + 1))/$NPM_CI_ATTEMPTS" ; \
         attempt=$((attempt + 1)) ; \
         npm cache clean --force || true ; \
         sleep 10 ; \
