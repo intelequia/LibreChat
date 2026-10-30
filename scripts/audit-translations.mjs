@@ -27,6 +27,7 @@ Options:
   --model <deployment>     Azure deployment; defaults to the YAML gpt-4.1-nano deployment
   --batch-size <number>    Azure request batch size (default: ${defaultBatchSize})
   --limit <number>         Limit the number of values sent to Azure
+  --omit-temperature       Omit temperature for models that only support the default
   --key <key[,key...]>     Limit the report and Azure review to selected keys
   --output <file>          Write the complete report as JSON
   --translation-output <file>
@@ -47,6 +48,7 @@ function parseArgs(argumentsList) {
     azure: false,
     onlySuspicious: false,
     translateMissing: false,
+    omitTemperature: false,
     model: undefined,
     batchSize: defaultBatchSize,
     limit: undefined,
@@ -81,6 +83,10 @@ function parseArgs(argumentsList) {
     }
     if (argument === '--translate-missing') {
       options.translateMissing = true;
+      continue;
+    }
+    if (argument === '--omit-temperature') {
+      options.omitTemperature = true;
       continue;
     }
     if (argument === '--strict') {
@@ -336,7 +342,7 @@ async function reviewBatch(client, deployment, entries) {
   return reviews;
 }
 
-async function translateBatch(client, deployment, entries) {
+async function translateBatch(client, deployment, entries, omitTemperature) {
   if (entries.some((entry) => typeof entry.english !== 'string')) {
     throw new Error('Azure translation requires every English value to be a string');
   }
@@ -359,7 +365,7 @@ async function translateBatch(client, deployment, entries) {
       },
     ],
     response_format: { type: 'json_object' },
-    temperature: 0,
+    ...(omitTemperature ? {} : { temperature: 0 }),
   });
   const content = response.choices[0]?.message?.content;
   if (typeof content !== 'string' || !content.trim()) {
@@ -407,13 +413,13 @@ async function translateBatch(client, deployment, entries) {
   return translations;
 }
 
-async function translateBatchWithFallback(client, deployment, entries) {
+async function translateBatchWithFallback(client, deployment, entries, omitTemperature) {
   try {
-    return await translateBatch(client, deployment, entries);
+    return await translateBatch(client, deployment, entries, omitTemperature);
   } catch (error) {
     if (entries.length === 1) {
       try {
-        return await translateBatch(client, deployment, entries);
+        return await translateBatch(client, deployment, entries, omitTemperature);
       } catch (retryError) {
         throw new Error(`${retryError.message} (initial error: ${error.message})`);
       }
@@ -423,7 +429,12 @@ async function translateBatchWithFallback(client, deployment, entries) {
     const translations = new Map();
     const parts = [entries.slice(0, midpoint), entries.slice(midpoint)];
     for (const part of parts) {
-      const partTranslations = await translateBatchWithFallback(client, deployment, part);
+      const partTranslations = await translateBatchWithFallback(
+        client,
+        deployment,
+        part,
+        omitTemperature,
+      );
       for (const [key, translation] of partTranslations) translations.set(key, translation);
     }
     return translations;
@@ -486,6 +497,7 @@ async function translateWithAzure(entries, options) {
         reviewer.client,
         reviewer.deployment,
         batch,
+        options.omitTemperature,
       );
       for (const [key, translation] of batchTranslations) translations.set(key, translation);
     } catch (error) {
@@ -690,15 +702,15 @@ function printSummary(report, options) {
 function hasIssues(report) {
   return Boolean(
     report.counts.missingInSpanish ||
-      report.counts.extraInSpanish ||
-      report.counts.emptySpanish ||
-      report.counts.keyUsedAsValue ||
-      report.counts.placeholderMismatches ||
-      report.counts.nonStringValues ||
-      report.ai.untranslated.length ||
-      report.ai.uncertain.length ||
-      report.ai.errors.length ||
-      report.translation?.errors?.length,
+    report.counts.extraInSpanish ||
+    report.counts.emptySpanish ||
+    report.counts.keyUsedAsValue ||
+    report.counts.placeholderMismatches ||
+    report.counts.nonStringValues ||
+    report.ai.untranslated.length ||
+    report.ai.uncertain.length ||
+    report.ai.errors.length ||
+    report.translation?.errors?.length,
   );
 }
 

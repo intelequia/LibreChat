@@ -53,6 +53,7 @@ const {
   createStreamServices,
   agentStartupIngressMiddleware,
   agentStartupTelemetryMiddleware,
+  createMaintenanceMiddleware,
   initializeFileStorage,
   initializeDeploymentSkills,
   initializeDeploymentPlugins,
@@ -335,10 +336,10 @@ const startServer = async () => {
   }
 
   /* The composer lays out against whether a footer bar sits beneath it, and
-     `/api/config` answers that only after it has painted. One shell serves every
-     request, before there is a caller whose overrides could be resolved, so the
-     answer is the deployment's base configuration; `/api/config` resolves the
-     caller's and the client prefers it. */
+    `/api/config` answers that only after it has painted. One shell serves every
+    request, before there is a caller whose overrides could be resolved, so the
+    answer is the deployment's base configuration; `/api/config` resolves the
+    caller's and the client prefers it. */
   indexHTML = injectConfiguredFooterBootstrap(indexHTML, {
     customFooter: process.env.CUSTOM_FOOTER,
     landingFooter: appConfig?.interfaceConfig?.landingFooter,
@@ -393,6 +394,13 @@ const startServer = async () => {
   app.use('/api/agents/chat', agentStartupIngressMiddleware);
   app.use(metricsMiddleware);
   app.use(noIndex);
+  app.use(
+    createMaintenanceMiddleware({
+      enabled: isEnabled(process.env.MAINTENANCE_MODE),
+      pagePath: process.env.MAINTENANCE_HTML_PATH,
+      fallbackPagePath: path.join(appConfig.paths.dist, 'maintenance.html'),
+    }),
+  );
   app.use(excludeRumBodyParser(express.json({ limit: '3mb' })));
   app.use(excludeRumBodyParser(express.urlencoded({ extended: true, limit: '3mb' })));
   app.use(handleJsonParseError);

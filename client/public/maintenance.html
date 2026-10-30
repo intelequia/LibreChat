@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="theme-color" content="#f3f5f1" />
+  <title>Mantenimiento del servicio</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18343d;
+      --muted: #5b6d72;
+      --paper: #f3f5f1;
+      --line: #d7dfdc;
+      --cyan: #00a9c7;
+      --gold: #d7963f;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      display: flex;
+      min-height: 100vh;
+      flex-direction: column;
+      margin: 0;
+      border-left: 8px solid var(--cyan);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(#18343d08 1px, transparent 1px),
+        linear-gradient(90deg, #18343d08 1px, transparent 1px);
+      background-size: 40px 40px;
+      color: var(--ink);
+      font-family: 'Aptos', 'Segoe UI', sans-serif;
+    }
+
+    header,
+    main,
+    footer {
+      width: min(1120px, calc(100% - 64px));
+      margin-inline: auto;
+    }
+
+    header {
+      display: flex;
+      min-height: 100px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .brand-mark {
+      width: 10px;
+      height: 10px;
+      background: var(--cyan);
+    }
+
+    .service-name {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .status-label,
+    .eyebrow,
+    .note-label {
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status-label {
+      color: var(--muted);
+    }
+
+    main {
+      display: grid;
+      flex: 1;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      align-items: center;
+      gap: 80px;
+      padding-block: 80px;
+      animation: arrive 420ms ease-out both;
+    }
+
+    .message {
+      max-width: 700px;
+    }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #176875;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--gold);
+    }
+
+    h1 {
+      max-width: 700px;
+      margin: 24px 0;
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 58px;
+      font-weight: 500;
+      letter-spacing: 0;
+      line-height: 1.08;
+    }
+
+    h1 span {
+      color: #167889;
+    }
+
+    .description {
+      max-width: 570px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.7;
+    }
+
+    .service-note {
+      align-self: end;
+      margin-bottom: 10px;
+      padding: 18px 0 18px 22px;
+      border-left: 2px solid var(--cyan);
+    }
+
+    .note-label {
+      display: block;
+      margin-bottom: 14px;
+      color: var(--muted);
+    }
+
+    .note-copy {
+      margin: 0;
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 23px;
+      line-height: 1.35;
+    }
+
+    footer {
+      display: flex;
+      min-height: 72px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    footer p {
+      margin: 0;
+    }
+
+    @keyframes arrive {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 720px) {
+
+      header,
+      main,
+      footer {
+        width: min(100% - 40px, 560px);
+      }
+
+      header {
+        min-height: 82px;
+        align-items: flex-start;
+        flex-direction: column;
+        justify-content: center;
+        gap: 12px;
+        padding-block: 14px;
+      }
+
+      .brand {
+        gap: 12px;
+      }
+
+      .service-name {
+        font-size: 12px;
+      }
+
+      .status-label {
+        max-width: none;
+        font-size: 11px;
+        text-align: left;
+      }
+
+      main {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 48px;
+        padding-block: 64px;
+      }
+
+      h1 {
+        font-size: 42px;
+      }
+
+      .description {
+        font-size: 16px;
+      }
+
+      .service-note {
+        max-width: 400px;
+        margin: 0;
+      }
+
+      footer {
+        align-items: flex-start;
+        flex-direction: column;
+        justify-content: center;
+        gap: 8px;
+        padding-block: 18px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      main {
+        animation: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="service-name">SERVICE STATUS</span>
+    </div>
+    <span class="status-label">Servicio temporalmente no disponible</span>
+  </header>
+
+  <main>
+    <section class="message" aria-labelledby="maintenance-title">
+      <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span>Mantenimiento</p>
+      <h1 id="maintenance-title">Estamos realizando tareas de <span>mantenimiento.</span></h1>
+      <p class="description">
+        Este servicio está temporalmente no disponible mientras hacemos algunas mejoras. Vuelve a
+        intentarlo en unos minutos.
+      </p>
+    </section>
+
+    <aside class="service-note" aria-label="Contacto de soporte">
+      <span class="note-label">¿NECESITAS AYUDA?</span>
+      <p class="note-copy">Contacta con el equipo de soporte de tu organización.</p>
+    </aside>
+  </main>
+
+  <footer>
+    <p>Servicio temporalmente no disponible</p>
+    <p>Gracias por tu paciencia.</p>
+  </footer>
+</body>
+
+</html>

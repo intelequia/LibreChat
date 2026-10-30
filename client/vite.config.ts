@@ -22,15 +22,12 @@ const require = createRequire(import.meta.url);
  * the shim specifiers to absolute paths via CJS require.resolve anchored to the client directory.
  */
 const NODE_POLYFILL_SHIMS: Record<string, string> = {
-  'vite-plugin-node-polyfills/shims/process': require.resolve(
-    'vite-plugin-node-polyfills/shims/process',
-  ),
-  'vite-plugin-node-polyfills/shims/buffer': require.resolve(
-    'vite-plugin-node-polyfills/shims/buffer',
-  ),
-  'vite-plugin-node-polyfills/shims/global': require.resolve(
-    'vite-plugin-node-polyfills/shims/global',
-  ),
+  'vite-plugin-node-polyfills/shims/process':
+    require.resolve('vite-plugin-node-polyfills/shims/process'),
+  'vite-plugin-node-polyfills/shims/buffer':
+    require.resolve('vite-plugin-node-polyfills/shims/buffer'),
+  'vite-plugin-node-polyfills/shims/global':
+    require.resolve('vite-plugin-node-polyfills/shims/global'),
 };
 
 // https://vitejs.dev/config/
@@ -519,7 +516,8 @@ export function sourcemapExclude(opts?: SourcemapExclude): Plugin {
 /**
  * Production builds set `publicDir: false`, so nothing under public/ reaches dist on its
  * own. This copies what the server actually has to serve: all of public/assets (the PWA
- * icons plus the endpoint, tool and language logos referenced at runtime) and robots.txt.
+ * icons plus the endpoint, tool and language logos referenced at runtime), robots.txt and
+ * the maintenance page served by the API when maintenance mode is enabled.
  * The font files live in the component library (`packages/client/src/theme/fonts`) and are
  * emitted as bundle assets through the `@font-face` rules `tokens.css` imports, so only their
  * licence texts are copied, next to them in assets/fonts: the SIL OFL lets a font be
@@ -549,6 +547,10 @@ export function copyPublicAssets(): Plugin {
       await fs.promises.copyFile(
         path.join(publicDir, 'robots.txt'),
         path.join(outDir, 'robots.txt'),
+      );
+      await fs.promises.copyFile(
+        path.join(publicDir, 'maintenance.html'),
+        path.join(outDir, 'maintenance.html'),
       );
       const licences = (await fs.promises.readdir(fontsDir)).filter((name) =>
         name.endsWith('.txt'),

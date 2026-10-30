@@ -8,6 +8,10 @@
 
 # Specific patterns to ignore
 data-node
+data/
+uploads/
+logs/
+cron-logs/
 meili_data*
 librechat*
 Dockerfile*
@@ -16,6 +20,7 @@ docs
 docker-compose.override.yml
 librechat.yml
 intelequia-config/nginx/certbot
+intelequia-config/azure-artifacts.npmrc
 
 # Ignore all hidden files
 .*
