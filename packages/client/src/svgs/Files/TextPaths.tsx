@@ -1,4 +1,4 @@
-export default function TextPaths() {
+export default function TextPaths(): React.JSX.Element {
   return (
     <>
       <path

@@ -270,4 +270,5 @@ function filterAssistants({ assistants, userId, assistantsConfig }) {
 module.exports = {
   getOpenAIClient,
   fetchAssistants,
+  filterAssistants,
 };

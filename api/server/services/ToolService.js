@@ -1,4 +1,4 @@
-const { logger, redactMessage, getTenantId } = require('@librechat/data-schemas');
+const { logger, getTenantId } = require('@librechat/data-schemas');
 const { tool: toolFn, DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
 const {
   sleep,
@@ -14,6 +14,7 @@ const {
   createAuthIdentityContext,
   selectMCPUpstreamTokenProvider,
   loadToolDefinitions,
+  orderMCPServerNames,
   createMCPToolApprovalMetadata,
   GenerationJobManager,
   isActionDomainAllowed,
@@ -26,13 +27,11 @@ const {
   buildWebSearchDynamicContext,
   getCodeApiAuthHeaders,
   getReplayablePendingMCPOAuthStart,
+  getReplayablePendingMCPOAuthStarts,
   getMCPServerNamesFromTools,
   createMCPOAuthDeferral,
-  buildMCPAuthToolCall,
-  buildMCPAuthStepId,
-  buildMCPAuthRunStepEvent,
-  buildMCPAuthRunStepDeltaEvent,
-  buildMCPAuthRunStepCompletedEvent,
+  createMCPInitializationOAuthPrompts,
+  shouldAwaitOAuthSignIn,
   inspectContentWithTraversal,
   ContentFilterError,
   assertModelBoundContent,
@@ -64,6 +63,7 @@ const {
   withRequestCodeInputs,
   resolveAgentCodeExecution,
   resolveCodeExecutionWorkspaceContext,
+  requiresCodeWorkspaceCapabilities,
   resolveRunFileCodeExecutionContext,
   resolveCallerCapabilityProjectionSnapshot,
   CREATE_FILE_TOOL_NAME,
@@ -78,6 +78,9 @@ const {
   appendAssistantMCPAppArtifact,
   resolveMCPClientCapabilityProfile,
   getOutboundTimeoutMs,
+  getToolErrorText,
+  setMissingCodeFilesContext,
+  getAssistantRun,
 } = require('@librechat/api');
 const {
   Time,
@@ -310,8 +313,8 @@ const registerActionTools = ({
     if (toolToAction.has(key)) {
       logger.warn(
         `[Actions] operationId collision: "${key}" already registered; ` +
-          `action "${entry.action?.action_id}" overwrites the previous entry. ` +
-          `Two actions share both the operationId and the encoded hostname.`,
+        `action "${entry.action?.action_id}" overwrites the previous entry. ` +
+        `Two actions share both the operationId and the encoded hostname.`,
       );
     }
     toolToAction.set(key, entry);
@@ -368,14 +371,17 @@ const processVisionRequest = async (client, currentAction) => {
   /** @type {ChatCompletion | undefined} */
   const completion = await client.visionPromise;
   if (completion && completion.usage) {
-    await recordUsage({
-      user: client.req.user.id,
-      model: client.req.body.model,
-      conversationId: (client.responseMessage ?? client.finalMessage).conversationId,
-      endpoint: client.req.body.endpoint,
-      ...completion.usage,
-      transactions: getTransactionsConfig(client.req.config),
-    });
+    /** Not awaited, so the run's drain has to wait for it. */
+    getAssistantRun(client.req).track(
+      recordUsage({
+        user: client.req.user.id,
+        model: client.req.body.model,
+        conversationId: (client.responseMessage ?? client.finalMessage).conversationId,
+        endpoint: client.req.body.endpoint,
+        ...completion.usage,
+        transactions: getTransactionsConfig(client.req.config),
+      }),
+    );
   }
   const output = completion?.choices?.[0]?.message?.content ?? 'No image details found.';
   return {
@@ -495,6 +501,8 @@ async function processRequiredActions(client, requiredActions) {
   }, {});
 
   const promises = [];
+  /** A later action that fails to start must not strand the tools already running. */
+  const assistantRun = getAssistantRun(client.req);
 
   let actionSetsData = null;
   let isActionTool = false;
@@ -735,7 +743,7 @@ async function processRequiredActions(client, requiredActions) {
       const output = getSafeRequiredActionOutput(
         client,
         currentAction,
-        `Error processing tool ${currentAction.tool}: ${redactMessage(error.message, 256)}`,
+        `Error processing tool ${currentAction.tool}: ${getToolErrorText(error)}`,
       );
       return {
         tool_call_id: currentAction.toolCallId,
@@ -748,7 +756,7 @@ async function processRequiredActions(client, requiredActions) {
         ._call(currentAction.toolInput)
         .then(handleToolOutput)
         .catch(handleToolError);
-      promises.push(promise);
+      promises.push(assistantRun.track(promise));
     } catch (error) {
       const toolOutputError = handleToolError(error);
       promises.push(Promise.resolve(toolOutputError));
@@ -844,6 +852,7 @@ async function loadToolDefinitionsWrapper({
   agentResourceType,
   streamId = null,
   jobCreatedAt,
+  unattended,
   tool_resources,
   codeExecutionContext,
   attachedEnvironmentOptOut,
@@ -972,8 +981,8 @@ async function loadToolDefinitionsWrapper({
     serverNames: mcpServerNames,
     rawServerNames: mcpRawServerNames = [],
   } = hasFilteredMCPTools
-    ? await resolveMcpServerContext(req)
-    : { configServers: {}, serverNames: [], rawServerNames: [] };
+      ? await resolveMcpServerContext(req)
+      : { configServers: {}, serverNames: [], rawServerNames: [] };
 
   /**
    * Shadowed servers must not emit definitions: their normalized function
@@ -1041,9 +1050,16 @@ async function loadToolDefinitionsWrapper({
   const flowManager = getFlowStateManager(flowsCache);
   const pendingOAuthServers = new Set();
   const pendingOAuthStarts = new Map();
-  const emittedOAuthStarts = new Map();
-  const oauthToolCallIds = new Map();
-  const oauthStepIndexes = new Map();
+  const initializationOAuth = createMCPInitializationOAuthPrompts({
+    userId: req.user.id,
+    res,
+    sendEvent,
+    jobs: GenerationJobManager,
+    streamId,
+    jobCreatedAt,
+    unattended,
+    logger,
+  });
   /** @type {Record<string, import('@librechat/api').LCAvailableTools>} */
   const mcpAvailableTools = {};
   const requestScopedMCPConfigs = new Map();
@@ -1069,83 +1085,6 @@ async function loadToolDefinitionsWrapper({
       return;
     }
     mcpAvailableTools[serverName] = availableTools;
-  };
-
-  const createOAuthEmitter = (serverName, index) => {
-    return async (authURL, options) => {
-      if (emittedOAuthStarts.get(serverName) === authURL) {
-        return;
-      }
-      emittedOAuthStarts.set(serverName, authURL);
-
-      const flowId =
-        oauthToolCallIds.get(serverName) ?? `${req.user.id}:${serverName}:${Date.now()}`;
-      const stepId = buildMCPAuthStepId(serverName);
-      oauthToolCallIds.set(serverName, flowId);
-      oauthStepIndexes.set(serverName, index);
-      const toolCall = buildMCPAuthToolCall({
-        id: flowId,
-        serverName,
-      });
-
-      const runStepEvent = buildMCPAuthRunStepEvent({ stepId, toolCall, index });
-      const runStepDeltaEvent = buildMCPAuthRunStepDeltaEvent({
-        authURL,
-        stepId,
-        toolCall,
-        options,
-      });
-
-      if (streamId) {
-        await GenerationJobManager.emitChunk(streamId, runStepEvent, {
-          expectedCreatedAt: jobCreatedAt,
-        });
-        await GenerationJobManager.emitChunk(streamId, runStepDeltaEvent, {
-          expectedCreatedAt: jobCreatedAt,
-        });
-      } else if (res && !res.writableEnded) {
-        sendEvent(res, runStepEvent);
-        sendEvent(res, runStepDeltaEvent);
-      } else {
-        logger.warn('[Tool Definitions] Cannot emit MCP OAuth event', {
-          hasStreamId: Boolean(streamId),
-          hasResponse: Boolean(res),
-          responseEnded: Boolean(res?.writableEnded),
-        });
-      }
-    };
-  };
-
-  const createOAuthEndEmitter = (serverName) => {
-    return async () => {
-      const stepId = buildMCPAuthStepId(serverName);
-      const toolCall = buildMCPAuthToolCall({
-        id: oauthToolCallIds.get(serverName),
-        args: '',
-        output: 'OAuth authentication completed',
-        serverName,
-        type: 'tool_call',
-      });
-      const runStepCompletedEvent = buildMCPAuthRunStepCompletedEvent({
-        stepId,
-        toolCall,
-        index: oauthStepIndexes.get(serverName) ?? 0,
-      });
-
-      if (streamId) {
-        await GenerationJobManager.emitChunk(streamId, runStepCompletedEvent, {
-          expectedCreatedAt: jobCreatedAt,
-        });
-      } else if (res && !res.writableEnded) {
-        sendEvent(res, runStepCompletedEvent);
-      } else {
-        logger.warn('[Tool Definitions] Cannot emit MCP OAuth completion', {
-          hasStreamId: Boolean(streamId),
-          hasResponse: Boolean(res),
-          responseEnded: Boolean(res?.writableEnded),
-        });
-      }
-    };
   };
 
   const getPendingOAuthStartForEmit = async (serverName) => {
@@ -1278,6 +1217,7 @@ async function loadToolDefinitionsWrapper({
       user: req.user,
       streamId,
       jobCreatedAt,
+      unattended,
       oauthStart,
       flowManager,
       serverName,
@@ -1314,6 +1254,7 @@ async function loadToolDefinitionsWrapper({
       user: req.user,
       streamId,
       jobCreatedAt,
+      unattended,
       forceNew: true,
       oauthStart,
       flowManager,
@@ -1366,7 +1307,7 @@ async function loadToolDefinitionsWrapper({
       if (!isDomainAllowed) {
         logger.warn(
           `[Actions] Domain "${action.metadata.domain}" not in allowedDomains. ` +
-            `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
+          `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
         );
         continue;
       }
@@ -1409,6 +1350,7 @@ async function loadToolDefinitionsWrapper({
     mcpToolAliases,
     mcpResolution,
     oauthActionToolNames,
+    mcpServerLookupOrder,
   } = await loadToolDefinitions(
     {
       userId: req.user.id,
@@ -1426,6 +1368,7 @@ async function loadToolDefinitionsWrapper({
       mcpServerNames,
       rawServerNames: mcpRawServerNames,
       accessibleServerNames: defsAccessibleServerNames,
+      mcpCatalogLookups: appConfig?.concurrency?.mcpCatalogLookups,
     },
     {
       isBuiltInTool,
@@ -1437,70 +1380,76 @@ async function loadToolDefinitionsWrapper({
 
   /** OAuth discovery must not reconnect (or prompt for) a server whose
    *  definitions the collision filter deliberately rejected. */
-  for (const serverName of getMCPServerNamesFromTools(defsFilteredTools, mcpServerNames)) {
-    if (oauthDeferral.hasSignInDecision(serverName)) {
-      continue;
-    }
-
-    const pendingOAuthStart = await getReplayablePendingMCPOAuthStart({
-      flowManager,
-      userId: req.user.id,
-      serverName,
-    });
-    if (pendingOAuthStart) {
-      pendingOAuthServers.add(serverName);
-      pendingOAuthStarts.set(serverName, pendingOAuthStart);
-    }
+  const discoveredOAuthStarts = await getReplayablePendingMCPOAuthStarts({
+    flowManager,
+    userId: req.user.id,
+    serverNames: getMCPServerNamesFromTools(defsFilteredTools, mcpServerNames),
+    skip: (serverName) => oauthDeferral.hasSignInDecision(serverName),
+  });
+  for (const [serverName, pendingOAuthStart] of discoveredOAuthStarts) {
+    pendingOAuthServers.add(serverName);
+    pendingOAuthStarts.set(serverName, pendingOAuthStart);
   }
 
-  if (pendingOAuthServers.size > 0 && (res || streamId)) {
-    const serverNames = Array.from(pendingOAuthServers);
+  if (
+    shouldAwaitOAuthSignIn({
+      res,
+      streamId,
+      unattended,
+      pending: pendingOAuthServers.size,
+      logger,
+    })
+  ) {
+    const serverNames = orderMCPServerNames(pendingOAuthServers, mcpServerLookupOrder);
     logger.info(
       `[Tool Definitions] MCP OAuth required for ${serverNames.length} server(s); emitting events and waiting`,
     );
 
-    const oauthWaitPromises = serverNames.map(async (serverName, index) => {
-      try {
-        const pendingOAuthStart = await getPendingOAuthStartForEmit(serverName);
-        const oauthStart = createOAuthEmitter(serverName, index);
-        if (pendingOAuthStart) {
-          await oauthStart(pendingOAuthStart.authURL, pendingOAuthStart.options);
-        }
+    const oauthWaitPromises = serverNames.map((serverName, index) => {
+      const oauthPrompt = initializationOAuth.forServer(serverName, index);
+      return oauthPrompt.run(async () => {
+        try {
+          const pendingOAuthStart = await getPendingOAuthStartForEmit(serverName);
+          const oauthStart = oauthPrompt.start;
+          if (pendingOAuthStart) {
+            await oauthStart(pendingOAuthStart.authURL, pendingOAuthStart.options);
+          }
 
-        const result = await reinitMCPServer({
-          signal,
-          user: req.user,
-          streamId,
-          jobCreatedAt,
-          serverName,
-          configServers,
-          userMCPAuthMap,
-          flowManager,
-          requestBody: runtimeRequestBody,
-          returnOnOAuth: false,
-          oauthStart,
-          oauthEnd: createOAuthEndEmitter(serverName),
-          connectionTimeout: Time.TWO_MINUTES,
-          upstreamTokenProvider,
-          upstreamTokenProviderResolver,
-          oboIdentityContext,
-          recoveryPolicy: appConfig?.mcpSettings?.catalogRecovery,
-          mcpApps,
-        });
+          const result = await reinitMCPServer({
+            signal,
+            user: req.user,
+            streamId,
+            jobCreatedAt,
+            serverName,
+            configServers,
+            userMCPAuthMap,
+            flowManager,
+            requestBody: runtimeRequestBody,
+            returnOnOAuth: false,
+            oauthStart,
+            oauthEnd: oauthPrompt.end,
+            connectionTimeout: Time.TWO_MINUTES,
+            upstreamTokenProvider,
+            upstreamTokenProviderResolver,
+            oboIdentityContext,
+            recoveryPolicy: appConfig?.mcpSettings?.catalogRecovery,
+            mcpApps,
+          });
 
-        if (result?.availableTools && Object.keys(result.availableTools).length > 0) {
-          rememberMCPAvailableTools(serverName, result.availableTools);
-          logger.info('[Tool Definitions] MCP OAuth completed; tools available');
-          return { serverName, success: true };
+          if (result?.availableTools && Object.keys(result.availableTools).length > 0) {
+            rememberMCPAvailableTools(serverName, result.availableTools);
+            logger.info('[Tool Definitions] MCP OAuth completed; tools available');
+            return { serverName, success: true };
+          }
+          return { serverName, success: false };
+        } catch (error) {
+          if (isFatalAgentInitializationError(error, { signal })) {
+            throw error;
+          }
+          logger.debug('[Tool Definitions] MCP OAuth wait failed for one server');
+          return { serverName, success: false };
         }
-        return { serverName, success: false };
-      } catch (error) {
-        if (isFatalAgentInitializationError(error, { signal })) {
-          throw error;
-        }
-        logger.debug('[Tool Definitions] MCP OAuth wait failed for one server');
-        return { serverName, success: false };
-      }
+      });
     });
 
     const results = await Promise.all(oauthWaitPromises);
@@ -1529,6 +1478,7 @@ async function loadToolDefinitionsWrapper({
           mcpServerNames,
           rawServerNames: mcpRawServerNames,
           accessibleServerNames: defsAccessibleServerNames,
+          mcpCatalogLookups: appConfig?.concurrency?.mcpCatalogLookups,
         },
         {
           isBuiltInTool,
@@ -1574,7 +1524,7 @@ async function loadToolDefinitionsWrapper({
   let codeContextEntries;
   if (hasExecuteCode && tool_resources) {
     try {
-      const { toolContext, files, contextFiles } = await primeCodeFiles({
+      const { toolContext, files, contextFiles, missingFilesContext } = await primeCodeFiles({
         req,
         tool_resources,
         agentId: agent.id,
@@ -1591,6 +1541,7 @@ async function loadToolDefinitionsWrapper({
       if (toolContext) {
         dynamicToolContextMap[Tools.execute_code] = toolContext;
       }
+      setMissingCodeFilesContext(dynamicToolContextMap, missingFilesContext);
       if (files?.length) {
         primedCodeFiles = files;
       }
@@ -1663,6 +1614,7 @@ async function loadToolDefinitionsWrapper({
     dynamicToolContextMap,
     toolDefinitions,
     hasDeferredTools,
+    deferredToolsEnabled,
     mcpToolAliases,
     actionsEnabled,
     primedCodeFiles,
@@ -1710,6 +1662,7 @@ async function loadAgentTools({
   openAIApiKey,
   streamId = null,
   jobCreatedAt,
+  unattended,
   definitionsOnly = true,
   codeExecutionContext: providedCodeExecutionContext,
   attachedEnvironmentOptOut,
@@ -1729,6 +1682,7 @@ async function loadAgentTools({
         agentResourceType,
         streamId,
         jobCreatedAt,
+        unattended,
         tool_resources,
         codeExecutionContext: providedCodeExecutionContext,
         attachedEnvironmentOptOut,
@@ -2208,6 +2162,7 @@ async function loadToolsForExecution({
   tool_resources,
   streamId = null,
   jobCreatedAt,
+  unattended,
   conversationId,
   actionsEnabled,
   accessibleMcpServerNames,
@@ -2307,6 +2262,7 @@ async function loadToolsForExecution({
     );
   const codeExecutionContext = await resolveCodeExecutionWorkspaceContext({
     context: baseCodeExecutionContext,
+    requiresLiveCapabilities: requiresCodeWorkspaceCapabilities(toolNames),
     requestedSelections: runtimeRequestBody?.codeWorkspaces,
     persistedSelections: req.resolvedConversation?.codeWorkspaces,
     environments: req.config?.endpoints?.agents?.statefulCodeSessions?.environments,
@@ -2333,11 +2289,11 @@ async function loadToolsForExecution({
   const preparedActionSnapshot =
     agent && actionsEnabled
       ? await prepareActionSnapshotForTools({
-          agentId: agent.id,
-          toolNames: preflightActionToolNames,
-          filters: req.config?.filters,
-          decrypt: true,
-        })
+        agentId: agent.id,
+        toolNames: preflightActionToolNames,
+        filters: req.config?.filters,
+        decrypt: true,
+      })
       : null;
 
   logger.debug(
@@ -2395,7 +2351,7 @@ async function loadToolsForExecution({
   if (isBashToolRequested && !isBashTool) {
     logger.warn(
       `[loadToolsForExecution] Skipping unregistered or unauthorized ${AgentConstants.BASH_TOOL}. ` +
-        `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
+      `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
     );
   }
   if (isBashTool) {
@@ -2408,54 +2364,54 @@ async function loadToolsForExecution({
       const bashTool =
         codeExecutionContext.environmentType === 'attached'
           ? createAttachedWorkspaceBashTool({
-              authHeaders,
-              baseUrl: codeExecutionContext.baseUrl,
-              workspaceId: codeExecutionContext.codeWorkspace.workspaceId,
-              workspaceInstanceId: codeExecutionContext.codeWorkspace.workspaceInstanceId,
-              onLaneGit: await createLaneGitRecorder({
-                ...resolvePullRequestRecording(
-                  req.config?.endpoints?.agents?.pullRequests,
-                  process.env,
-                ),
-                user: req.user.id,
-                conversationId: conversationId ?? runtimeRequestBody?.conversationId,
-                repo: codeExecutionContext.codeWorkspace.environment?.repo,
-                workspace: {
-                  environmentId: codeExecutionContext.codeWorkspace.environmentId,
-                  workspaceId: codeExecutionContext.codeWorkspace.workspaceId,
-                },
-                admittedEpoch: req.resolvedConversation?.codeAttachmentEpoch,
-                getConvoLaneContext,
-                reserveConvoLaneGitSeq,
-                setConvoLaneGit,
-              }),
-              linkedWorktrees: codeExecutionContext.codeWorkspace.linkedWorktrees,
-              nativeSandbox: codeExecutionContext.codeWorkspace.nativeSandbox,
-              environment: codeExecutionContext.codeWorkspace.environment,
-              gitIdentity: agent?.git_identity,
-              maxTimeoutMs: resolveAttachedWorkspaceCommandTimeoutMax(
-                codeExecutionContext.codeEnvironmentConfigSchema,
-                codeExecutionContext.codeWorkspace?.maxCommandTimeoutMs,
+            authHeaders,
+            baseUrl: codeExecutionContext.baseUrl,
+            workspaceId: codeExecutionContext.codeWorkspace.workspaceId,
+            workspaceInstanceId: codeExecutionContext.codeWorkspace.workspaceInstanceId,
+            onLaneGit: await createLaneGitRecorder({
+              ...resolvePullRequestRecording(
+                req.config?.endpoints?.agents?.pullRequests,
+                process.env,
               ),
-              defaultTimeoutMs:
-                codeExecutionContext.codeEnvironmentConfigSchema?.limits?.defaultCommandTimeoutMs,
-              maxQueueWaitMs: resolveAttachedWorkspaceQueueWaitMs(
-                codeExecutionContext.codeEnvironmentConfigSchema,
-              ),
-              codeApiMaxRetryWaitMs: req.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
-              maxRequestTimeoutMs: resolveAttachedWorkspaceRequestTimeoutMs(
-                codeExecutionContext.codeEnvironmentConfigSchema,
-              ),
-              ...resolveAttachedWorkspaceAdmissionOptions(
-                codeExecutionContext.codeEnvironmentConfigSchema,
-              ),
-              minCommandAdmissionMs:
-                codeExecutionContext.codeEnvironmentConfigSchema?.limits?.minCommandAdmissionMs,
-            })
+              user: req.user.id,
+              conversationId: conversationId ?? runtimeRequestBody?.conversationId,
+              repo: codeExecutionContext.codeWorkspace.environment?.repo,
+              workspace: {
+                environmentId: codeExecutionContext.codeWorkspace.environmentId,
+                workspaceId: codeExecutionContext.codeWorkspace.workspaceId,
+              },
+              admittedEpoch: req.resolvedConversation?.codeAttachmentEpoch,
+              getConvoLaneContext,
+              reserveConvoLaneGitSeq,
+              setConvoLaneGit,
+            }),
+            linkedWorktrees: codeExecutionContext.codeWorkspace.linkedWorktrees,
+            nativeSandbox: codeExecutionContext.codeWorkspace.nativeSandbox,
+            environment: codeExecutionContext.codeWorkspace.environment,
+            gitIdentity: agent?.git_identity,
+            maxTimeoutMs: resolveAttachedWorkspaceCommandTimeoutMax(
+              codeExecutionContext.codeEnvironmentConfigSchema,
+              codeExecutionContext.codeWorkspace?.maxCommandTimeoutMs,
+            ),
+            defaultTimeoutMs:
+              codeExecutionContext.codeEnvironmentConfigSchema?.limits?.defaultCommandTimeoutMs,
+            maxQueueWaitMs: resolveAttachedWorkspaceQueueWaitMs(
+              codeExecutionContext.codeEnvironmentConfigSchema,
+            ),
+            codeApiMaxRetryWaitMs: req.config?.endpoints?.agents?.codeApiMaxRetryWaitMs,
+            maxRequestTimeoutMs: resolveAttachedWorkspaceRequestTimeoutMs(
+              codeExecutionContext.codeEnvironmentConfigSchema,
+            ),
+            ...resolveAttachedWorkspaceAdmissionOptions(
+              codeExecutionContext.codeEnvironmentConfigSchema,
+            ),
+            minCommandAdmissionMs:
+              codeExecutionContext.codeEnvironmentConfigSchema?.limits?.minCommandAdmissionMs,
+          })
           : createBashExecutionTool({
-              authHeaders,
-              ...codeExecutionContext,
-            });
+            authHeaders,
+            ...codeExecutionContext,
+          });
       allLoadedTools.push(bashTool);
     } catch (error) {
       logger.error(
@@ -2468,8 +2424,8 @@ async function loadToolsForExecution({
   const fileAuthoringToolNames = new Set(
     toolRegistry
       ? Array.from(toolRegistry.values())
-          .filter((definition) => isFileAuthoringToolDefinition(definition))
-          .map((definition) => definition.name)
+        .filter((definition) => isFileAuthoringToolDefinition(definition))
+        .map((definition) => definition.name)
       : [],
   );
   const specialToolNames = new Set([
@@ -2503,7 +2459,7 @@ async function loadToolsForExecution({
     if (!allowed) {
       logger.warn(
         `[loadToolsForExecution] Skipping unregistered or unauthorized ${Tools.execute_code}. ` +
-          `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
+        `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
       );
     }
     return allowed;
@@ -2536,6 +2492,7 @@ async function loadToolsForExecution({
         requestBody: runtimeRequestBody,
         agentResourceType,
         jobCreatedAt,
+        unattended,
         tool_resources,
         processFileURL,
         uploadImageBuffer,
@@ -2578,7 +2535,7 @@ async function loadToolsForExecution({
   } else if (actionToolNames.length > 0 && agent && !actionsEnabled) {
     logger.warn(
       `[loadToolsForExecution] Capability "${AgentCapabilities.actions}" disabled. ` +
-        `Skipping action tool execution. User: ${req.user.id} | Agent: ${agent.id} | Tools: ${actionToolNames.join(', ')}`,
+      `Skipping action tool execution. User: ${req.user.id} | Agent: ${agent.id} | Tools: ${actionToolNames.join(', ')}`,
     );
   }
 
@@ -2658,7 +2615,7 @@ async function loadActionToolsForExecution({
     if (!isDomainAllowed) {
       logger.warn(
         `[Actions] Domain "${action.metadata.domain}" not in allowedDomains. ` +
-          `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
+        `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
       );
       continue;
     }

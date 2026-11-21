@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import type { ParentSubagentIndex, SubagentThreadView, TMessage } from 'librechat-data-provider';
-import type { BrowserContext, Locator, Page } from '@playwright/test';
+import type { BrowserContext, Locator, Page, Request } from '@playwright/test';
 import type { AgentDetail } from './agents.helpers';
 import {
   MOCK_ENDPOINTS,
@@ -11,8 +11,14 @@ import {
   sendMessage,
   sendMessageAndWaitForCompletion,
 } from './helpers';
-import { cleanupAgent, openAgentBuilder, uniqueAgentName } from './agents.helpers';
+import {
+  cleanupAgent,
+  openAgentBuilder,
+  closeMobileDrawer,
+  uniqueAgentName,
+} from './agents.helpers';
 import history from '../../fixtures/subagent-history.cjs';
+import { openChatHistory } from './scenarios/sidebar';
 
 const DETACHED_ACTIVITY_MARKER = 'E2E_SUBAGENT_ACTIVITY:';
 /** The activity hook's first reconnect is scheduled after 500 ms. */
@@ -43,16 +49,58 @@ async function createAgent(
   });
 }
 
+/** The child panel is a region beside the chat on wide layouts and a modal dialog over it on
+ *  narrow ones, the same element under either role. */
+const childActivityPanel = (page: Page) =>
+  page
+    .getByRole('region', { name: 'Child agent activity' })
+    .or(page.getByRole('dialog', { name: 'Child agent activity' }));
+
+/**
+ * Records what the panel's activity stream delivers, read from the page's own request.
+ *
+ * Playwright exposes a response body only once the request finishes, and the panel may abort this
+ * stream first: it stops listening as soon as the durable thread reports the task terminal, which
+ * the server persists before it writes the stream's final frame. The longest text wins because the
+ * abort empties `responseText` before this listener, registered after the transport's, runs.
+ */
+async function recordActivityStreams(page: Page): Promise<() => Promise<string[]>> {
+  await page.addInitScript((activityPath) => {
+    const streams: string[] = [];
+    Object.assign(window, { e2eActivityStreams: streams });
+    const open = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (
+      this: XMLHttpRequest,
+      ...args: Parameters<XMLHttpRequest['open']>
+    ) {
+      if (new RegExp(activityPath).test(new URL(String(args[1]), window.location.href).pathname)) {
+        const index = streams.push('') - 1;
+        this.addEventListener('progress', () => {
+          if (this.responseText.length > streams[index].length) {
+            streams[index] = this.responseText;
+          }
+        });
+      }
+      return open.apply(this, args);
+    } as XMLHttpRequest['open'];
+  }, ACTIVITY_PATH.source);
+  return () =>
+    page.evaluate(
+      () => (window as Window & { e2eActivityStreams?: string[] }).e2eActivityStreams ?? [],
+    );
+}
+
 async function selectAgent(page: Page, name: string): Promise<void> {
   const form = await openAgentBuilder(page);
   await form.getByRole('combobox', { name: 'Agent', exact: true }).click();
   await page.getByRole('option', { name }).click();
   await expect(form.getByLabel('Agent name')).toHaveValue(name);
   await form.getByRole('button', { name: 'Select Agent' }).click();
+  await closeMobileDrawer(page);
 }
 
 test.describe('detached subagent activity', () => {
-  test('streams two child runs into the shared panel and restores terminal activity', async ({
+  test('streams two child runs into the shared panel and restores terminal activity @scenario:subagent-panel-streams-child-activity-once', async ({
     page,
   }) => {
     test.setTimeout(120_000);
@@ -64,19 +112,24 @@ test.describe('detached subagent activity', () => {
     const parentName = uniqueAgentName('E2E Activity Parent');
     const createdAgentIds: string[] = [];
     const activityRequests: string[] = [];
-    const finishedActivityRequests: string[] = [];
+    const endedActivityRequests: string[] = [];
     page.on('request', (request) => {
       const url = new URL(request.url());
       if (ACTIVITY_PATH.test(url.pathname)) {
         activityRequests.push(url.pathname);
       }
     });
-    page.on('requestfinished', (request) => {
+    /** The stream ends either way once the child is terminal: the server closes it after the final
+     *  frame, or the panel aborts it on the durable terminal status, whichever arrives first. */
+    const recordEndedActivity = (request: Request) => {
       const url = new URL(request.url());
       if (ACTIVITY_PATH.test(url.pathname)) {
-        finishedActivityRequests.push(url.pathname);
+        endedActivityRequests.push(url.pathname);
       }
-    });
+    };
+    page.on('requestfinished', recordEndedActivity);
+    page.on('requestfailed', recordEndedActivity);
+    const activityStreams = await recordActivityStreams(page);
 
     try {
       await page.goto('/c/new');
@@ -111,8 +164,8 @@ test.describe('detached subagent activity', () => {
       });
       await cards.first().click();
 
-      const panel = page.getByRole('region', { name: 'Child agent activity' });
-      const activityResponse = await activityResponsePromise;
+      const panel = childActivityPanel(page);
+      await activityResponsePromise;
       await expect(panel).toBeVisible();
       await expect(panel).toContainText('child-1-phase-10');
       await expect(panel.getByText('Running', { exact: true })).toHaveCount(0);
@@ -122,8 +175,9 @@ test.describe('detached subagent activity', () => {
         timeout: 30_000,
       });
       await expect(panel.getByText('Completed', { exact: true })).toHaveCount(0);
-      await expect.poll(() => finishedActivityRequests.length).toBe(1);
-      const activityStreamBody = await activityResponse.text();
+      await expect.poll(() => endedActivityRequests.length).toBe(1);
+      const [activityStreamBody, ...otherStreams] = await activityStreams();
+      expect(otherStreams).toHaveLength(0);
       expect(activityStreamBody).toContain('"event":"on_subagent_update"');
       expect(activityStreamBody).toContain('"phase":"message_delta"');
       await page.waitForTimeout(ACTIVITY_RECONNECT_GUARD_MS);
@@ -149,7 +203,7 @@ test.describe('detached subagent activity', () => {
       await expect(panel.getByText('Completed', { exact: true })).toHaveCount(0);
 
       await panel.getByRole('button', { name: 'Close' }).click();
-      await page.getByRole('button', { name: 'Chat History' }).click();
+      await openChatHistory(page);
       const conversationRows = page.getByTestId('convo-item');
       await expect(conversationRows.locator('button[aria-current="page"]')).toBeVisible();
       for (const child of children) {
@@ -226,6 +280,43 @@ async function assertFullToolDetails(
   await expect(details.getByText(history.payload(label, index), { exact: true })).toBeVisible();
 }
 
+/**
+ * Where the steer sits relative to the text before and after it, in document
+ * order within its conversation. Each text is matched by the innermost element
+ * holding exactly that text, so the check reads the same whether the turn is
+ * still streaming (words split into `[data-lc-fade]` spans) or has settled.
+ */
+async function steerPlacement(
+  steer: Locator,
+  before: string,
+  after: string,
+): Promise<{ before: boolean; after: boolean }> {
+  return steer.evaluate(
+    (node, texts) => {
+      const root = node.closest('[data-subagent-conversation]');
+      const find = (text: string): Element | undefined => {
+        if (root == null) return undefined;
+        return [...root.querySelectorAll('*')].find(
+          (element) =>
+            element.textContent === text &&
+            ![...element.children].some((child) => child.textContent === text),
+        );
+      };
+      const preceding = find(texts.before);
+      const following = find(texts.after);
+      return {
+        before:
+          preceding != null &&
+          Boolean(preceding.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING),
+        after:
+          following != null &&
+          Boolean(node.compareDocumentPosition(following) & Node.DOCUMENT_POSITION_FOLLOWING),
+      };
+    },
+    { before, after },
+  );
+}
+
 async function openHistoryChild(page: Page, label: string): Promise<Locator> {
   const card = page.locator(`[data-subagent-tool-call="${history.dispatchId(label)}"]`);
   await expect
@@ -236,7 +327,7 @@ async function openHistoryChild(page: Page, label: string): Promise<Locator> {
     .toBe(true);
   await expect(card).toHaveCount(1);
   await card.click();
-  const panel = page.getByRole('region', { name: 'Child agent activity' });
+  const panel = childActivityPanel(page);
   await expect(panel).toBeVisible();
   return panel;
 }
@@ -259,7 +350,9 @@ async function historyThreadPath(
 
 test.describe('subagent chat retained-history parity', () => {
   for (const mode of ['normal chat', 'late open', 'cold reload'] as const) {
-    const name = `${mode} restores over-capacity history while running and completes once`;
+    const scenario =
+      mode === 'late open' ? ' @scenario:subagent-panel-replays-history-then-goes-live' : '';
+    const name = `${mode} restores over-capacity history while running and completes once${scenario}`;
     test(name, async ({ page, browser, baseURL }, testInfo) => {
       test.setTimeout(120_000);
       const prefix = `history-${mode.replaceAll(' ', '-')}`;
@@ -305,8 +398,7 @@ test.describe('subagent chat retained-history parity', () => {
           expect(activityRequests, 'no child stream was opened before the ring overflowed').toBe(0);
         }
         if (mode === 'cold reload') {
-          await page
-            .getByRole('region', { name: 'Child agent activity' })
+          await childActivityPanel(page)
             .getByRole('button', { name: 'Close', exact: true })
             .click();
           const storageState = await page.context().storageState();
@@ -432,51 +524,12 @@ test.describe('subagent chat retained-history parity', () => {
           await expect(
             surface.getByText('Message shortened for display.', { exact: true }),
           ).toHaveCount(0);
-          const precedingText = history.liveText(label);
-          expect(
-            await steer.evaluate((node, text) => {
-              const root = node.closest('[data-subagent-conversation]')!;
-              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-              let current: Node | null;
-              while ((current = walker.nextNode())) {
-                if (
-                  current.textContent === text &&
-                  current instanceof HTMLElement &&
-                  current.children.length === 0
-                ) {
-                  return Boolean(
-                    current.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING,
-                  );
-                }
-              }
-              return false;
-            }, precedingText),
-          ).toBe(true);
-          const completion = surface.getByText(history.completionText(label), { exact: true });
-          expect(
-            await steer.evaluate(
-              (node, completedText) => {
-                const walker = document.createTreeWalker(
-                  node.closest('[data-subagent-conversation]')!,
-                  NodeFilter.SHOW_ELEMENT,
-                );
-                let current: Node | null;
-                while ((current = walker.nextNode())) {
-                  if (
-                    current.textContent === completedText &&
-                    current instanceof HTMLElement &&
-                    current.children.length === 0
-                  ) {
-                    return Boolean(
-                      node.compareDocumentPosition(current) & Node.DOCUMENT_POSITION_FOLLOWING,
-                    );
-                  }
-                }
-                return false;
-              },
-              await completion.textContent(),
-            ),
-          ).toBe(true);
+          const placement = { before: true, after: true };
+          const live = history.liveText(label);
+          const completed = history.completionText(label);
+          expect(await steerPlacement(steer, live, completed)).toEqual(placement);
+          await expect(surface.locator('[data-lc-fade]')).toHaveCount(0, { timeout: 20_000 });
+          expect(await steerPlacement(steer, live, completed)).toEqual(placement);
         }
 
         if (mode !== 'normal chat') {

@@ -1120,7 +1120,6 @@ export class MCPConnection extends EventEmitter {
   private reportedStandaloneSseConflict = false;
   private agents: Dispatcher[] = [];
   private readonly userId?: string;
-  private lastPingTime: number;
   private lastConnectionCheckAt: number = 0;
   private lastConnectionCheckError?: unknown;
   private lastConnectionCheckCredentialSetId?: string | null;
@@ -1317,7 +1316,6 @@ export class MCPConnection extends EventEmitter {
     this.iconPath = params.serverConfig.iconPath;
     this.timeout = params.serverConfig.timeout;
     this.sseReadTimeout = params.serverConfig.sseReadTimeout;
-    this.lastPingTime = Date.now();
     this.createdAt = Date.now(); // Record creation timestamp for staleness detection
     if (params.oauthTokens) {
       this.oauthTokens = params.oauthTokens;
@@ -2501,12 +2499,6 @@ export class MCPConnection extends EventEmitter {
 
     const originalSend = this.transport.send.bind(this.transport);
     this.transport.send = async (msg) => {
-      if ('result' in msg && !('method' in msg) && Object.keys(msg.result ?? {}).length === 0) {
-        if (Date.now() - this.lastPingTime < FIVE_MINUTES) {
-          throw new Error('Empty result');
-        }
-        this.lastPingTime = Date.now();
-      }
       const method = 'method' in msg ? msg.method : undefined;
       const id = 'id' in msg ? msg.id : undefined;
       if (

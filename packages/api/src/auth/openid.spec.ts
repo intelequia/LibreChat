@@ -868,7 +868,7 @@ describe('findOpenIDUser Mongo compatibility', () => {
       process.env.OPENID_ISSUER = originalOpenIdIssuer;
     }
     await mongoose.disconnect();
-    await mongoServer.stop();
+    await mongoServer?.stop();
   });
 
   beforeEach(async () => {
@@ -1075,7 +1075,7 @@ describe('createOpenIDUser', () => {
 
   afterAll(async () => {
     await mongoose.disconnect();
-    await mongoServer.stop();
+    await mongoServer?.stop();
   });
 
   beforeEach(async () => {

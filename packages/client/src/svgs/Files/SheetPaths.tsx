@@ -1,4 +1,4 @@
-export default function SheetPaths() {
+export default function SheetPaths(): React.JSX.Element {
   return (
     <>
       <path

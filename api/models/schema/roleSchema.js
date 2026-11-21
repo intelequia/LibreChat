@@ -13,7 +13,7 @@ const roleSchema = new mongoose.Schema({
    * @Organization Intelequia
    * @Author Enrique M. Pedroza Castillo
    */
-  [PermissionTypes.ASSISTANT_CREATOR]:{
+  [PermissionTypes.ASSISTANT_CREATOR]: {
     [Permissions.USE]: {
       type: Boolean,
       default: false,
@@ -26,7 +26,7 @@ const roleSchema = new mongoose.Schema({
     },
   },
   [PermissionTypes.PROMPTS]: {
-    [Permissions.SHARED_GLOBAL]: {
+    [Permissions.SHARE]: {
       type: Boolean,
       default: false,
     },
@@ -40,7 +40,7 @@ const roleSchema = new mongoose.Schema({
     },
   },
   [PermissionTypes.AGENTS]: {
-    [Permissions.SHARED_GLOBAL]: {
+    [Permissions.SHARE]: {
       type: Boolean,
       default: false,
     },

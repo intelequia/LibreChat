@@ -1,5 +1,4 @@
 const cookies = require('cookie');
-const jwt = require('jsonwebtoken');
 const { logger, runAsSystem, tenantStorage } = require('@librechat/data-schemas');
 const {
   math,
@@ -21,6 +20,8 @@ const {
   getSafeErrorMetadata,
   sanitizeUserForAuthResponse,
   clearSessionHintCookie,
+  getOpenIDBearerAudiences,
+  selectReusableOpenIDBearer,
 } = require('@librechat/api');
 const { trackEvent } = require('~/utils/intelequia/appInsights');
 const {
@@ -174,28 +175,10 @@ const getReusableOpenIDSessionToken = (openidTokens) => {
     return null;
   }
 
-  const candidates = [
-    { token: openidTokens?.idToken, type: 'id_token' },
-    { token: openidTokens?.accessToken, type: 'access_token' },
-  ];
-  const now = Math.floor(Date.now() / 1000);
-
-  for (const candidate of candidates) {
-    if (!candidate.token) {
-      continue;
-    }
-    /** Decode only: tokens are from the trusted server-side session; expiry gates reuse. */
-    const decoded = jwt.decode(candidate.token);
-    if (
-      decoded &&
-      typeof decoded === 'object' &&
-      decoded.exp > now + OPENID_EXPIRY_BUFFER_SECONDS
-    ) {
-      return candidate;
-    }
-  }
-
-  return null;
+  return selectReusableOpenIDBearer(openidTokens, {
+    audiences: getOpenIDBearerAudiences(process.env.OPENID_CLIENT_ID, process.env.OPENID_AUDIENCE),
+    expiryBufferSeconds: OPENID_EXPIRY_BUFFER_SECONDS,
+  });
 };
 
 const withOpenIDResponseDelivery = createOpenIDResponseDelivery({
@@ -222,6 +205,7 @@ const resetPasswordController = createResetPasswordController({
   deleteAllUserSessions,
   deletePasskeysByUser,
   awaitAuthUserDocEviction,
+  updateUser,
 });
 
 const refreshLocalSession = createLocalRefreshHandler({

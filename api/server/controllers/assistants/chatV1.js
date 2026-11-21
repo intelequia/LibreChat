@@ -20,6 +20,7 @@ const {
   resolveAssistantProjectTurn,
   joinChatProjectInstructions,
   applyForcedTemporaryRequest,
+  getAssistantRun,
 } = require('@librechat/api');
 const {
   Time,
@@ -132,13 +133,15 @@ const chatV1 = async (req, res) => {
 
   const cache = getLogStores(CacheKeys.ABORT_KEYS);
   const cacheKey = `${req.user.id}:${conversationId}`;
+  /** Registered with the account cleanup barrier by the route, so deletion can stop and drain it. */
+  const assistantRun = getAssistantRun(req);
 
   /** @type {Run | undefined} - The completed run, undefined if incomplete */
   let completedRun;
   let contentRejected = false;
   const balanceReservations = createBalanceReservations();
 
-  const handleError = async (error) => {
+  const handleError = assistantRun.guardErrors(res, async (error) => {
     const defaultErrorMessage =
       'The Assistant run failed to initialize. Try sending a message in a new conversation.';
     const messageData = {
@@ -160,11 +163,10 @@ const chatV1 = async (req, res) => {
     } else if (error.message === 'Request closed') {
       logger.debug('[/assistants/chat/] Request aborted on close');
     } else if (/Files.*are invalid/.test(error.message)) {
-      const errorMessage = `Files are invalid, or may not have uploaded yet.${
-        endpoint === EModelEndpoint.azureAssistants
+      const errorMessage = `Files are invalid, or may not have uploaded yet.${endpoint === EModelEndpoint.azureAssistants
           ? " If using Azure OpenAI, files are only available in the region of the assistant's model at the time of upload."
           : ''
-      }`;
+        }`;
       return sendResponse(req, res, messageData, errorMessage);
     } else if (error?.message?.includes('string too long')) {
       return sendResponse(
@@ -274,7 +276,7 @@ const chatV1 = async (req, res) => {
     }
 
     return sendResponse(req, res, finalEvent);
-  };
+  });
 
   try {
     const messageTokens = intelequiaCountTokens([text], model);
@@ -287,11 +289,14 @@ const chatV1 = async (req, res) => {
       conversationId,
       assistantId: assistant_id,
     });
-    res.on('close', async () => {
-      if (!completedRun && !contentRejected) {
-        await handleError(new Error('Request closed'));
-      }
-    });
+    res.on(
+      'close',
+      assistantRun.guard(async () => {
+        if (!completedRun && !contentRejected) {
+          await handleError(new Error('Request closed'));
+        }
+      }),
+    );
     const projectTurn = await resolveAssistantProjectTurn(
       {
         userId: req.user.id,
@@ -505,12 +510,10 @@ const chatV1 = async (req, res) => {
         });
 
       const pluralized = plural ? 's' : '';
-      body.additional_instructions = `${
-        body.additional_instructions ? `${body.additional_instructions}\n` : ''
-      }The user has uploaded ${imageCount} image${pluralized}.
-      Use the \`${ImageVisionTool.function.name}\` tool to retrieve ${
-        plural ? '' : 'a '
-      }detailed text description${pluralized} for ${plural ? 'each' : 'the'} image${pluralized}.`;
+      body.additional_instructions = `${body.additional_instructions ? `${body.additional_instructions}\n` : ''
+        }The user has uploaded ${imageCount} image${pluralized}.
+      Use the \`${ImageVisionTool.function.name}\` tool to retrieve ${plural ? '' : 'a '
+        }detailed text description${pluralized} for ${plural ? 'each' : 'the'} image${pluralized}.`;
 
       return files;
     };
@@ -579,7 +582,7 @@ const chatV1 = async (req, res) => {
 
       previousMessages.push(requestMessage);
       /* asynchronous */
-      userMessagePromise = saveUserMessage(req, { ...requestMessage, model });
+      userMessagePromise = assistantRun.track(saveUserMessage(req, { ...requestMessage, model }));
 
       const conversationProjectId = projectTurn.membershipProjectId;
       conversation = {
@@ -616,7 +619,10 @@ const chatV1 = async (req, res) => {
       }
     }
 
-    const promises = [initializeThread(), balanceReservations.track(checkBalanceBeforeRun())];
+    const promises = [
+      assistantRun.track(initializeThread()),
+      balanceReservations.track(checkBalanceBeforeRun()),
+    ];
     await Promise.all(promises);
 
     const sendInitialResponse = () => {
@@ -677,6 +683,7 @@ const chatV1 = async (req, res) => {
         });
 
         run_id = run.id;
+        assistantRun.cancelOnStop(openai, { thread_id, run_id });
         await cache.set(cacheKey, `${thread_id}:${run_id}`, Time.TEN_MINUTES);
         sendInitialResponse();
 
@@ -690,6 +697,7 @@ const chatV1 = async (req, res) => {
         [AssistantStreamEvents.ThreadRunCreated]: async (event) => {
           await cache.set(cacheKey, `${thread_id}:${event.data.id}`, Time.TEN_MINUTES);
           run_id = event.data.id;
+          assistantRun.cancelOnStop(openai, { thread_id, run_id });
           sendInitialResponse();
         },
       };
@@ -733,7 +741,8 @@ const chatV1 = async (req, res) => {
       contentRejected = true;
       return res.status(error.statusCode).json(error.body);
     }
-    setHeaders(req, res, () => {});
+    assistantRun.throwIfStopped();
+    setHeaders(req, res, () => { });
     await processRun();
     logger.debug('[/assistants/chat/] response', {
       run: response.run,

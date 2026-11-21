@@ -103,7 +103,7 @@ const roleSchema: Schema<IRole> = new Schema({
     default: () => ({
       [PermissionTypes.BOOKMARKS]: { [Permissions.USE]: true },
       [PermissionTypes.PROMPTS]: {
-        [Permissions.SHARED_GLOBAL]: false,
+        [Permissions.SHARE]: false,
         [Permissions.USE]: true,
         [Permissions.CREATE]: true,
       },
@@ -114,7 +114,7 @@ const roleSchema: Schema<IRole> = new Schema({
         [Permissions.READ]: true,
       },
       [PermissionTypes.AGENTS]: {
-        [Permissions.SHARED_GLOBAL]: false,
+        [Permissions.SHARE]: false,
         [Permissions.USE]: true,
         [Permissions.CREATE]: true,
       },

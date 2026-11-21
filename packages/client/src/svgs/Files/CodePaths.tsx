@@ -1,4 +1,4 @@
-export default function CodePaths() {
+export default function CodePaths(): React.JSX.Element {
   return (
     <>
       <path

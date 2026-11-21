@@ -1,4 +1,4 @@
-export default function FilePaths() {
+export default function FilePaths(): React.JSX.Element {
   return (
     <>
       <path

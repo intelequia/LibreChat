@@ -1,0 +1,253 @@
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { useAtom, useSetAtom } from 'jotai';
+import type { TMessage } from 'librechat-data-provider';
+import type { MouseEvent } from 'react';
+import type { ChatContract } from './contract';
+import { isSubmittingFamily, submissionByIndex, useIsSubmitting } from '../submission';
+import { useBranchTailGetter, useBranchTailId, useBranchTailSelect } from '../latest';
+import { presetFamily, filesFamily, optionSettingsFamily } from '../pane';
+import { siblingIdxFamily, siblingKey } from '../thread';
+import { useLiveAttachments } from '../stream/atoms';
+import { abortScrollFamily } from '../generation';
+import { getMappingOptions } from '../../core';
+import { getMessageCacheIds } from './cache';
+import { useStopGenerating } from './stop';
+import { useChatHost } from './host';
+import { useTurns } from './turns';
+
+/** Where the tail sits in its thread: all the contract needs of it between turns. */
+const pickTailPlace = (tail: TMessage | null): Pick<TMessage, 'depth' | 'parentMessageId'> | null =>
+  tail && { depth: tail.depth, parentMessageId: tail.parentMessageId };
+
+/**
+ * Builds a pane's chat contract from the app the host supplies: its pane store, message cache,
+ * turn builder and transport. `paramId` is the route's conversation id, which keys the messages
+ * the contract reads ahead of the pane's conversation while navigation settles.
+ */
+export default function useChatHelpers(index = 0, paramId?: string): ChatContract {
+  const host = useChatHost();
+  const [files, setFiles] = useAtom(filesFamily(index));
+  const [filesLoading, setFilesLoading] = useState(false);
+
+  const cache = host.useMessageCache();
+  const newConversation = host.useNewConversation(index);
+  const { conversation, setConversation } = host.usePaneConversation(index);
+  const conversationId = conversation?.conversationId;
+
+  /** Use paramId (from URL) as primary source for query key - this must match what ChatView uses
+  Falling back to conversationId (Recoil) only if paramId is not available */
+  const queryParam = paramId === 'new' ? paramId : (paramId ?? conversationId ?? '');
+
+  const isSubmitting = useIsSubmitting(index);
+  const setIsSubmitting = useSetAtom(isSubmittingFamily(index));
+  const tailRootKey = conversationId ?? null;
+  const tailQueryId = conversationId ? queryParam : null;
+  /** A streamed delta rewrites the tail but not where it sits, so the projection keeps its
+   *  identity through structural sharing and this hook, with everything it builds, sits out the
+   *  stream. The message itself is read when a turn needs it. */
+  const tailPlace = useBranchTailSelect(tailRootKey, tailQueryId, pickTailPlace);
+  const getLatestMessage = useBranchTailGetter(tailRootKey, tailQueryId);
+
+  const latestMessageId = useBranchTailId(tailRootKey, tailQueryId) ?? undefined;
+  const latestMessageDepth = tailPlace?.depth;
+
+  const setSiblingIdx = useSetAtom(siblingIdxFamily(siblingKey(tailPlace?.parentMessageId)));
+  /** The setter is rebound whenever the tail's parent changes (every turn); the
+   *  ref keeps `handleContinue` referentially stable so rows do not re-render. */
+  const setSiblingIdxRef = useRef(setSiblingIdx);
+  setSiblingIdxRef.current = setSiblingIdx;
+
+  const setMessages = useCallback(
+    (messages: TMessage[]) => {
+      const messageCacheIds = getMessageCacheIds({ queryParam, conversationId, messages });
+      for (const messageCacheId of messageCacheIds) {
+        cache.write(messageCacheId, messages);
+      }
+    },
+    [queryParam, cache, conversationId],
+  );
+
+  const subscribeMessages = useCallback(
+    (onChange: () => void) => cache.subscribe(queryParam, onChange),
+    [cache, queryParam],
+  );
+  const getMessagesRevision = useCallback(() => cache.revision(queryParam), [cache, queryParam]);
+
+  const getMessages = useCallback(
+    (targetConversationId?: string | null) => cache.read(targetConversationId ?? queryParam),
+    [queryParam, cache],
+  );
+
+  const setSubmission = useSetAtom(submissionByIndex(index));
+
+  const turnsParams = {
+    index,
+    files,
+    setFiles,
+    getMessages,
+    setMessages,
+    isSubmitting,
+    conversation,
+    getLatestMessage,
+    setSubmission,
+    setConversation,
+  };
+  const { ask: _ask, regenerate: _regenerate } = useTurns(
+    turnsParams,
+    host.useTurnServices(turnsParams),
+  );
+
+  const askRef = useRef(_ask);
+  askRef.current = _ask;
+  const ask: typeof _ask = useCallback((...args) => askRef.current(...args), []);
+
+  const regenerateRef = useRef(_regenerate);
+  regenerateRef.current = _regenerate;
+  const regenerate: typeof _regenerate = useCallback(
+    (...args) => regenerateRef.current(...args),
+    [],
+  );
+
+  const continueGeneration = useCallback(() => {
+    const currentLatest = getLatestMessage();
+    if (!currentLatest) {
+      console.error('Failed to regenerate the message: latestMessage not found.');
+      return;
+    }
+
+    const messages = getMessages();
+
+    const parentMessage = messages?.find(
+      (element) => element.messageId == currentLatest.parentMessageId,
+    );
+
+    if (parentMessage && parentMessage.isCreatedByUser) {
+      ask(
+        { ...parentMessage },
+        {
+          isContinued: true,
+          isRegenerate: true,
+          isEdited: true,
+          overrideManualSkills: parentMessage.manualSkills,
+          overrideQuotes: parentMessage.quotes,
+          overrideReasoning: parentMessage.reasoningOverride ?? null,
+        },
+      );
+    } else {
+      console.error(
+        'Failed to regenerate the message: parentMessage not found, or not created by user.',
+      );
+    }
+  }, [getLatestMessage, getMessages, ask]);
+
+  const stopGenerating = useStopGenerating(index, conversation);
+
+  const handleStopGenerating = useCallback(
+    (e: MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      stopGenerating();
+    },
+    [stopGenerating],
+  );
+
+  const handleRegenerate = useCallback(
+    (e: MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      const parentMessageId = getLatestMessage()?.parentMessageId ?? '';
+      if (!parentMessageId) {
+        console.error('Failed to regenerate the message: parentMessageId not found.');
+        return;
+      }
+      regenerate({ parentMessageId });
+    },
+    [getLatestMessage, regenerate],
+  );
+
+  const handleContinue = useCallback(
+    (e: MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      continueGeneration();
+      setSiblingIdxRef.current(0);
+    },
+    [continueGeneration],
+  );
+
+  const [preset, setPreset] = useAtom(presetFamily(index));
+  const [abortScroll, setAbortScroll] = useAtom(abortScrollFamily(index));
+  const [optionSettings, setOptionSettings] = useAtom(optionSettingsFamily(index));
+
+  /** Read once per chat rather than per message row: message rows never unmount, so a
+   *  per-row settings read would accumulate for the length of the conversation. */
+  const feedbackEnabled = host.useFeedbackEnabled();
+
+  return useMemo(
+    (): ChatContract => ({
+      newConversation,
+      conversation,
+      setConversation,
+      isSubmitting,
+      setIsSubmitting,
+      getMessages,
+      messagesKey: queryParam,
+      setMessages,
+      subscribeMessages,
+      getMessagesRevision,
+      setSiblingIdx,
+      latestMessageId,
+      latestMessageDepth,
+      useLiveAttachments,
+      ask,
+      index,
+      regenerate,
+      stopGenerating,
+      handleStopGenerating,
+      handleRegenerate,
+      handleContinue,
+      abortScroll,
+      setAbortScroll,
+      preset,
+      setPreset,
+      optionSettings,
+      setOptionSettings,
+      files,
+      setFiles,
+      filesLoading,
+      setFilesLoading,
+      feedbackEnabled,
+      getMappingOptions,
+    }),
+    [
+      newConversation,
+      conversation,
+      setConversation,
+      isSubmitting,
+      setIsSubmitting,
+      getMessages,
+      queryParam,
+      setMessages,
+      subscribeMessages,
+      getMessagesRevision,
+      setSiblingIdx,
+      latestMessageId,
+      latestMessageDepth,
+      ask,
+      index,
+      regenerate,
+      stopGenerating,
+      handleStopGenerating,
+      handleRegenerate,
+      handleContinue,
+      abortScroll,
+      setAbortScroll,
+      preset,
+      setPreset,
+      optionSettings,
+      setOptionSettings,
+      files,
+      setFiles,
+      filesLoading,
+      setFilesLoading,
+      feedbackEnabled,
+    ],
+  );
+}

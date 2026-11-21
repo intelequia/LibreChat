@@ -58,6 +58,7 @@ export const JOB_STORE_V2_REQUIRED_METHODS: readonly [
   'claimParkedSteersDetailed',
   'consumeParkedSteer',
   'discardSteerLeftover',
+  'promoteSteerLeftover',
   'settleEarlyBufferRecovery',
   'finalizeEarlyBufferOverflow',
   'hasSubscriberAttached',

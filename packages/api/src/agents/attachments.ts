@@ -42,6 +42,7 @@ export function isToolOwnedAttachment(file: AttachmentTelemetryFile): boolean {
     (IMongoFile['metadata'] & { fileIdentifier?: unknown }) | null | undefined;
   return (
     file.context === FileContext.execute_code ||
+    file.context === FileContext.execute_code_snapshot ||
     file.embedded === true ||
     metadata?.searchDestination === true ||
     metadata?.codeDestination === true ||
